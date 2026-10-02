@@ -49,6 +49,9 @@ cd plugins/<name> && claude plugin test
 
 ## プラグインの追加
 
+このリポジトリで Claude Code を開いて「〇〇する mod を追加して」と頼むと、プロジェクト skill [`add-mod`](.claude/skills/add-mod/SKILL.md) が下の手順（雛形・テスト・marketplace / bundle / README 更新・validate）をまとめてやる。手でやる場合:
+
+
 1. `plugins/<name>/` に `.claude-plugin/plugin.json` と中身を置く
 2. `.claude-plugin/marketplace.json` の `plugins` にエントリを追加する（`name` は `plugin.json` と同じにする）
 3. まとめて入るようにするなら `plugins/japan-da-man-mods/.claude-plugin/plugin.json` の `dependencies` にも名前を足す
