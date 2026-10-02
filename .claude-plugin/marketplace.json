@@ -1,12 +1,19 @@
 {
   "name": "japan-da-man",
-  "owner": { "name": "japan-da-man" },
+  "owner": {
+    "name": "japan-da-man"
+  },
   "description": "japan-da-man's Claude Code plugins and mods",
   "plugins": [
     {
       "name": "todo-mod",
       "source": "./plugins/todo-mod",
       "description": "TODO pane: check a task to have Claude run it"
+    },
+    {
+      "name": "token-weather",
+      "source": "./plugins/token-weather",
+      "description": "Shows how full the context window is as a weather forecast above the prompt"
     }
   ]
 }
