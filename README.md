@@ -28,7 +28,15 @@ claude plugin marketplace update japan-da-man
 claude plugin update <名前>@japan-da-man
 ```
 
-bundle に新しいプラグインが増えたときは、`update` では入らない（bundle が `failed to load` になる）。増えたプラグインを `claude plugin install <名前>@japan-da-man` で入れる。
+bundle に増えたプラグインを入れるときは、**update → install の順**で実行する（update だけだと増えた分は入らず、bundle が `failed to load` になる）:
+
+```bash
+claude plugin marketplace update japan-da-man
+claude plugin update japan-da-man-mods@japan-da-man
+claude plugin install japan-da-man-mods@japan-da-man
+```
+
+セッション内なら update のあと `/reload-plugins` でもよい。
 
 ## 開発
 
