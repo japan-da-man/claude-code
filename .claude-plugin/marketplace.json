@@ -6,6 +6,11 @@
   "description": "japan-da-man's Claude Code plugins and mods",
   "plugins": [
     {
+      "name": "japan-da-man-mods",
+      "source": "./plugins/japan-da-man-mods",
+      "description": "Installs every japan-da-man mod at once: todo-mod, token-weather and usage-stats"
+    },
+    {
       "name": "todo-mod",
       "source": "./plugins/todo-mod",
       "description": "TODO pane: check a task to have Claude run it"
@@ -14,6 +19,11 @@
       "name": "token-weather",
       "source": "./plugins/token-weather",
       "description": "Shows how full the context window is as a weather forecast above the prompt"
+    },
+    {
+      "name": "usage-stats",
+      "source": "./plugins/usage-stats",
+      "description": "Usage stats pane: sessions, messages, tokens, active days, streak, favorite model and a daily heatmap"
     }
   ]
 }
