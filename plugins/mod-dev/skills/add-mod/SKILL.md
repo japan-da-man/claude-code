@@ -126,4 +126,4 @@ To see the mod in a real session: `claude --plugin-dir <plugin dir>`, which hot-
 
 ## 6. Hand over
 
-Commit with a message that says what the mod does. Pushing and updating installed copies are the person's call: ask first. After a push, `claude plugin marketplace update <marketplace>` refreshes the catalog, and re-running `claude plugin install <bundle>@<marketplace>` installs a dependency the bundle gained. Sessions started afterwards pick it up; the current one does not.
+Commit with a message that says what the mod does. Pushing and updating installed copies are the person's call: ask first. After a push, `claude plugin marketplace update <marketplace>` refreshes the catalog. `claude plugin update <bundle>@<marketplace>` does not install a dependency the bundle gained, and the bundle then fails to load (`claude plugin list` shows `failed to load`), so install the new mod itself with `claude plugin install <name>@<marketplace>` and update the others. Sessions started afterwards pick it up; the current one does not.
