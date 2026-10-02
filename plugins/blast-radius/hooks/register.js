@@ -3,6 +3,8 @@ const PANE = 'blast-radius'
 const HISTORY_SIZE = 5
 const MAX_LINES = 12
 const MAX_WALK = 5000
+// ペインに1つずつ並べるファイルの上限
+const MAX_LISTED = 200
 
 // 直近に捕まえたコマンド。先頭が最新
 // { command, impacts: [{ title, severity, summary, lines }], status: 'pending' | 'allowed' | 'blocked' }
@@ -251,8 +253,9 @@ async function git($, cwd, argv) {
   }
 }
 
-// ディレクトリを幅優先でたどり、ファイル数と合計サイズを数える（上限あり）
+// ディレクトリを幅優先でたどり、ファイル数と合計サイズを数え、ファイルの一覧も集める（上限あり）
 async function measure($, path) {
+  const listed = []
   let files = 0
   let dirs = 0
   let bytes = 0
@@ -277,11 +280,18 @@ async function measure($, path) {
       } else {
         files += 1
         bytes += entry.size ?? 0
+        if (listed.length < MAX_LISTED) listed.push(dir + '/' + entry.name)
       }
     }
     if (isCapped) break
   }
-  return { files, dirs, bytes, isCapped }
+  return { files, dirs, bytes, isCapped, listed }
+}
+
+// セッションの作業フォルダから見た相対パスで表示する
+function display(path, sessionCwd) {
+  const base = normalize(sessionCwd).replace(/\/$/, '') + '/'
+  return path.startsWith(base) ? path.slice(base.length) : path
 }
 
 async function analyzeRm($, risk, sessionCwd, home, repoRoot) {
@@ -314,11 +324,12 @@ async function analyzeRm($, risk, sessionCwd, home, repoRoot) {
       const m = await measure($, path)
       totalFiles += m.files
       totalBytes += m.bytes
-      lines.push(path + '/  ' + m.files + (m.isCapped ? '+' : '') + ' files · ' + formatBytes(m.bytes))
+      lines.push(...m.listed.map((f) => display(f, sessionCwd)))
+      if (m.isCapped) lines.push(display(path, sessionCwd) + '/ 以下は ' + MAX_WALK + ' 件で数えるのをやめた')
     } else {
       totalFiles += 1
       totalBytes += stat.size ?? 0
-      lines.push(path + '  ' + formatBytes(stat.size ?? 0))
+      lines.push(display(path, sessionCwd))
     }
   }
   const where = severity === 'critical' ? '（ルート / ホーム / プロジェクト全体）' : ''
@@ -328,6 +339,7 @@ async function analyzeRm($, risk, sessionCwd, home, repoRoot) {
     summary:
       totalFiles + ' 個のファイル（' + formatBytes(totalBytes) + '）を削除' + (unknown ? ' + 中身が事前に分からない対象 ' + unknown + ' 件' : ''),
     lines,
+    paths: risk.targets,
   }
 }
 
@@ -439,7 +451,8 @@ async function analyzeFind($, risk, sessionCwd, home, repoRoot) {
     title: 'find ' + risk.via + note,
     severity,
     summary: lines.length ? lines.length + ' 件を削除' : '削除されるものはなし',
-    lines,
+    lines: lines.map((l) => (l.startsWith('./') ? l.slice(2) : l)),
+    paths: roots.length ? roots : ['.'],
   }
 }
 
@@ -509,15 +522,23 @@ export function register(on) {
     } catch {
       answer = null
     }
+    await $.ui.close({ id: PANE })
     if (answer === '実行する') {
       entry.status = 'allowed'
-      $.ui.invalidate('ui.render')
+      $.ui.toast('Blast Radius: 実行します')
       return next(e)
     }
     entry.status = 'blocked'
-    $.ui.invalidate('ui.render')
+    $.ui.toast('Blast Radius: 止めました')
     return { deny: 'Blast Radius: ユーザーがこのコマンドを止めました（' + summary + '）。別の方法を検討するか、ユーザーに確認してください。' }
   })
+    // このフックが失敗したり時間切れになったりすると、Claude Code はフックを飛ばしてコマンドを実行してしまう。
+    // 安全装置なので、確認できなかったときは止める側に倒す
+    .catch(($, e, next) =>
+      next.called
+        ? { deny: 'Blast Radius: コマンドの実行後に内部エラーが起きました（' + next.error.message + '）。コマンドは実行された可能性があります。' }
+        : { deny: 'Blast Radius: 影響範囲を確認できなかったので、念のため止めました（' + next.error.message + '）。ユーザーに確認してください。' },
+    )
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
@@ -525,40 +546,41 @@ export function register(on) {
     if (!catches.length) return Text({ dimColor: true, children: ['まだ危険なコマンドは捕まえていません'] })
 
     const [latest, ...older] = catches
-    const statusText = { pending: '確認待ち', allowed: '実行した', blocked: '止めた' }
-    const statusColor = { pending: '#d29922', allowed: '#8b949e', blocked: '#3fb950' }
+    const statusText = { pending: 'Claude is waiting on your answer', allowed: '実行した', blocked: '止めた' }
+    const listRoom = Math.max(MAX_LINES, (e.props.scroll?.bodyRows ?? 0) - 12)
 
-    const impactBox = (impact, i) =>
-      Box({
-        key: 'impact-' + i,
+    const card = (impact, i) => {
+      const color = impact.severity === 'critical' ? SEVERITY_COLOR.critical : SEVERITY_COLOR.high
+      const shown = impact.lines.slice(0, listRoom)
+      return Box({
+        key: 'card-' + i,
         flexDirection: 'column',
         borderStyle: 'round',
+        borderColor: color,
         paddingX: 1,
         children: [
-          Text({ bold: true, color: SEVERITY_COLOR[impact.severity], children: [SEVERITY_ICON[impact.severity] + ' ' + impact.title] }),
-          Text({ children: [impact.summary] }),
-          ...impact.lines.slice(0, MAX_LINES).map((l) => Text({ dimColor: true, wrap: 'truncate-end', children: [l || ' '] })),
-          ...(impact.lines.length > MAX_LINES ? [Text({ dimColor: true, children: ['… ほか ' + (impact.lines.length - MAX_LINES) + ' 行'] })] : []),
+          Text({ bold: true, color, children: [SEVERITY_ICON[impact.severity] + ' Blast Radius · ' + impact.title] }),
+          Box({ flexDirection: 'row', columnGap: 1, children: [Text({ dimColor: true, children: ['Command'] }), Text({ bold: true, wrap: 'truncate-end', children: [latest.command] })] }),
+          Box({ flexDirection: 'row', columnGap: 1, children: [Text({ dimColor: true, children: ['Would'] }), Text({ color: SEVERITY_COLOR.critical, children: [impact.summary] })] }),
+          Text({ children: [' '] }),
+          ...shown.map((l) => Text({ wrap: 'truncate-middle', children: [l || ' '] })),
+          ...(impact.lines.length > shown.length ? [Text({ dimColor: true, children: ['… ほか ' + (impact.lines.length - shown.length) + ' 件'] })] : []),
+          ...(impact.paths ? [Text({ dimColor: true, italic: true, children: ['Paths: ' + impact.paths.join(' ')] })] : []),
+          Text({ children: [' '] }),
+          Text({ dimColor: latest.status !== 'pending', color: latest.status === 'pending' ? color : undefined, children: [statusText[latest.status]] }),
         ],
       })
+    }
 
     return Box({
       flexDirection: 'column',
       children: [
-        Box({
-          flexDirection: 'row',
-          columnGap: 2,
-          children: [
-            Text({ bold: true, children: ['$ ' + latest.command] }),
-            Text({ color: statusColor[latest.status], children: [statusText[latest.status]] }),
-          ],
-        }),
-        ...latest.impacts.map(impactBox),
+        ...latest.impacts.map(card),
         ...(older.length
           ? [
               Text({ children: [' '] }),
               Text({ dimColor: true, children: ['これまでに捕まえたコマンド'] }),
-              ...older.map((c) => Text({ dimColor: true, wrap: 'truncate-end', children: [statusText[c.status] + '  $ ' + c.command] })),
+              ...older.map((c) => Text({ dimColor: true, wrap: 'truncate-end', children: [statusText[c.status].replace('Claude is waiting on your answer', '確認待ち') + '  $ ' + c.command] })),
             ]
           : []),
       ],

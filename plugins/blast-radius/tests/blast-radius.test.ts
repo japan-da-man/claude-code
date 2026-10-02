@@ -81,13 +81,18 @@ test('helpers', () => {
 })
 
 // git の出力を決め打ちで返し、Bash は実行しない
-function stubEngine(on, { answer, diffStat }) {
+function stubEngine(on, { answer, diffStat, failCwd = false }) {
   const asked = []
-  on('session.cwd', async () => ({ value: '/repo' }))
+  on('session.cwd', async () => {
+    if (failCwd) throw new Error('boom')
+    return { value: '/repo' }
+  })
   on('session.surfaces', async () => ({ value: ['terminal'] }))
   on('env.get', async () => ({ value: '/home/me' }))
   on('ui.open', async () => ({ value: { isPlaced: true } }))
   on('ui.log', async () => ({ value: undefined }))
+  on('ui.close', async () => ({ value: undefined }))
+  on('ui.toast', async () => ({ value: undefined }))
   // $.ui.ask は質問ダイアログ（AskUserQuestion ツール）の呼び出しとして届く
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e) => {
     asked.push(e)
@@ -134,3 +139,33 @@ test('passes safe commands straight through', async ($, on) => {
   expect(asked.length).toBe(0)
   expect(r.result).toBe('ran')
 })
+
+test('blocks the command when checking it fails', async ($, on) => {
+  // 影響範囲を調べる途中で失敗させる
+  stubEngine(on, { answer: '実行する', diffStat: DIFF, failCwd: true })
+  const r = await $.tool.call({ tool: 'Bash', command: 'git reset --hard' })
+  expect(r.deny).toMatch(/念のため止めました/)
+})
+
+const PANE = { plugin: 'blast-radius', component: 'Pane', requestId: 'blast-radius', props: { title: '', isFocused: true, bodyColumns: 90, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } } as const
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test('rm -rf card lists every file on ' + surface, async ($, on) => {
+    stubEngine(on, { answer: '止める', diffStat: '' })
+    on('fs.exists', async () => ({ value: true }))
+    on('fs.stat', async ($, e) => ({ value: { kind: 'dir', size: 0 } }))
+    on('fs.list', async ($, e) =>
+      e.path === '/repo/build'
+        ? { value: [{ name: 'index.html', kind: 'file', size: 1024, isLink: false }, { name: 'assets', kind: 'dir', size: 0, isLink: false }] }
+        : { value: [{ name: 'app.js', kind: 'file', size: 2048, isLink: false }] },
+    )
+    const r = await $.tool.call({ tool: 'Bash', command: 'rm -rf build' })
+    expect(r.deny).toMatch(/2 個のファイル（3.0 KB）を削除/)
+    const ui = await $.ui.mount({ ...PANE, surface })
+    expect(await ui.find({ type: 'Text', text: /Blast Radius · rm -rf/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'build/index.html' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'build/assets/app.js' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Paths: build' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '止めた' })).toBeDefined()
+  })
+}
