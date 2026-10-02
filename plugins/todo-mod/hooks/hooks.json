@@ -1,0 +1,4 @@
+{
+  "description": "todo-mod hooks module",
+  "modules": ["./register.js"]
+}

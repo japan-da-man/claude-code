@@ -1,0 +1,6 @@
+{
+  "name": "todo-mod",
+  "description": "TODO pane: check a task to have Claude run it",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}

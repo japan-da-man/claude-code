@@ -1,0 +1,5 @@
+.DS_Store
+# Claude Code が --plugin-dir 読み込み時に生成する型定義
+.claude-plugin/types/
+plugins/*/.claude-plugin/types/
+plugins/*/tsconfig.json
