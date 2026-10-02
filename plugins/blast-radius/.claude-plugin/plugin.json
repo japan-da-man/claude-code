@@ -1,0 +1,6 @@
+{
+  "name": "blast-radius",
+  "description": "Catches risky shell commands (rm -rf, git reset --hard, force push, git clean, discarding changes) before they run, shows what they would touch in a side pane, and asks before running them",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}
