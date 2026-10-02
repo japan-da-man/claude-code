@@ -1,7 +1,14 @@
 {
   "name": "japan-da-man-mods",
-  "description": "Installs every japan-da-man mod at once: todo-mod, token-weather and usage-stats",
-  "author": { "name": "japan-da-man" },
+  "description": "Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats and mod-dev",
+  "author": {
+    "name": "japan-da-man"
+  },
   "repository": "https://github.com/japan-da-man/claude-code",
-  "dependencies": ["todo-mod", "token-weather", "usage-stats"]
+  "dependencies": [
+    "todo-mod",
+    "token-weather",
+    "usage-stats",
+    "mod-dev"
+  ]
 }
