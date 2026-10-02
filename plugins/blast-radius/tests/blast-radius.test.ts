@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { detectRisks, formatBytes, segments, worst } from '../hooks/register.js'
+import { detectRisks, formatBytes, parseFindDelete, segments, worst } from '../hooks/register.js'
 
 test('segments split on operators and respect quotes', () => {
   expect(segments(`cd app && rm -rf "build dir"; echo 'a && b' | cat`)).toEqual([
@@ -30,6 +30,43 @@ test('detects risky git commands', () => {
   expect(detectRisks('git restore src/a.ts')).toEqual([{ kind: 'discard', cwd: null, paths: ['src/a.ts'] }])
   expect(detectRisks('git branch -D old')).toEqual([{ kind: 'branch-delete', cwd: null, branches: ['old'] }])
   expect(detectRisks('git stash clear')[0].kind).toBe('stash-drop')
+})
+
+test('looks inside bash -c, sh -c and eval', () => {
+  expect(detectRisks(`bash -c 'cd app && rm -rf dist'`)).toEqual([{ kind: 'rm', cwd: 'app', targets: ['dist'], force: true }])
+  expect(detectRisks(`cd repo && sh -lc "git reset --hard"`)).toEqual([{ kind: 'reset-hard', cwd: 'repo', ref: 'HEAD' }])
+  expect(detectRisks(`eval "rm -r build"`)[0]).toEqual({ kind: 'rm', cwd: null, targets: ['build'], force: false })
+  expect(detectRisks(`bash -c "bash -c 'git clean -fd'"`)[0].kind).toBe('clean')
+  // 中身が安全なら何もしない
+  expect(detectRisks(`bash -c 'cd frontend && npm run build'`)).toEqual([])
+  expect(detectRisks(`sudo bash -c 'echo "127.0.0.1 app.test" >> /etc/hosts'`)).toEqual([])
+})
+
+test('detects find -delete and find -exec rm', () => {
+  expect(detectRisks('find . -name "*.log" -delete')).toEqual([
+    { kind: 'find-delete', cwd: null, dryRun: ['.', '-name', '*.log'], isUnfiltered: false, via: '-delete' },
+  ])
+  expect(detectRisks('find build -type f -exec rm -f {} +')[0]).toEqual({
+    kind: 'find-delete',
+    cwd: null,
+    dryRun: ['build', '-type', 'f'],
+    isUnfiltered: false,
+    via: '-exec rm',
+  })
+  expect(detectRisks('find . -name x -exec rm {} \\;')[0].dryRun).toEqual(['.', '-name', 'x'])
+  // -delete が条件より前だと全部消える
+  expect(parseFindDelete(['.', '-delete', '-name', '*.log']).isUnfiltered).toBe(true)
+  expect(parseFindDelete(['.', '-maxdepth', '1', '-delete']).isUnfiltered).toBe(true)
+  // 下見でファイルに書き出す動作は外す
+  expect(parseFindDelete(['.', '-fprint', 'out.txt', '-delete']).dryRun).toEqual(['.'])
+  // 削除しない find は対象外
+  expect(detectRisks('find . -name "*.ts" -exec grep -l foo {} +')).toEqual([])
+})
+
+test('detects xargs rm', () => {
+  expect(detectRisks('git ls-files -o | xargs rm -f')).toEqual([{ kind: 'xargs-rm', cwd: null }])
+  expect(detectRisks('cat list.txt | xargs -n 1 -I{} rm {}')).toEqual([{ kind: 'xargs-rm', cwd: null }])
+  expect(detectRisks('ls | xargs echo')).toEqual([])
 })
 
 test('leaves safe commands alone', () => {

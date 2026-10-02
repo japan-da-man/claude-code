@@ -71,10 +71,56 @@ function stripPrefix(tokens) {
 const isFlag = (t) => t.startsWith('-') && t !== '-'
 const shortFlags = (tokens) => tokens.filter((t) => /^-[A-Za-z]+$/.test(t)).join('')
 
+const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
+const EXEC_ACTIONS = new Set(['-exec', '-execdir', '-ok', '-okdir'])
+// 引数を1つとる find のオプションと、ファイルに書き出す find の動作（下見では外す）
+const FIND_GLOBAL_OPTS = new Set(['-maxdepth', '-mindepth'])
+const FIND_GLOBAL_FLAGS = new Set(['-depth', '-d', '-xdev', '-mount', '-follow', '-L', '-H', '-P', '-noleaf'])
+const FIND_WRITE_ACTIONS = new Set(['-fprint', '-fprint0', '-fls', '-fprintf'])
+// xargs のオプションのうち、引数を1つとるもの
+const XARGS_OPTS_WITH_VALUE = new Set(['-n', '-I', '-L', '-P', '-d', '-s', '-E', '-a'])
+
+// find の引数から -delete と -exec rm を見つけ、消えるものを下見するための引数を作る
+export function parseFindDelete(args) {
+  const del = args.indexOf('-delete')
+  const execRm = args.findIndex((t, i) => EXEC_ACTIONS.has(t) && (args[i + 1] ?? '').split('/').pop() === 'rm')
+  if (del === -1 && execRm === -1) return null
+  const dryRun = []
+  for (let k = 0; k < args.length; k++) {
+    const t = args[k]
+    if (t === '-delete') continue
+    if (EXEC_ACTIONS.has(t)) {
+      while (k < args.length && args[k] !== ';' && args[k] !== '+') k++
+      continue
+    }
+    if (FIND_WRITE_ACTIONS.has(t)) {
+      k += t === '-fprintf' ? 2 : 1
+      continue
+    }
+    dryRun.push(t)
+  }
+  // -delete より前に絞り込みの条件がない（例: find . -delete -name x）と、たどったものが全部消える
+  let isUnfiltered = false
+  if (del !== -1) {
+    let k = args.findIndex((t) => t.startsWith('-') || t === '(' || t === '!')
+    isUnfiltered = true
+    while (k !== -1 && k < del) {
+      if (FIND_GLOBAL_OPTS.has(args[k])) k += 2
+      else if (FIND_GLOBAL_FLAGS.has(args[k])) k += 1
+      else {
+        isUnfiltered = false
+        break
+      }
+    }
+  }
+  return { dryRun, isUnfiltered, via: del !== -1 ? '-delete' : '-exec rm' }
+}
+
 // 危険な操作を見つけて返す。各要素は { kind, cwd, ... }。cd と git -C で作業フォルダを追う
-export function detectRisks(command) {
+// bash -c / sh -c / eval の中身は、同じルールでもう一度調べる
+export function detectRisks(command, baseCwd = null) {
   const risks = []
-  let cwd = null
+  let cwd = baseCwd
   for (const raw of segments(command)) {
     const tokens = stripPrefix(raw)
     if (!tokens.length) continue
@@ -83,6 +129,30 @@ export function detectRisks(command) {
 
     if (name === 'cd' && args[0]) {
       cwd = joinPath(cwd, args[0])
+      continue
+    }
+
+    if (SHELLS.has(name)) {
+      const c = args.findIndex((t) => /^-[A-Za-z]*c[A-Za-z]*$/.test(t))
+      if (c !== -1 && args[c + 1]) risks.push(...detectRisks(args[c + 1], cwd))
+      continue
+    }
+
+    if (name === 'eval' && args.length) {
+      risks.push(...detectRisks(args.join(' '), cwd))
+      continue
+    }
+
+    if (name === 'find') {
+      const found = parseFindDelete(args)
+      if (found) risks.push({ kind: 'find-delete', cwd, ...found })
+      continue
+    }
+
+    if (name === 'xargs') {
+      let k = 0
+      while (k < args.length && isFlag(args[k])) k += XARGS_OPTS_WITH_VALUE.has(args[k]) ? 2 : 1
+      if ((args[k] ?? '').split('/').pop() === 'rm') risks.push({ kind: 'xargs-rm', cwd })
       continue
     }
 
@@ -219,8 +289,15 @@ async function analyzeRm($, risk, sessionCwd, home, repoRoot) {
   let severity = 'high'
   let totalFiles = 0
   let totalBytes = 0
+  let unknown = 0
   for (const target of risk.targets) {
+    if (/[$`]/.test(target)) {
+      unknown += 1
+      lines.push(target + '  (変数: 実行するまで中身が分からない)')
+      continue
+    }
     if (/[*?[]/.test(target)) {
+      unknown += 1
       lines.push(target + '  (glob: 展開せずに表示)')
       continue
     }
@@ -248,7 +325,8 @@ async function analyzeRm($, risk, sessionCwd, home, repoRoot) {
   return {
     title: 'rm -r' + (risk.force ? 'f' : '') + where,
     severity,
-    summary: totalFiles + ' 個のファイル（' + formatBytes(totalBytes) + '）を削除',
+    summary:
+      totalFiles + ' 個のファイル（' + formatBytes(totalBytes) + '）を削除' + (unknown ? ' + 中身が事前に分からない対象 ' + unknown + ' 件' : ''),
     lines,
   }
 }
@@ -341,12 +419,41 @@ async function analyzeGit($, risk) {
   }
 }
 
+// find を -delete / -exec rm 抜きで実行して、消える予定のものを一覧にする
+async function analyzeFind($, risk, sessionCwd, home, repoRoot) {
+  // 条件より前に並ぶのが起点のフォルダ。省略されたら find は . から始める
+  const firstExpr = risk.dryRun.findIndex((t) => t.startsWith('-') || t === '(' || t === '!')
+  const roots = firstExpr === -1 ? risk.dryRun : risk.dryRun.slice(0, firstExpr)
+  const paths = (roots.length ? roots : ['.']).map((r) => normalize(absolute(joinPath(risk.cwd, r), sessionCwd, home)))
+  const isWide = paths.some((p) => p === '/' || p === home || p === repoRoot || p === normalize(sessionCwd))
+  let lines = []
+  try {
+    const r = await $.process.run(['find', ...risk.dryRun], { cwd: risk.cwd ?? undefined, timeoutMs: 15000 })
+    lines = nonEmpty(r.stdout)
+  } catch {
+    return { title: 'find ' + risk.via, severity: 'high', summary: '消えるものの一覧を作れませんでした（時間切れなど）', lines: [] }
+  }
+  const severity = risk.isUnfiltered || (isWide && lines.length > 100) ? 'critical' : lines.length ? 'high' : 'low'
+  const note = risk.isUnfiltered ? '（-delete が条件より前にあるので、たどったものが全部消える）' : ''
+  return {
+    title: 'find ' + risk.via + note,
+    severity,
+    summary: lines.length ? lines.length + ' 件を削除' : '削除されるものはなし',
+    lines,
+  }
+}
+
 async function analyze($, risk) {
   const sessionCwd = await $.session.cwd()
-  if (risk.kind !== 'rm') return analyzeGit($, risk)
+  if (risk.kind === 'xargs-rm') {
+    return { title: 'xargs rm', severity: 'high', summary: 'パイプで渡されたファイルを削除（対象は実行時に決まるので事前に数えられない）', lines: [] }
+  }
+  if (risk.kind !== 'rm' && risk.kind !== 'find-delete') return analyzeGit($, risk)
   const home = (await $.env.get('HOME')) ?? null
   const top = await git($, null, ['rev-parse', '--show-toplevel'])
-  return analyzeRm($, risk, sessionCwd, home, top.ok ? top.out.trim() : null)
+  const repoRoot = top.ok ? top.out.trim() : null
+  if (risk.kind === 'find-delete') return analyzeFind($, risk, sessionCwd, home, repoRoot)
+  return analyzeRm($, risk, sessionCwd, home, repoRoot)
 }
 
 const SEVERITY = { critical: 3, high: 2, low: 1 }
