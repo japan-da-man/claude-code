@@ -1,6 +1,6 @@
 {
   "name": "token-weather",
-  "description": "[mod] Shows how full the context window is as a weather forecast above the prompt",
+  "description": "[mod] A live forecast of the context window above the prompt: weather icon, fill, tokens, a chart of the last turns and how much the last turn added. Based on Anthropic's claude-code-playground mod",
   "author": {
     "name": "japan-da-man"
   },

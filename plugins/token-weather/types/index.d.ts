@@ -1,12 +1,8 @@
 declare module 'claude-code' {
   interface PluginState {
     'token-weather': {
-      // 直近ターンの使用率（%）、最新の計測値、直前のターンでの増減
-      weather: {
-        history: number[]
-        context: { tokens: number; window: number; percent: number } | null
-        delta: number | null
-      }
+      // 直近のターンの計測値（古い順）
+      readings: Array<{ tokens: number; window: number; percent: number }>
     }
   }
 }
