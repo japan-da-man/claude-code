@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { forecast, formatDelta, formatTokens, sparkline } from '../hooks/register.js'
+import { forecast, formatDelta, formatTokens, nextWeather, sparkline } from '../hooks/register.js'
 
 const BAND = {
   plugin: 'token-weather',
@@ -68,6 +68,19 @@ test('a repeated measurement with the same fill is not a turn', async ($, on) =>
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /last turns .*\+10k/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /±0/ })).toBeUndefined()
+})
+
+test('nextWeather keeps history when the same usage is fed again after a reload', () => {
+  const empty = { history: [], context: null, delta: null }
+  const a = nextWeather(empty, { tokens: 40000, window: 200000, percent: 20 })
+  expect(a).toEqual({ history: [20], context: { tokens: 40000, window: 200000, percent: 20 }, delta: null })
+  const b = nextWeather(a, { tokens: 52000, window: 200000, percent: 26 })
+  expect(b.history).toEqual([20, 26])
+  expect(b.delta).toBe(12000)
+  // 読み込み直した直後の session.start と最初の計測は同じ値を持ってくる。履歴も増減も変えない
+  expect(nextWeather(b, { tokens: 52000, window: 200000, percent: 26 })).toBe(b)
+  // 最初の応答前（使用率なし）は何も変えない
+  expect(nextWeather(b, { window: 200000 })).toBe(b)
 })
 
 test('/weather hides the band', async ($, on) => {

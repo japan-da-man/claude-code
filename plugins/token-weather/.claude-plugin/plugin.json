@@ -1,6 +1,9 @@
 {
   "name": "token-weather",
   "description": "[mod] Shows how full the context window is as a weather forecast above the prompt",
-  "author": { "name": "japan-da-man" },
-  "repository": "https://github.com/japan-da-man/claude-code"
+  "author": {
+    "name": "japan-da-man"
+  },
+  "repository": "https://github.com/japan-da-man/claude-code",
+  "types": "./types/index.d.ts"
 }

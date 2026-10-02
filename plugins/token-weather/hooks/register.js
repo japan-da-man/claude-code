@@ -1,12 +1,10 @@
 // Token Weather: コンテキストの埋まり具合を天気にたとえて、プロンプトの上に表示する
+import { atom, read, update } from 'claude-code'
 
-// 直近ターンの使用率（%）。スパークラインに使う
 const HISTORY_SIZE = 12
-let history = []
-// 最新の値: { tokens, window, percent }
-let context = null
-// 直前のターンで増減したトークン数。比べる前の値がないうちは null
-let delta = null
+// 履歴・最新の計測値・直前のターンでの増減。$.state に置くので、プラグインを読み込み直しても消えない
+// （/clear・/resume・/branch では Claude Code が初期値に戻す）
+const weather = atom({ plugin: 'token-weather', key: 'weather' }, { history: [], context: null, delta: null })
 // /weather で表示を切り替える
 let hidden = false
 
@@ -42,42 +40,34 @@ export function sparkline(values) {
   return values.map((p) => BARS[Math.min(BARS.length - 1, Math.floor((p / 100) * BARS.length))]).join('')
 }
 
-// session.measure / usage() の context を取り込む。使用率が動いたら履歴に積む
-function record(next) {
-  if (typeof next?.percent !== 'number') {
-    context = { ...context, window: next?.window }
-    return
-  }
-  const tokens = next.tokens ?? 0
+// session.measure / usage() の context を取り込んだ次の状態を返す。使用率が動いたら履歴に積む
+export function nextWeather(state, measured) {
+  const { history, context } = state
+  // 最初の応答が来るまでは使用率がない。その間は何も積まない
+  if (typeof measured?.percent !== 'number') return state
+  const tokens = measured.tokens ?? 0
   // 起動直後やリロード直後は、読み込んだ値と同じ計測がもう一度届く。ターンではないので数えない
-  if (tokens === context?.tokens && next.percent === context?.percent) return
-  delta = typeof context?.tokens === 'number' ? tokens - context.tokens : null
-  context = { tokens, window: next.window, percent: next.percent }
-  history = [...history, next.percent].slice(-HISTORY_SIZE)
+  if (tokens === context?.tokens && measured.percent === context?.percent) return state
+  return {
+    history: [...history, measured.percent].slice(-HISTORY_SIZE),
+    context: { tokens, window: measured.window, percent: measured.percent },
+    delta: context ? tokens - context.tokens : null,
+  }
 }
 
 export function register(on) {
   on('session.start', async ($, e, next) => {
     hidden = (await $.store.get('hidden')) === true
-    record((await $.session.usage()).context)
+    const usage = await $.session.usage()
+    await update($, weather, (s) => nextWeather(s, usage.context))
     await $.command.register({ name: 'weather', description: 'Token Weather の表示を切り替える', immediate: true })
     return next(e)
   })
 
   // ターンごと（と使用量が動いたとき）に届く計測値
   on('session.measure', async ($, e, next) => {
-    if (e.changed.includes('context')) {
-      record(e.context)
-      $.ui.invalidate('ui.render')
-    }
-    return next(e)
-  })
-
-  // /clear などで会話がリセットされたら履歴も消す
-  on('session.end', async ($, e, next) => {
-    history = []
-    context = null
-    delta = null
+    // $.state に書くと、それを読んでいる帯は自動で描き直される
+    if (e.changed.includes('context')) await update($, weather, (s) => nextWeather(s, e.context))
     return next(e)
   })
 
@@ -92,6 +82,7 @@ export function register(on) {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (hidden || e.props.hasSurvey) return next(e)
     const { Box, Text } = $.ui.resolve(e)
+    const { history, context, delta } = await read($, weather)
 
     const percent = context?.percent ?? 0
     const f = forecast(percent)
