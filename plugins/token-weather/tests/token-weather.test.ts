@@ -60,6 +60,16 @@ test('band shows how many tokens the last turn added', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /last turns .*\+12k/ })).toBeDefined()
 })
 
+test('a repeated measurement with the same fill is not a turn', async ($, on) => {
+  stubEngine(on)
+  await $.session.measure({ context: { tokens: 60000, window: 200000, percent: 30 }, rateLimits: [], changed: ['context'] })
+  await $.session.measure({ context: { tokens: 70000, window: 200000, percent: 35 }, rateLimits: [], changed: ['context'] })
+  await $.session.measure({ context: { tokens: 70000, window: 200000, percent: 35 }, rateLimits: [], changed: ['context'] })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /last turns .*\+10k/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /±0/ })).toBeUndefined()
+})
+
 test('/weather hides the band', async ($, on) => {
   stubEngine(on)
   await $.command.run({ command: 'weather', args: '' })

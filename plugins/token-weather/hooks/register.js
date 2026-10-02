@@ -49,6 +49,8 @@ function record(next) {
     return
   }
   const tokens = next.tokens ?? 0
+  // 起動直後やリロード直後は、読み込んだ値と同じ計測がもう一度届く。ターンではないので数えない
+  if (tokens === context?.tokens && next.percent === context?.percent) return
   delta = typeof context?.tokens === 'number' ? tokens - context.tokens : null
   context = { tokens, window: next.window, percent: next.percent }
   history = [...history, next.percent].slice(-HISTORY_SIZE)
