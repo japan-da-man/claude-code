@@ -12,6 +12,7 @@ japan-da-man の Claude Code プラグイン（mods を含む）を管理する�
 | [usage-stats](plugins/usage-stats) | `/stats` で利用統計のパネルを開く。セッション数・メッセージ数・トークン数・利用日数・連続日数・よく使うモデル・日ごとのヒートマップ |
 | [blast-radius](plugins/blast-radius) | 危険なシェルコマンドを実行前に止め、何が消えるか・変わるかをペインに出して **Proceed / Cancel** で選ばせる（10分答えがなければ止める）。`rm -r`/`-f`、`git reset --hard`、force push、`git clean`、変更の破棄、`git branch -D`、`git stash drop/clear`、マイグレーション、`find -delete`、`xargs rm`。`bash -c` / `eval` の中も調べる。`/blast-radius` で履歴 |
 | [replay-theater](plugins/replay-theater) | ターンの中で Claude が行ったファイル編集を記録する。ターンが終わるとプロンプトの上に `▶ Replay: N edits` が出て、`r` か `/replay` でペインを開き、編集を 1 件ずつ差分で見られる（Prev / Next / Close） |
+| [spec-flow](plugins/spec-flow) | 「〇〇な機能が欲しい」と話しかけるか `/spec-flow:spec <要望>` で、**要求整理 → 影響画面確認 → 要件定義 → 機能案・UI案** を 1 段階ずつ承認しながら進める。曖昧な点はヒアリングし、影響調査と案出しはサブエージェントが行う。成果物は `docs/specs/<id>/`（UI 案の HTML モックは Desktop なら Artifact にも公開。`--local` で公開しない）。`/specs` でチェックリストを開き、チェックで承認・修正依頼もできる |
 | [mod-dev](plugins/mod-dev) | skill `add-mod`。「〇〇する mod を作って」で雛形・テスト・登録まで行う。marketplace リポジトリでは marketplace.json / bundle / README も更新し、それ以外では単体の mod を作る |
 
 ## インストール

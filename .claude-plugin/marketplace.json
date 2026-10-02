@@ -8,7 +8,7 @@
     {
       "name": "japan-da-man-mods",
       "source": "./plugins/japan-da-man-mods",
-      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater and mod-dev"
+      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow and mod-dev"
     },
     {
       "name": "todo-mod",
@@ -39,6 +39,11 @@
       "name": "replay-theater",
       "source": "./plugins/replay-theater",
       "description": "[mod] Records the file edits Claude makes in a turn; /replay or r steps through the diffs one at a time in a pane. Based on Anthropic's claude-code-playground mod"
+    },
+    {
+      "name": "spec-flow",
+      "source": "./plugins/spec-flow",
+      "description": "[mod] [skills] Turns a feature request into a spec, one approved step at a time: clarify the request (asking you what is unclear), survey every affected screen and feature with subagents, write the requirements, then propose several feature and UI options with mockups. Saved under docs/specs/; /specs shows the checklist"
     }
   ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "japan-da-man-mods",
-  "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater and mod-dev",
+  "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow and mod-dev",
   "author": {
     "name": "japan-da-man"
   },
@@ -11,6 +11,7 @@
     "usage-stats",
     "blast-radius",
     "replay-theater",
+    "spec-flow",
     "mod-dev"
   ]
 }

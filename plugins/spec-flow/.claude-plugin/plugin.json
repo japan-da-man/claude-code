@@ -1,0 +1,9 @@
+{
+  "name": "spec-flow",
+  "description": "[mod] [skills] Turns a feature request into a spec, one approved step at a time: clarify the request (asking you what is unclear), survey every affected screen and feature with subagents, write the requirements, then propose several feature and UI options with mockups. Saved under docs/specs/; /specs shows the checklist",
+  "author": {
+    "name": "japan-da-man"
+  },
+  "repository": "https://github.com/japan-da-man/claude-code",
+  "types": "./types/index.d.ts"
+}
