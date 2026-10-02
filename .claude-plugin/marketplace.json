@@ -8,7 +8,7 @@
     {
       "name": "japan-da-man-mods",
       "source": "./plugins/japan-da-man-mods",
-      "description": "Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius and mod-dev"
+      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater and mod-dev"
     },
     {
       "name": "todo-mod",
@@ -33,7 +33,12 @@
     {
       "name": "blast-radius",
       "source": "./plugins/blast-radius",
-      "description": "Catches risky shell commands (rm -rf, find -delete, xargs rm, git reset --hard, force push, git clean, discarding changes), including inside bash -c and eval, before they run, shows what they would touch in a side pane, and asks before running them"
+      "description": "[mod] Catches risky shell commands (rm -rf, find -delete, xargs rm, git reset --hard, force push, git clean, discarding changes), including inside bash -c and eval, before they run, shows what they would touch in a side pane, and asks before running them"
+    },
+    {
+      "name": "replay-theater",
+      "source": "./plugins/replay-theater",
+      "description": "[mod] Records every file edit Claude makes in a turn; /replay or r steps through the diffs one at a time in a docked pane"
     }
   ]
 }

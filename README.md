@@ -11,6 +11,7 @@ japan-da-man の Claude Code プラグイン（mods を含む）を管理する�
 | [token-weather](plugins/token-weather) | コンテキストの埋まり具合を天気（☀ Clear → ⛈ Storm）でプロンプトの上に表示する。`/weather` で表示切り替え |
 | [usage-stats](plugins/usage-stats) | `/stats` で利用統計のパネルを開く。セッション数・メッセージ数・トークン数・利用日数・連続日数・よく使うモデル・日ごとのヒートマップ |
 | [blast-radius](plugins/blast-radius) | `rm -rf`・`find -delete`・`xargs rm`・`git reset --hard`・force push・`git clean`・変更の破棄・`git branch -D` などを実行前に捕まえ（`bash -c` / `sh -c` / `eval` の中も調べる）、消えるファイルやコミットをサイドペインに出して「実行する / 止める」を確認する。`/blast-radius` で履歴を表示 |
+| [replay-theater](plugins/replay-theater) | ターンの中で Claude が行ったファイル編集を記録する。ターンが終わるとプロンプトの上に `▶ Replay: N edits` が出て、`r` か `/replay` でペインを開き、編集を 1 件ずつ差分で見られる（Prev / Next / Close） |
 | [mod-dev](plugins/mod-dev) | skill `add-mod`。「〇〇する mod を作って」で雛形・テスト・登録まで行う。marketplace リポジトリでは marketplace.json / bundle / README も更新し、それ以外では単体の mod を作る |
 
 ## インストール

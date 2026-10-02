@@ -1,6 +1,6 @@
 {
   "name": "blast-radius",
-  "description": "Catches risky shell commands (rm -rf, find -delete, xargs rm, git reset --hard, force push, git clean, discarding changes), including inside bash -c and eval, before they run, shows what they would touch in a side pane, and asks before running them",
+  "description": "[mod] Catches risky shell commands (rm -rf, find -delete, xargs rm, git reset --hard, force push, git clean, discarding changes), including inside bash -c and eval, before they run, shows what they would touch in a side pane, and asks before running them",
   "author": {
     "name": "japan-da-man"
   },

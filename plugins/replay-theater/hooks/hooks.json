@@ -1,0 +1,4 @@
+{
+  "description": "replay-theater hooks module",
+  "modules": ["./register.js"]
+}
