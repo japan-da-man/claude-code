@@ -58,6 +58,7 @@ argument-hint: "<要望> | <spec id> [--local]"
 
 - `status` は `pending` → `in_progress` → `review` → `approved` と進む。
 - 段階を始めるときに `in_progress`、成果物を書き終えたら `review`、承認されたら `approved` と `approvedAt` を書く。書くたびに `updatedAt` も更新する。
+- 時刻は推測せず、`date -u +%Y-%m-%dT%H:%M:%SZ` で取る（mod は `updatedAt` の新しい順に並べる）。id の日付も `date +%Y%m%d` で取る。
 - いつも読み直してから書き換える（mod が同じファイルを書くことがある）。
 
 ### プロジェクトの前提をつかむ
