@@ -18,7 +18,7 @@
     {
       "name": "token-weather",
       "source": "./plugins/token-weather",
-      "description": "[mod] Shows how full the context window is as a weather forecast above the prompt"
+      "description": "[mod] A live forecast of the context window above the prompt: weather icon, fill, tokens, a chart of the last turns and how much the last turn added. Based on Anthropic's claude-code-playground mod"
     },
     {
       "name": "usage-stats",
@@ -33,12 +33,12 @@
     {
       "name": "blast-radius",
       "source": "./plugins/blast-radius",
-      "description": "[mod] Catches risky shell commands (rm -rf, find -delete, xargs rm, git reset --hard, force push, git clean, discarding changes), including inside bash -c and eval, before they run, shows what they would touch in a side pane, and asks before running them"
+      "description": "[mod] Holds risky shell commands (rm -rf, git reset --hard, force push, git clean, migrations, find -delete, xargs rm, also inside bash -c / eval) and shows what they would change in a pane with Proceed / Cancel. Based on Anthropic's claude-code-playground mod"
     },
     {
       "name": "replay-theater",
       "source": "./plugins/replay-theater",
-      "description": "[mod] Records every file edit Claude makes in a turn; /replay or r steps through the diffs one at a time in a docked pane"
+      "description": "[mod] Records the file edits Claude makes in a turn; /replay or r steps through the diffs one at a time in a pane. Based on Anthropic's claude-code-playground mod"
     }
   ]
 }

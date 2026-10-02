@@ -8,9 +8,9 @@ japan-da-man の Claude Code プラグイン（mods を含む）を管理する�
 | :- | :- |
 | [japan-da-man-mods](plugins/japan-da-man-mods) | **まとめてインストール用**。下のプラグインを全部入れる |
 | [todo-mod](plugins/todo-mod) | `/todo` で TODO パネルを開く。チェックを入れたタスクを Claude に依頼する |
-| [token-weather](plugins/token-weather) | コンテキストの埋まり具合を天気（☀ Clear → ⛈ Storm）でプロンプトの上に表示する。`/weather` で表示切り替え |
+| [token-weather](plugins/token-weather) | コンテキストの埋まり具合を天気でプロンプトの上に表示する（☀ Clear → ☁ Cloudy → ☂ Showers → ☇ Storm → ↯ Compact soon）。直近12ターンのグラフと、直前のターンの増減（`▲ +98.3k last turn`）付き。`/weather` で表示切り替え |
 | [usage-stats](plugins/usage-stats) | `/stats` で利用統計のパネルを開く。セッション数・メッセージ数・トークン数・利用日数・連続日数・よく使うモデル・日ごとのヒートマップ |
-| [blast-radius](plugins/blast-radius) | `rm -rf`・`find -delete`・`xargs rm`・`git reset --hard`・force push・`git clean`・変更の破棄・`git branch -D` などを実行前に捕まえ（`bash -c` / `sh -c` / `eval` の中も調べる）、消えるファイルやコミットをサイドペインに出して「実行する / 止める」を確認する。`/blast-radius` で履歴を表示 |
+| [blast-radius](plugins/blast-radius) | 危険なシェルコマンドを実行前に止め、何が消えるか・変わるかをペインに出して **Proceed / Cancel** で選ばせる（10分答えがなければ止める）。`rm -r`/`-f`、`git reset --hard`、force push、`git clean`、変更の破棄、`git branch -D`、`git stash drop/clear`、マイグレーション、`find -delete`、`xargs rm`。`bash -c` / `eval` の中も調べる。`/blast-radius` で履歴 |
 | [replay-theater](plugins/replay-theater) | ターンの中で Claude が行ったファイル編集を記録する。ターンが終わるとプロンプトの上に `▶ Replay: N edits` が出て、`r` か `/replay` でペインを開き、編集を 1 件ずつ差分で見られる（Prev / Next / Close） |
 | [mod-dev](plugins/mod-dev) | skill `add-mod`。「〇〇する mod を作って」で雛形・テスト・登録まで行う。marketplace リポジトリでは marketplace.json / bundle / README も更新し、それ以外では単体の mod を作る |
 
@@ -72,3 +72,7 @@ mod-dev を入れた状態でこのリポジトリを開き「〇〇する mod �
 `plugin.json` に `version` を書いていないので、コミットごとに新しいバージョンとして扱われる。
 
 mods は Claude Code v2.1.287 以降が必要。
+
+## 公式 mod をもとにしたもの
+
+`token-weather`・`blast-radius`・`replay-theater` は、Anthropic の [claude-code-playground](https://github.com/anthropics/claude-code-playground/tree/main/claude-code/mods) にある同名の mod（Apache-2.0）をもとに手を加えたもの。各プラグインに `LICENSE` を同梱し、各 `hooks/register.js` の先頭に元のコードの著作権表示と、こちらで変えた点を書いている。
