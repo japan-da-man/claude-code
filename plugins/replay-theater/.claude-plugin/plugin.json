@@ -1,7 +1,9 @@
 {
   "name": "replay-theater",
-  "description": "[mod] Records every file edit Claude makes in a turn; /replay or r steps through the diffs one at a time in a docked pane",
-  "author": { "name": "japan-da-man" },
+  "description": "[mod] Records the file edits Claude makes in a turn; /replay or r steps through the diffs one at a time in a pane. Based on Anthropic's claude-code-playground mod",
+  "author": {
+    "name": "japan-da-man"
+  },
   "repository": "https://github.com/japan-da-man/claude-code",
   "types": "./types/index.d.ts"
 }

@@ -1,16 +1,15 @@
 declare module 'claude-code' {
   interface PluginState {
     'replay-theater': {
-      // 直前のターンの編集。step は今ペインで見ている位置（0 始まり）
+      // 直前に編集があったターンの編集（1 件 = 1 ステップ）と、ペインで見ている位置（0 始まり）
       replay: {
-        edits: Array<{
-          path: string
+        steps: Array<{
           tool: string
-          lines: Array<{ kind: 'add' | 'del' | 'ctx' | 'gap'; text: string }>
-          added: number
-          removed: number
+          file: string
+          note: string
+          diff: Array<{ op: string; t: string }>
         }>
-        step: number
+        index: number
       }
     }
   }

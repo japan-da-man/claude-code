@@ -1,37 +1,38 @@
 import { expect, test } from 'claude-code/testing'
-import { diffLines, makeEdit, relative, withContext } from '../hooks/register.js'
+import { countChanges, diffLines, hintText, relPath, stepsFor, trimContext } from '../hooks/register.js'
 
-test('diffLines finds the changed line', () => {
-  expect(diffLines('a\nb\nc\n', 'a\nB\nc\n')).toEqual([
-    { kind: 'ctx', text: 'a' },
-    { kind: 'del', text: 'b' },
-    { kind: 'add', text: 'B' },
-    { kind: 'ctx', text: 'c' },
-  ])
-  expect(diffLines('', 'x\ny')).toEqual([
-    { kind: 'add', text: 'x' },
-    { kind: 'add', text: 'y' },
+test('diffLines finds the changed line with one line of context', () => {
+  const before = ['1', '2', '3', '4', '5', '6', '7'].join('\n')
+  const after = ['1', '2', '3', 'FOUR', '5', '6', '7'].join('\n')
+  expect(diffLines(before, after)).toEqual([
+    { op: ' ', t: '3' },
+    { op: '-', t: '4' },
+    { op: '+', t: 'FOUR' },
+    { op: ' ', t: '5' },
   ])
 })
 
-test('withContext keeps two lines around changes', () => {
-  const before = ['1', '2', '3', '4', '5', '6', '7', '8', '9'].join('\n')
-  const after = ['1', '2', '3', '4', 'FIVE', '6', '7', '8', '9'].join('\n')
-  const kept = withContext(diffLines(before, after))
-  expect(kept.map((l) => l.text)).toEqual(['3', '4', '5', 'FIVE', '6', '7'])
-  // 離れた 2 か所の変更の間には gap が入る
-  const two = withContext(diffLines(before, before.replace('2', 'TWO').replace('8', 'EIGHT')))
-  expect(two.map((l) => l.text)).toEqual(['1', '2', 'TWO', '3', '4', '…', '6', '7', '8', 'EIGHT', '9'])
+test('trimContext marks skipped lines between changes', () => {
+  const lines = ['a', 'B', 'c', 'd', 'e', 'F', 'g'].map((t) => ({ op: t === t.toUpperCase() ? '+' : ' ', t }))
+  expect(trimContext(lines).map((l) => l.t)).toEqual(['a', 'B', 'c', '⋯', 'e', 'F', 'g'])
 })
 
-test('makeEdit counts added and removed lines', () => {
-  const edit = makeEdit('src/greet.js', 'Edit', 'export function greet(name) {', 'export function welcome(name) {')
-  expect(edit).toMatchObject({ path: 'src/greet.js', tool: 'Edit', added: 1, removed: 1 })
+test('stepsFor turns each tool call into steps', () => {
+  expect(stepsFor({ tool: 'Edit', file_path: '/repo/src/greet.js', old_string: 'greet', new_string: 'welcome', replace_all: true }, '/repo', null)).toEqual([
+    { tool: 'Edit', file: 'src/greet.js', note: 'replace all', diff: [{ op: '-', t: 'greet' }, { op: '+', t: 'welcome' }] },
+  ])
+  const multi = stepsFor({ tool: 'MultiEdit', file_path: '/repo/a.js', edits: [{ old_string: 'x', new_string: 'y' }, { old_string: 'p', new_string: 'q' }] }, '/repo', null)
+  expect(multi.map((s) => s.note)).toEqual(['edit 1 of 2', 'edit 2 of 2'])
+  expect(stepsFor({ tool: 'Write', file_path: '/repo/new.md', content: 'hi\n' }, '/repo', null)[0].note).toBe('new file')
+  expect(stepsFor({ tool: 'Write', file_path: '/repo/old.md', content: 'hi\n' }, '/repo', 'bye\n')[0].note).toBe('rewrite')
 })
 
-test('relative strips the session folder', () => {
-  expect(relative('/repo/src/a.js', '/repo')).toBe('src/a.js')
-  expect(relative('/elsewhere/a.js', '/repo')).toBe('/elsewhere/a.js')
+test('helpers', () => {
+  expect(relPath('/repo', '/repo/src/a.js')).toBe('src/a.js')
+  expect(relPath('/repo', '/elsewhere/a.js')).toBe('/elsewhere/a.js')
+  expect(countChanges([{ op: '+', t: '' }, { op: '-', t: '' }, { op: '+', t: '' }])).toEqual({ add: 2, del: 1 })
+  expect(hintText(1)).toBe('▶ Replay: 1 edit (press r)')
+  expect(hintText(5)).toBe('▶ Replay: 5 edits (press r)')
 })
 
 function stubEngine(on) {
@@ -39,6 +40,7 @@ function stubEngine(on) {
   on('session.start', async ($, e) => ({ cwd: e.cwd }))
   on('session.cwd', async () => ({ value: '/repo' }))
   on('fs.exists', async () => ({ value: false }))
+  on('clock.sleep', async () => ({ value: undefined }))
   on('ui.open', async () => ({ value: { isPlaced: true } }))
   on('ui.close', async () => ({ value: undefined }))
   on('turn.start', async ($, e) => ({ turnId: e.turnId }))
@@ -48,12 +50,14 @@ function stubEngine(on) {
   on('ui.render', async ($, e) => $.ui.resolve(e).Box({ children: [] }))
 }
 
+const TURN = { answer: '', durationMs: 1, isAborted: false, reason: 'answer' } as const
+
 async function runTurn($) {
   await $.turn.start({ turnId: 't1', prompt: 'rename' })
   await $.tool.call({ tool: 'Edit', file_path: '/repo/src/greet.js', old_string: 'export function greet(name) {', new_string: 'export function welcome(name) {' })
   await $.tool.call({ tool: 'Read', file_path: '/repo/README.md' })
   await $.tool.call({ tool: 'Write', file_path: '/repo/NOTES.md', content: 'hello\nworld\n' })
-  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  await $.turn.complete({ ...TURN, turnId: 't1' })
 }
 
 const BAND = { plugin: 'replay-theater', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} } } as const
@@ -77,6 +81,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await pane.press({ key: 'next' })
     expect(await pane.find({ type: 'Text', text: 'step 2 of 2' })).toBeDefined()
     expect(await pane.find({ type: 'Text', text: 'NOTES.md' })).toBeDefined()
+    expect(await pane.find({ type: 'Text', text: 'Write · new file' })).toBeDefined()
     expect(await pane.find({ type: 'Text', text: '+ world' })).toBeDefined()
 
     // 最後より先には進まない
@@ -87,14 +92,14 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('a turn without edits clears the band', async ($, on) => {
+test('a turn without edits keeps the last replay', async ($, on) => {
   stubEngine(on)
   await $.session.start({ cwd: '/repo' })
   await runTurn($)
   await $.turn.start({ turnId: 't2', prompt: 'thanks' })
-  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+  await $.turn.complete({ ...TURN, turnId: 't2' })
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: /Replay:/ })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: '▶ Replay: 2 edits (press r)' })).toBeDefined()
 })
 
 test('failed edits are not recorded', async ($, on) => {
@@ -106,4 +111,11 @@ test('failed edits are not recorded', async ($, on) => {
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'step 1 of 1' })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: 'NOTES.md' })).toBeDefined()
+})
+
+test('/replay with nothing recorded says so', async ($, on) => {
+  stubEngine(on)
+  await $.session.start({ cwd: '/repo' })
+  const r = await $.command.run({ command: 'replay', args: '' })
+  expect(r.text).toBe('Replay Theater: no edits in the last turn.')
 })
