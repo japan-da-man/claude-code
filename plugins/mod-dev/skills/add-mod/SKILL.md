@@ -37,9 +37,11 @@ Ask the person only for what you cannot infer: what the mod should do, and its n
 ```json
 {
   "name": "<name>",
-  "description": "<one line>"
+  "description": "[mod] <one line>"
 }
 ```
+
+Start the description with `[mod]` so the plugin list shows it is a mod; the marketplace entry uses the same text.
 
 Add `author`, `repository` and `version` the way the marketplace's other plugins do. Without `version`, a git-hosted marketplace treats every commit as a new version; with it, it must be raised on every release or users never get the update.
 

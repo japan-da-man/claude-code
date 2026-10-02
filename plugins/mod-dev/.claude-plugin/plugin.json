@@ -1,6 +1,6 @@
 {
   "name": "mod-dev",
-  "description": "Skills for building Claude Code mods: scaffold, test and register a new mod in a plugin marketplace repo or on its own",
+  "description": "[skills] Skills for building Claude Code mods: scaffold, test and register a new mod in a plugin marketplace repo or on its own",
   "author": { "name": "japan-da-man" },
   "repository": "https://github.com/japan-da-man/claude-code"
 }

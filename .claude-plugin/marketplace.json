@@ -8,27 +8,27 @@
     {
       "name": "japan-da-man-mods",
       "source": "./plugins/japan-da-man-mods",
-      "description": "Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats and mod-dev"
+      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats and mod-dev"
     },
     {
       "name": "todo-mod",
       "source": "./plugins/todo-mod",
-      "description": "TODO pane: check a task to have Claude run it"
+      "description": "[mod] TODO pane: check a task to have Claude run it"
     },
     {
       "name": "token-weather",
       "source": "./plugins/token-weather",
-      "description": "Shows how full the context window is as a weather forecast above the prompt"
+      "description": "[mod] Shows how full the context window is as a weather forecast above the prompt"
     },
     {
       "name": "usage-stats",
       "source": "./plugins/usage-stats",
-      "description": "Usage stats pane: sessions, messages, tokens, active days, streak, favorite model and a daily heatmap"
+      "description": "[mod] Usage stats pane: sessions, messages, tokens, active days, streak, favorite model and a daily heatmap"
     },
     {
       "name": "mod-dev",
       "source": "./plugins/mod-dev",
-      "description": "Skills for building Claude Code mods: scaffold, test and register a new mod in a plugin marketplace repo or on its own"
+      "description": "[skills] Skills for building Claude Code mods: scaffold, test and register a new mod in a plugin marketplace repo or on its own"
     }
   ]
 }

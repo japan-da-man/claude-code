@@ -1,6 +1,6 @@
 {
   "name": "usage-stats",
-  "description": "Usage stats pane: sessions, messages, tokens, active days, streak, favorite model and a daily heatmap",
+  "description": "[mod] Usage stats pane: sessions, messages, tokens, active days, streak, favorite model and a daily heatmap",
   "author": { "name": "japan-da-man" },
   "repository": "https://github.com/japan-da-man/claude-code"
 }
