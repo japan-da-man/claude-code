@@ -5,6 +5,8 @@ const HISTORY_SIZE = 12
 let history = []
 // 最新の値: { tokens, window, percent }
 let context = null
+// 直前のターンで増減したトークン数。比べる前の値がないうちは null
+let delta = null
 // /weather で表示を切り替える
 let hidden = false
 
@@ -28,6 +30,12 @@ export function formatTokens(n) {
   return String(n)
 }
 
+// 12000 → +12k, -80000 → −80k（compact などで減ったとき）
+export function formatDelta(n) {
+  if (n === 0) return '±0'
+  return (n > 0 ? '+' : '−') + formatTokens(Math.abs(n))
+}
+
 const BARS = '▁▂▃▄▅▆▇█'
 
 export function sparkline(values) {
@@ -40,7 +48,9 @@ function record(next) {
     context = { ...context, window: next?.window }
     return
   }
-  context = { tokens: next.tokens ?? 0, window: next.window, percent: next.percent }
+  const tokens = next.tokens ?? 0
+  delta = typeof context?.tokens === 'number' ? tokens - context.tokens : null
+  context = { tokens, window: next.window, percent: next.percent }
   history = [...history, next.percent].slice(-HISTORY_SIZE)
 }
 
@@ -65,6 +75,7 @@ export function register(on) {
   on('session.end', async ($, e, next) => {
     history = []
     context = null
+    delta = null
     return next(e)
   })
 
@@ -93,7 +104,14 @@ export function register(on) {
     ]
     if (history.length) {
       children.push(
-        Text({ dimColor: true, children: ['last turns ', Text({ color: f.color, children: [sparkline(history)] })] }),
+        Text({
+          dimColor: true,
+          children: [
+            'last turns ',
+            Text({ color: f.color, children: [sparkline(history)] }),
+            ...(delta === null ? [] : [' ' + formatDelta(delta)]),
+          ],
+        }),
       )
     }
     if (f.hint) children.push(Text({ color: f.color, children: [f.hint] }))

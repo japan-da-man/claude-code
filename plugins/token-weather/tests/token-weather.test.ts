@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { forecast, formatTokens, sparkline } from '../hooks/register.js'
+import { forecast, formatDelta, formatTokens, sparkline } from '../hooks/register.js'
 
 const BAND = {
   plugin: 'token-weather',
@@ -33,6 +33,12 @@ test('formats token counts', () => {
   expect(formatTokens(1000000)).toBe('1M')
 })
 
+test('formats the per-turn delta', () => {
+  expect(formatDelta(12000)).toBe('+12k')
+  expect(formatDelta(-80000)).toBe('−80k')
+  expect(formatDelta(0)).toBe('±0')
+})
+
 test('sparkline maps percent to bars', () => {
   expect(sparkline([0, 50, 100])).toBe('▁▅█')
 })
@@ -44,6 +50,14 @@ test('band shows the weather after a measurement', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: 'Rain' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '80% of context' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '160k / 200k' })).toBeDefined()
+})
+
+test('band shows how many tokens the last turn added', async ($, on) => {
+  stubEngine(on)
+  await $.session.measure({ context: { tokens: 40000, window: 200000, percent: 20 }, rateLimits: [], changed: ['context'] })
+  await $.session.measure({ context: { tokens: 52000, window: 200000, percent: 26 }, rateLimits: [], changed: ['context'] })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /last turns .*\+12k/ })).toBeDefined()
 })
 
 test('/weather hides the band', async ($, on) => {
