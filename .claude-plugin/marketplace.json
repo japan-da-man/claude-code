@@ -8,7 +8,7 @@
     {
       "name": "japan-da-man-mods",
       "source": "./plugins/japan-da-man-mods",
-      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow and mod-dev"
+      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow, dev-extras and mod-dev"
     },
     {
       "name": "todo-mod",
@@ -49,6 +49,11 @@
       "name": "dev-flow",
       "source": "./plugins/dev-flow",
       "description": "[skills] General-purpose development flow: plan (break work into small approved tasks), tdd, debug (find the cause before fixing) and review, with subagents code-explorer, test-runner and reviewer that keep long output out of the main context"
+    },
+    {
+      "name": "dev-extras",
+      "source": "./plugins/dev-extras",
+      "description": "[skills] Handpicked skills adapted from open-source repos (MIT): ponytail (lazy-senior minimal implementation) and ponytail-review, grill-me (interview that sharpens a plan), handoff (pass the work to a fresh background agent), verification-before-completion (evidence before claims) and security-audit (Cloudflare's source-first audit workflow)"
     }
   ]
 }

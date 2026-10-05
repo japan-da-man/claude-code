@@ -1,0 +1,6 @@
+{
+  "name": "dev-extras",
+  "description": "[skills] Handpicked skills adapted from open-source repos (MIT): ponytail (lazy-senior minimal implementation) and ponytail-review, grill-me (interview that sharpens a plan), handoff (pass the work to a fresh background agent), verification-before-completion (evidence before claims) and security-audit (Cloudflare's source-first audit workflow)",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}
