@@ -1,0 +1,6 @@
+{
+  "name": "dev-flow",
+  "description": "[skills] General-purpose development flow: plan (break work into small approved tasks), tdd, debug (find the cause before fixing) and review, with subagents code-explorer, test-runner and reviewer that keep long output out of the main context",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}

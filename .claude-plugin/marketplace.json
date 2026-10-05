@@ -8,7 +8,7 @@
     {
       "name": "japan-da-man-mods",
       "source": "./plugins/japan-da-man-mods",
-      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow and mod-dev"
+      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow and mod-dev"
     },
     {
       "name": "todo-mod",
@@ -44,6 +44,11 @@
       "name": "spec-flow",
       "source": "./plugins/spec-flow",
       "description": "[mod] [skills] Turns a feature request into a spec, one approved step at a time: clarify the request (asking you what is unclear), survey every affected screen and feature with subagents, write the requirements, then propose several feature and UI options with mockups. Saved under docs/specs/; /specs shows the checklist"
+    },
+    {
+      "name": "dev-flow",
+      "source": "./plugins/dev-flow",
+      "description": "[skills] General-purpose development flow: plan (break work into small approved tasks), tdd, debug (find the cause before fixing) and review, with subagents code-explorer, test-runner and reviewer that keep long output out of the main context"
     }
   ]
 }
