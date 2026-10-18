@@ -36,7 +36,8 @@ function lineRunning(home) {
 function spawnLine(home) {
   mkdirSync(home, { recursive: true })
   const out = openSync(join(home, 'line.log'), 'a')
-  spawnChild(process.execPath, [LINE], { detached: true, stdio: ['ignore', out, out], env: { ...process.env, FACTORY_HOME: home } }).unref()
+  // path.matchesGlob がまだ experimental で、毎回ログに警告が出るので止める。
+  spawnChild(process.execPath, ['--disable-warning=ExperimentalWarning', LINE], { detached: true, stdio: ['ignore', out, out], env: { ...process.env, FACTORY_HOME: home } }).unref()
 }
 
 export function startLine({ home = factoryHome(), spawn = spawnLine } = {}) {
