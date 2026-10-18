@@ -42,6 +42,9 @@ export function mergeConfig(project) {
   check(typeof threshold === 'number' && threshold > 0 && threshold <= 1, 'satisfaction.threshold', '0 より大きく 1 以下')
   check(Number.isInteger(c.max_rounds) && c.max_rounds >= 1, 'max_rounds', '1 以上の整数')
   check(Array.isArray(c.protected_paths), 'protected_paths', '文字列の配列')
+  // Codex のサンドボックスは読み取りを制限できず、隠しシナリオを読めてしまう。
+  // 検証役は agent-device が手元のランナーと通信するので、ネットワークを止める Codex では動かない恐れがある。
+  for (const role of ['implement', 'verify']) check(!/^codex(:|$)/.test(c.models[role]), `models.${role}`, 'Codex は使えない（Claude のモデルにする）')
   return c
 }
 

@@ -10,14 +10,19 @@ export function render(name, vars) {
 }
 
 // 判定役の答えの最後の JSON 配列を読み、runs 件の { run, satisfied, symptom } になっているか確かめる。
+// 形は配列そのものか、{ "runs": [...] }（Codex の --output-schema で強制する形）のどちらでもよい。
 export function parseJudgement(text, runs) {
   const fenced = [...text.matchAll(/```json\s*([\s\S]*?)```/g)].pop()?.[1]
-  const raw = fenced ?? text.slice(text.indexOf('['), text.lastIndexOf(']') + 1)
   let list
   try {
-    list = JSON.parse(raw)
+    const whole = JSON.parse(fenced ?? text)
+    list = Array.isArray(whole) ? whole : whole.runs
   } catch {
-    throw new Error('判定役の答えに JSON がありません')
+    try {
+      list = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1))
+    } catch {
+      throw new Error('判定役の答えに JSON がありません')
+    }
   }
   if (!Array.isArray(list) || list.length !== runs) throw new Error(`判定は ${runs} 件のはずが ${Array.isArray(list) ? list.length : 0} 件です`)
   return list.map((r, i) => {

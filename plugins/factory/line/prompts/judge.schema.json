@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runs"],
+  "properties": {
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run", "satisfied", "symptom"],
+        "properties": {
+          "run": { "type": "integer" },
+          "satisfied": { "type": "boolean" },
+          "symptom": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}
