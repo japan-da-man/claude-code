@@ -97,15 +97,16 @@ AI エージェントで機能を作るソフトウェアファクトリーを�
   .factory/config.json             工場の設定（コミットする）
   docs/factory/<id>/spec.md        仕様（PR に含める）
 
-~/.factory/<project>/
-  queue/                           待ち行列（確定した機能ID）
-  line.lock                        ラインが動いているかどうか
-  <id>/
-    scenarios/*.md                 隠しシナリオ（実装役は読めない）
-    runs/<周>/<シナリオ>/<回>/      実行記録（操作ログ、スクリーンショット、画面構造）
-    judgements/<周>.json           判定結果（満足度、シナリオごとの結果、症状）
-    state.json                     進み具合（周回数、一時停止中か、など）
-    report.md                      PR に載せるレポート
+~/.factory/
+  queue/                           待ち行列（全プロジェクト共通。1件1ファイル）
+  line.lock                        ラインが動いているかどうか（全プロジェクトで1本）
+  <project>/
+    <id>/
+      scenarios/*.md               隠しシナリオ（実装役は読めない）
+      runs/<周>/<シナリオ>/<回>/    実行記録（操作ログ、スクリーンショット、画面構造）
+      judgements/<周>.json         判定結果（満足度、シナリオごとの結果、症状）
+      state.json                   進み具合（周回数、一時停止中か、など）
+      report.md                    PR に載せるレポート
 ```
 
 `<project>` はリポジトリの絶対パスから作る短い名前。`<id>` は `YYYYMMDD-<短い英語名>`（日時は `date` で取る）。
