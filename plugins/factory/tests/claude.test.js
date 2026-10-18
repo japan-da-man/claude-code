@@ -26,6 +26,13 @@ test('implement role is locked out of the factory home', () => {
   assert.deepEqual(settings.sandbox.filesystem.denyRead, ['/Users/me/.factory'])
   assert.equal(settings.sandbox.allowUnsandboxedCommands, false)
   assert.equal(settings.sandbox.failIfUnavailable, true)
+  assert.deepEqual(settings.sandbox.excludedCommands, [])
+})
+
+test('build tools that need the simulator can run outside the sandbox', () => {
+  const args = buildArgs({ model: 'sonnet', allowedTools: ['Bash(xcodebuild *)'], hide: '/h', unsandboxed: ['xcodebuild *'] })
+  const settings = JSON.parse(args[args.indexOf('--settings') + 1])
+  assert.deepEqual(settings.sandbox.excludedCommands, ['xcodebuild *'])
 })
 
 test('verify and judge roles get the feature dir added instead', () => {

@@ -24,7 +24,7 @@ test('a missing variable is an error, not a blank', () => {
 })
 
 test('verify and judge prompts fill every placeholder', () => {
-  const v = render('verify', { scenario: '/h/s/share-02.md', out: '/h/runs/1/share-02/1', bundle_id: 'com.example.App', device: 'iPhone 17' })
+  const v = render('verify', { scenario: '/h/s/share-02.md', out: '/h/runs/1/share-02/1', bundle_id: 'com.example.App', udid: 'U', session: 'f-1-share-02-1' })
   assert.doesNotMatch(v, /\{\{/)
   const j = render('judge', { scenario: '/h/s/share-02.md', runs: '- /h/runs/1/share-02/1' })
   assert.doesNotMatch(j, /\{\{/)

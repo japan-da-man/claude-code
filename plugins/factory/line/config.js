@@ -6,7 +6,7 @@ export const CONFIG_PATH = join('.factory', 'config.json')
 
 export const DEFAULTS = {
   type: null,
-  ios: { project: null, scheme: null, bundle_id: null, device: 'iPhone 17' },
+  ios: { project: null, scheme: null, bundle_id: null, device: 'iPhone 17', prebuild: null },
   autonomy: 5,
   models: { interview: 'opus', scenario: 'opus', implement: 'sonnet', verify: 'sonnet', judge: 'opus' },
   satisfaction: { runs_per_scenario: 3, threshold: 0.95 },

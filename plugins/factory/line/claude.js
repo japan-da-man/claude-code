@@ -10,14 +10,15 @@ export class UsageLimitError extends Error {
 
 // hide: 実装役から隠すディレクトリ（工場の置き場所）。Read ツールは deny で、
 // Bash から読む抜け道はサンドボックスで塞ぐ。サンドボックスが使えなければ起動しない。
+// unsandboxed: サンドボックスの中では動かないコマンド（xcodebuild はシミュレーターのサービスに繋がらない）。
 // addDirs: 検証役・判定役に読ませるディレクトリ。
-export function buildArgs({ model, allowedTools, hide = null, addDirs = [] }) {
+export function buildArgs({ model, allowedTools, hide = null, unsandboxed = [], addDirs = [] }) {
   const args = ['-p', '--output-format', 'json', '--model', model, '--permission-mode', 'dontAsk', '--allowedTools', allowedTools.join(',')]
   for (const d of addDirs) args.push('--add-dir', d)
   if (hide) {
     const settings = {
       permissions: { deny: ['Read', 'Edit', 'Write', 'Grep', 'Glob'].map((t) => `${t}(/${hide}/**)`) },
-      sandbox: { enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true, filesystem: { denyRead: [hide] } },
+      sandbox: { enabled: true, allowUnsandboxedCommands: false, failIfUnavailable: true, excludedCommands: unsandboxed, filesystem: { denyRead: [hide] } },
     }
     args.push('--settings', JSON.stringify(settings))
   }
