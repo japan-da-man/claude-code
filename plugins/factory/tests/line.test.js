@@ -51,8 +51,8 @@ function setup({ protectedPaths = ['**/*.entitlements'], workflows = false } = {
 }
 
 // judge: 周ごとに満足かどうかを返す関数。
-function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Share.swift', ciPasses = true } = {}) {
-  const calls = { claude: [], gh: [], notify: [], round: 0 }
+function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Share.swift', ciPasses = true, blocked = () => false } = {}) {
+  const calls = { claude: [], gh: [], notify: [], round: 0, closed: [], verifies: 0 }
   const deps = {
     workRoot: s.work,
     now: () => 0,
@@ -68,7 +68,10 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
         return { result: 'implemented' }
       }
       if (role.prompt.includes('記録する担当')) {
+        calls.verifies += 1
         writeFileSync(join(role.cwd, 'log.md'), 'tapped\n')
+        const b = blocked(calls.verifies)
+        writeFileSync(join(role.cwd, 'result.json'), JSON.stringify({ completed: !b, blocked_by_tool: b, reason: b ? 'DEVICE_IN_USE' : '' }))
         return { result: '記録しました' }
       }
       const runs = (role.prompt.match(/^- .*runs\//gm) || []).length
@@ -83,6 +86,7 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
       findApp: () => '/x/App.app',
       resetApp: () => {},
       shutdown: () => {},
+      closeSession: (session) => calls.closed.push(session),
     },
     gh: (argv) => {
       const args = argv.join(' ')
@@ -181,4 +185,32 @@ test('with a CI workflow the merge waits for checks, and a red CI stops the feat
   assert.equal(loadState(red.fdir, {}).status, 'stopped')
   assert.equal(r.calls.gh.filter((a) => a.startsWith('pr create')).length, 1)
   assert.equal(r.calls.gh.some((a) => a.startsWith('pr merge')), false)
+})
+
+test('every verify run closes its simulator session, before and after', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s)
+  await runLine({ home: s.home, deps })
+  const sessions = calls.claude.filter((r) => r.prompt.includes('記録する担当')).map((r) => /--session ([\w.-]+)/.exec(r.prompt)[1])
+  for (const session of sessions) assert.equal(calls.closed.filter((c) => c === session).length, 2)
+})
+
+test('a run blocked by the tooling is retried once and not judged as a product failure', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s, { blocked: (n) => n === 1 })
+  await runLine({ home: s.home, deps })
+  assert.equal(calls.verifies, 7)
+  assert.equal(loadState(s.fdir, {}).status, 'merged')
+})
+
+test('tooling that stays blocked stops the feature as a factory error, without symptoms', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s, { blocked: () => true })
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'error')
+  assert.match(state.error, /DEVICE_IN_USE/)
+  assert.equal(calls.claude.filter((r) => r.prompt.includes('機能を実装する担当')).length, 1)
+  assert.match(calls.notify.at(-1).title, /エラー/)
+  assert.equal(listQueue(s.home).length, 0)
 })

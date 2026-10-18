@@ -71,6 +71,11 @@ export function shutdown(udid) {
   sh(`xcrun simctl shutdown ${q(udid)}`)
 }
 
+// 検証役が閉じ忘れたセッションは、端末を握ったまま次の実行を止めてしまうので、ラインが必ず閉じる。
+export function closeSession(session) {
+  sh(`agent-device close --session ${q(session)}`)
+}
+
 // 検証役は記録先（out）を作業ディレクトリにして動き、シナリオのフォルダだけを追加で読める。
 export function verifyRole({ config, udid, scenario, scenarioDir, out, session }) {
   return {
