@@ -106,7 +106,8 @@ FactorySample/DesignSystem/
 | その他 | `DSBadge` | 件数や状態の小さな印 |
 | | `DSCard` | 一覧の外で、まとまりを囲む |
 
-- 部品はアクセシビリティの識別子（`accessibilityIdentifier`）を呼び出し側から渡せるようにする。factory の検証役（agent-device）が画面を操作するのに使うため。
+- 部品はアクセシビリティの識別子（`accessibilityIdentifier`）を呼び出し側から渡せるようにする。factory の検証役（agent-device）が画面を操作するのに使うため。1つの要素でできた部品にはふつうに `.accessibilityIdentifier` を付け、入力欄と空の状態は中の要素に付けるため `id:` で、メッセージは `DSMessage` の `id` で渡す。
+- 一覧の画面には `.dsListStyle()` と `.dsRowBackground()` を付け、背景と行の色もトークンにそろえる。
 - 文字の大きさは Dynamic Type に合わせて大きくなるようにする。
 
 ## 6. トークン `tokens.json`
@@ -162,7 +163,7 @@ factory などの使う側が最初に読む入口。
     "device": "iPhone 17",
     "code": "FactorySample/DesignSystem",
     "sources": ["FactorySample"],
-    "catalog_pages": ["colors", "type", "spacing", "buttons", "inputs", "rows", "messages", "states", "patterns"]
+    "catalog_pages": ["colors", "type", "spacing", "buttons", "inputs", "rows", "messages", "dialogs", "states", "patterns"]
   },
   "protected_paths": ["design-system/**", "FactorySample/DesignSystem/**"],
   "check": { "command": "node design-system/check.mjs" },
@@ -194,9 +195,10 @@ factory などの使う側が最初に読む入口。
 
 ## 9. カタログ画面とスクリーンショット
 
-- カタログ画面は `#if DEBUG` で作り、起動引数 `-DesignSystemCatalog <ページ>` で開く。ページは `catalog_pages`（色・文字・余白・ボタン・入力・一覧の行・メッセージ・状態・画面の型）。1ページは1画面に収める。
+- カタログ画面は `#if DEBUG` で作り、起動引数 `-DesignSystemCatalog <ページ>` で開く。ページは `catalog_pages`（色・文字・余白と角丸・ボタン・入力・一覧・メッセージ・確認・状態・画面の型）。1ページは1画面に収める。色・文字・余白・角丸のページは、生成した `DS.*.all`（トークンの一覧）から描くので、`tokens.json` を変えれば自動でついてくる。
 - init はアプリの入口（`@main`）に、起動引数を見てカタログを出す数行を足す。
-- スクリーンショットはプラグインのスクリプトが撮る: `xcodegen generate`（`project.yml` があれば）→ `xcodebuild build`（DerivedData はリポジトリの外 `~/Library/Caches/design-system/<アプリ>/`）→ シミュレーターを起動 → 入れ直す → 時計などのステータスバーを固定 → ライトとダークそれぞれで各ページを起動して撮る。
+- スクリーンショットはプラグインのスクリプトが撮る: `xcodegen generate`（`project.yml` があれば）→ `xcodebuild build`（DerivedData はリポジトリの外 `~/Library/Caches/design-system/<アプリ>/`）→ シミュレーターを起動 → 入れ直す → 時計などのステータスバーを固定 → 一度起動しておく（入れ直した直後の起動は遅い）→ ライトとダークそれぞれで各ページを起動して撮る。
+- 起動の途中（真っ白な画面や、表示のアニメーションの途中）を撮らないよう、1秒おきに撮り直し、同じ画面が3回続いたら決める。15回で落ち着かなければ、最後の画像を残して `unsettled` として知らせる（2026-10-19 にサンプルアプリで、決まった時間だけ待つ方式では半分のページが真っ白に写った）。
 - 今の画面（カタログでない、ふつうの起動）も撮って、書き換えの前後を見比べられるようにする。
 - この Mac はメモリ 8GB でシミュレーターは1台ずつなので、factory のラインが動いている（`~/.factory/line.lock` のプロセスが生きている）ときは撮らずに知らせる。
 
@@ -230,9 +232,12 @@ plugins/design-system/
     check/SKILL.md             /design-system:check
   scripts/
     check.mjs                  トークンの検証と Swift の生成、コードのチェック（1ファイルで完結。アプリに写す）
-    cli.mjs                    スキルから呼ぶ CLI（tokens / install / screenshot / artifact-hash / status）
+    cli.mjs                    スキルから呼ぶ CLI（install / tokens / status / screenshot / artifact-stage / artifact-done）
     ios.mjs                    シミュレーターのビルドとスクリーンショット
-  templates/ios/DesignSystem/  部品とカタログ画面のひな形
+  templates/
+    tokens.json                最初のトークン（必ずある役割がすべて入った、iOS の標準に近い値）
+    docs/                      文書のひな形（README・components・copy・patterns）
+    ios/DesignSystem/          部品とカタログ画面のひな形
   tests/                       node --test
 ```
 
