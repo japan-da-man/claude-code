@@ -250,9 +250,12 @@ plugins/factory/
     scenario-writer.md    シナリオ作成役（model: opus）
   line/
     line.js               ラインのスクリプト
+    cli.js                スキルから呼ぶ CLI（new: 機能 ID と置き場所 / submit: 待ち行列とラインの起動 / status）
+    claude.js             役ごとの claude -p の呼び出し（隔離と利用上限の待機）
+    config.js paths.js queue.js state.js gate.js prompts.js
     adapters/ios.js       iOS アダプター
     prompts/              実装・検証・判定の役に渡すプロンプト
-  tests/
+  tests/                  node --test（偽の claude・gh を使った統合テストを含む）
 ```
 
 ## 14. リスクと未解決の点
