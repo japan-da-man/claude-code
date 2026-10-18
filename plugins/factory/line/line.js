@@ -1,0 +1,263 @@
+// ライン本体。待ち行列から機能を 1 つずつ取り出し、実装 → テスト → 検証 → 判定 → マージ判定 を進める。
+// 手順が決まっている工程はこのスクリプトが行い、モデルを呼ぶのは実装・検証・判定だけにする。
+import { spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import * as ios from './adapters/ios.js'
+import { runClaude, withUsageWait } from './claude.js'
+import { loadConfig } from './config.js'
+import { decideMerge, protectedChanges, summarize } from './gate.js'
+import { factoryHome, featureDir, projectHome, projectSlug } from './paths.js'
+import { parseJudgement, render } from './prompts.js'
+import { acquireLock, dequeue, releaseLock } from './queue.js'
+import { loadState, saveState } from './state.js'
+
+const IMPLEMENT_TOOLS = [
+  'Read', 'Edit', 'Write', 'Glob', 'Grep',
+  'Bash(xcodebuild *)', 'Bash(xcodegen *)', 'Bash(swift *)', 'Bash(ls *)',
+  'Bash(git add *)', 'Bash(git commit *)', 'Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)',
+]
+const UNSANDBOXED = ['xcodebuild *', 'xcodegen *']
+
+function sh(cmd, args, cwd) {
+  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  return { ok: r.status === 0, out: (r.stdout || '') + (r.stderr || '') }
+}
+
+function git(cwd, ...args) {
+  const r = sh('git', args, cwd)
+  if (!r.ok) throw new Error(`git ${args.join(' ')} が失敗しました: ${r.out}`)
+  return r.out.trim()
+}
+
+export function defaultDeps() {
+  return {
+    workRoot: join(homedir(), 'Library', 'Caches', 'factory'),
+    now: Date.now,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    log: (msg) => console.log(`[${new Date().toISOString()}] ${msg}`),
+    claude: (role) => runClaude(role),
+    adapter: {
+      udid: (config) => ios.resolveDevice(ios.listDevices(), config.ios.device),
+      commands: ios.commands,
+      buildAndTest: ios.buildAndTest,
+      findApp: ios.findApp,
+      resetApp: ios.resetApp,
+      shutdown: ios.shutdown,
+    },
+    gh: (args, cwd) => sh('gh', args, cwd),
+    notify: (title, body) => sh('osascript', ['-e', `display notification ${JSON.stringify(body)} with title ${JSON.stringify(title)}`]),
+  }
+}
+
+// シナリオのファイル（先頭に id と required を書いた Markdown）を読む。
+export function readScenarios(dir) {
+  return readdirSync(dir)
+    .filter((n) => n.endsWith('.md'))
+    .sort()
+    .map((name) => {
+      const head = /^---\n([\s\S]*?)\n---/.exec(readFileSync(join(dir, name), 'utf8'))?.[1] ?? ''
+      const id = /^id:\s*(.+)$/m.exec(head)?.[1].trim() ?? name.replace(/\.md$/, '')
+      return { id, path: join(dir, name), required: /^required:\s*true\s*$/m.test(head) }
+    })
+}
+
+function list(items) {
+  return items.length ? items.map((s) => `- ${s}`).join('\n') : 'なし'
+}
+
+function report({ id, state, config, decision, prUrl }) {
+  const rows = state.rounds.map((r) => `| ${r.round} | ${r.tests ? '通過' : '失敗'} | ${r.score === null ? '—' : `${(r.score * 100).toFixed(1)}%`} | ${r.requiredFailures?.join(', ') || '—'} |`)
+  return [
+    `# factory レポート: ${id}`,
+    '',
+    decision.merge ? '自動マージの条件をすべて満たしました。' : `自動マージしませんでした（${config.max_rounds} 周の上限まで試しました）。`,
+    prUrl ? `\nPR: ${prUrl}` : '',
+    '',
+    '| 周 | ビルドと全テスト | 満足度 | 不合格の必須シナリオ |',
+    '| - | - | - | - |',
+    ...rows,
+    '',
+    decision.reasons.length ? `## 満たせなかった条件\n\n${list(decision.reasons)}\n` : '',
+    state.symptoms.length ? `## 最後の周で見つかった症状\n\n${list(state.symptoms)}\n` : '',
+  ].join('\n')
+}
+
+async function call(deps, state, fdir, role) {
+  return withUsageWait(() => deps.claude(role), {
+    now: deps.now,
+    sleep: deps.sleep,
+    onPause: (until) => {
+      saveState(fdir, { ...state, status: 'paused', paused_until: until })
+      deps.log(`利用上限のため ${new Date(until).toISOString()} まで一時停止します`)
+    },
+  })
+}
+
+export async function runFeature({ entry, home, deps }) {
+  const { repo, id } = entry
+  const config = loadConfig(repo)
+  const fdir = featureDir(projectHome(repo, home), id)
+  const scenarios = readScenarios(join(fdir, 'scenarios'))
+  const work = join(deps.workRoot, projectSlug(repo))
+  const wt = join(work, id)
+  const derived = join(work, `${id}-derived`)
+  const branch = `factory/${id}`
+  const specRel = join('docs', 'factory', id, 'spec.md')
+  let state = { ...loadState(fdir, entry), status: 'running', paused_until: null }
+  const save = () => saveState(fdir, state)
+
+  if (!existsSync(wt)) {
+    mkdirSync(work, { recursive: true })
+    sh('git', ['fetch', '-q', 'origin'], repo)
+    const base = sh('git', ['rev-parse', '--verify', '-q', 'origin/HEAD'], repo).ok ? 'origin/HEAD' : 'HEAD'
+    git(repo, 'worktree', 'add', '-q', '-b', branch, wt, base)
+    mkdirSync(join(wt, 'docs', 'factory', id), { recursive: true })
+    copyFileSync(join(fdir, 'spec.md'), join(wt, specRel))
+    git(wt, 'add', specRel)
+    git(wt, 'commit', '-q', '-m', `Add factory spec for ${id}`)
+  }
+  const base = git(wt, 'merge-base', 'HEAD', sh('git', ['rev-parse', '--verify', '-q', 'origin/HEAD'], wt).ok ? 'origin/HEAD' : 'main')
+  const udid = deps.adapter.udid(config)
+  const cmds = deps.adapter.commands({ config, repo: wt, udid, derived })
+  let decision = { merge: false, reasons: [] }
+
+  while (state.status === 'running') {
+    const round = state.round
+    deps.log(`${id}: ${round} 周目 ${state.step}`)
+
+    if (state.step === 'implement') {
+      const prompt = render('implement', {
+        spec: specRel,
+        round,
+        symptoms: list(state.symptoms),
+        build: [cmds.prebuild, cmds.build].filter(Boolean).join(' && '),
+        test: [cmds.prebuild, cmds.test].filter(Boolean).join(' && '),
+        protected: list(config.protected_paths),
+      })
+      await call(deps, state, fdir, { cwd: wt, model: config.models.implement, allowedTools: IMPLEMENT_TOOLS, hide: home, unsandboxed: UNSANDBOXED, prompt })
+      state = { ...state, step: 'test' }
+      save()
+    }
+
+    if (state.step === 'test') {
+      const t = deps.adapter.buildAndTest(cmds, wt)
+      state = { ...state, step: t.ok ? 'verify' : 'decide', rounds: [...state.rounds.filter((r) => r.round !== round), { round, tests: t.ok, score: null, requiredFailures: [], testLog: t.ok ? null : `${t.command}\n${t.log}` }] }
+      save()
+    }
+
+    if (state.step === 'verify') {
+      const app = deps.adapter.findApp(derived)
+      for (const sc of scenarios) {
+        for (let run = 1; run <= config.satisfaction.runs_per_scenario; run++) {
+          const out = join(fdir, 'runs', String(round), sc.id, String(run))
+          mkdirSync(out, { recursive: true })
+          deps.adapter.resetApp({ udid, bundleId: config.ios.bundle_id, app })
+          const session = `factory-${id}-${round}-${sc.id}-${run}`.slice(0, 80)
+          await call(deps, state, fdir, ios.verifyRole({ config, udid, scenario: sc.path, scenarioDir: join(fdir, 'scenarios'), out, session }))
+        }
+      }
+      deps.adapter.shutdown(udid)
+      state = { ...state, step: 'judge' }
+      save()
+    }
+
+    if (state.step === 'judge') {
+      const runs = []
+      for (const sc of scenarios) {
+        const dirs = Array.from({ length: config.satisfaction.runs_per_scenario }, (_, i) => join(fdir, 'runs', String(round), sc.id, String(i + 1)))
+        const prompt = render('judge', { scenario: sc.path, runs: list(dirs) })
+        const res = await call(deps, state, fdir, { cwd: fdir, model: config.models.judge, allowedTools: ['Read', 'Glob'], prompt })
+        for (const j of parseJudgement(res.result, dirs.length)) runs.push({ ...j, scenario: sc.id, required: sc.required })
+      }
+      mkdirSync(join(fdir, 'judgements'), { recursive: true })
+      writeFileSync(join(fdir, 'judgements', `${round}.json`), JSON.stringify(runs, null, 2))
+      const s = summarize(runs)
+      state = { ...state, step: 'decide', symptoms: s.symptoms, rounds: state.rounds.map((r) => (r.round === round ? { ...r, score: s.score, requiredFailures: s.requiredFailures } : r)) }
+      save()
+    }
+
+    if (state.step === 'decide') {
+      const r = state.rounds.find((x) => x.round === round)
+      const changed = git(wt, 'diff', '--name-only', base, 'HEAD').split('\n').filter(Boolean)
+      const protectedHits = protectedChanges(changed, config.protected_paths)
+      decision = decideMerge({
+        summary: { score: r.score ?? 0, requiredFailures: r.requiredFailures },
+        threshold: config.satisfaction.threshold,
+        testsPassed: r.tests,
+        ci: 'none',
+        protectedHits,
+      })
+      const symptoms = [
+        ...(r.tests ? [] : [`ビルドか全テストが通らない:\n${r.testLog}`]),
+        ...(protectedHits.length ? [`変更してはいけないファイルを変更した: ${protectedHits.join(', ')}`] : []),
+        ...state.symptoms,
+      ]
+      if (decision.merge) state = { ...state, step: 'merge' }
+      else if (round < config.max_rounds) state = { ...state, round: round + 1, step: 'implement', symptoms }
+      else state = { ...state, step: 'stop', symptoms }
+      save()
+    }
+
+    if (state.step === 'merge' || state.step === 'stop') {
+      const merging = state.step === 'merge'
+      git(wt, 'push', '-q', '-u', 'origin', branch)
+      const body = report({ id, state, config, decision })
+      writeFileSync(join(fdir, 'report.md'), body)
+      if (!state.pr) {
+        const create = deps.gh(['pr', 'create', '--head', branch, '--title', `factory: ${id}`, '--body', `仕様: \`${specRel}\``, ...(merging ? [] : ['--draft'])], wt)
+        if (!create.ok) throw new Error(`PR を作れませんでした: ${create.out}`)
+        state = { ...state, pr: create.out.trim().split('\n').pop() }
+        save()
+      }
+      const prUrl = state.pr
+      if (config.notify.pr_report) deps.gh(['pr', 'comment', prUrl, '--body', body], wt)
+      if (merging) {
+        const ci = existsSync(join(wt, '.github', 'workflows')) ? await waitForCi(deps, prUrl, wt) : 'none'
+        if (ci !== 'none' && ci !== 'success') {
+          state = { ...state, step: 'stop', symptoms: [`GitHub の CI が ${ci}`] }
+          save()
+          continue
+        }
+        const m = deps.gh(['pr', 'merge', prUrl, '--squash', '--delete-branch'], wt)
+        if (!m.ok) throw new Error(`マージに失敗しました: ${m.out}`)
+      }
+      state = { ...state, status: merging ? 'merged' : 'stopped', step: 'done' }
+      save()
+      writeFileSync(join(fdir, 'report.md'), report({ id, state, config, decision, prUrl }))
+      if (config.notify.mac) deps.notify(merging ? `factory: ${id} をマージしました` : `factory: ${id} で止まりました`, merging ? prUrl : `Draft PR: ${prUrl}`)
+    }
+  }
+
+  if (state.status === 'merged') sh('git', ['worktree', 'remove', '--force', wt], repo)
+  return state
+}
+
+// PR を作った直後はチェックがまだ登録されていないことがあるので、少し待ってから見る。
+async function waitForCi(deps, prUrl, cwd) {
+  await deps.sleep(20_000)
+  const r = deps.gh(['pr', 'checks', prUrl, '--watch', '--fail-fast'], cwd)
+  if (/no checks reported/i.test(r.out)) return 'none'
+  return r.ok ? 'success' : 'failure'
+}
+
+// ロックを取れたら、待ち行列が空になるまで流す。取れなければ、ほかのラインが動いている。
+export async function runLine({ home = factoryHome(), deps = defaultDeps() } = {}) {
+  if (!acquireLock(home)) return deps.log('ほかのラインが動いているので終わります')
+  try {
+    for (let entry = dequeue(home); entry; entry = dequeue(home)) {
+      try {
+        await runFeature({ entry, home, deps })
+      } catch (e) {
+        deps.log(`${entry.id}: ${e.stack || e.message}`)
+        deps.notify(`factory: ${entry.id} でエラー`, String(e.message).slice(0, 200))
+      }
+    }
+  } finally {
+    releaseLock(home)
+  }
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) await runLine()
