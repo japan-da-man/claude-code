@@ -15,6 +15,7 @@ japan-da-man の Claude Code プラグイン（mods を含む）を管理する�
 | [spec-flow](plugins/spec-flow) | 「〇〇な機能が欲しい」と話しかけるか `/spec-flow:spec <要望>` で、**要求整理 → 影響画面確認 → 要件定義 → 機能案・UI案** を 1 段階ずつ承認しながら進める。曖昧な点はヒアリングし、影響調査と案出しはサブエージェントが行う。成果物は `docs/specs/<id>/`（UI 案の HTML モックは Desktop なら Artifact にも公開。`--local` で公開しない）。`/specs` でチェックリストを開き、チェックで承認・修正依頼もできる |
 | [dev-flow](plugins/dev-flow) | 汎用の開発フロー。skills `plan`（小さなタスクに分けて承認をもらってから着手）・`tdd`（RED → GREEN → REFACTOR）・`debug`（再現 → 仮説 → 検証で原因を確かめてから直す）・`review`（重要度つきの差分レビュー）。サブエージェント `code-explorer`（横断調査）・`test-runner`（テスト結果の要約）・`reviewer`（別コンテキストでレビュー、修正はしない）が長い出力をメインに持ち込まない |
 | [dev-extras](plugins/dev-extras) | 他の OSS から選んで取り込んだ skill（すべて MIT、出典は各 README と `licenses/`）。`ponytail`（最小の実装に絞る）・`ponytail-review`（作り込みすぎだけを探す）・`grill-me`（質問攻めで計画を詰める）・`handoff`（バックグラウンドエージェントに引き継ぐ）・`verification-before-completion`（検証してから完了と言う）・`security-audit`（Cloudflare 製のセキュリティ監査） |
+| [factory](plugins/factory) | AI のソフトウェアファクトリー（いまは iOS アプリ向け）。`/factory:init` で設定を作り、`/factory:start <要望>` で一問一答のインタビュー → 仕様 → 隠しシナリオの承認まで行うと、裏のラインが **実装（Sonnet, TDD）→ ビルドと全テスト → シミュレーターでの検証（agent-device）→ 判定（Opus）** を回し、満足度が基準を超えたら PR を squash マージする。実装役からシナリオは見えない（deny とサンドボックス）。`/factory:status` で進み具合。設計は [DESIGN.md](plugins/factory/DESIGN.md) |
 | [mod-dev](plugins/mod-dev) | skill `add-mod`。「〇〇する mod を作って」で雛形・テスト・登録まで行う。marketplace リポジトリでは marketplace.json / bundle / README も更新し、それ以外では単体の mod を作る |
 
 ## インストール
