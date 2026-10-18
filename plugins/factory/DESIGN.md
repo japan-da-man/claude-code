@@ -210,7 +210,11 @@ required: true        # 必須。3回すべて合格が条件
 - 実装役からシナリオを隠す方法:
   1. シナリオのパスを渡さない
   2. permissions の deny で `~/.factory/` の読み取りを禁止する
-  3. Bash 経由の読み取り（`cat` や `python` など）も防ぐため、サンドボックス設定でファイルシステムの読み取りを禁止する（設定のキー名は実装時に確かめる）
+  3. Bash 経由の読み取り（`cat` や `python` など）も防ぐため、サンドボックスで読み取りを禁止する。設定は `--settings` で渡す:
+     `{"sandbox": {"enabled": true, "allowUnsandboxedCommands": false, "failIfUnavailable": true, "filesystem": {"denyRead": ["<工場の置き場所>"]}}}`。
+     サンドボックスが起動できなければ、実装役のセッションは始まらない
+  - 2026-10-18 に Haiku で確かめた結果：隠したフォルダのファイルは、Bash の `cat` では `Operation not permitted`、Read ツールでは「permission settings で拒否」となり、どちらでも読めなかった
+  - サンドボックスが効くのは Bash（とその子プロセス）だけで、Read などのツールは permissions の deny で塞ぐ。`dontAsk` モードでは、作業ディレクトリの外の読み取りはもともと拒否される
 
 ## 12. ラインの実行方式
 
