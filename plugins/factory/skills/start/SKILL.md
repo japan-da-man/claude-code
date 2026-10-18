@@ -3,7 +3,7 @@ name: start
 description: factory で機能を 1 つ作り始める。一問一答のインタビューで仕様を固め、隠しシナリオを作って承認をもらい、裏のラインに流す。あとは実装・検証・判定・マージまで自動で進む。「factory で〇〇を作って」「/factory:start <要望>」と言われたときに使う。バグ修正や小さな改善にも使える。
 argument-hint: "<作りたい機能や直したいこと>"
 model: opus
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/line/cli.js *)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/line/cli.js *) Bash(git fetch *) Bash(git status *) Bash(git rev-parse *)
 ---
 
 # factory:start: 要望から裏のラインへ
@@ -16,6 +16,7 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/line/cli.js *)
 
 - このリポジトリに `.factory/config.json` がなければ、先に `/factory:init` を実行するよう伝えて終える。
 - 要望が空なら、何を作りたいか尋ねる。
+- `git fetch -q origin` のあと `git status -sb` を見る。手元のブランチが origin より遅れていたら、AskUserQuestion で pull してよいか尋ね、よければ `git pull --ff-only` する。ラインは origin の最新から作業を始めるので、手元が古いままだと、インタビューとシナリオ作成が古いコードを前提にしてしまう。
 
 ## 1. 仕様インタビュー
 
@@ -59,10 +60,11 @@ node ${CLAUDE_PLUGIN_ROOT}/line/cli.js new "$(git rev-parse --show-toplevel)" <�
 ## 4. シナリオの承認
 
 1. シナリオの一覧を `id`・`title`・`required` の表で見せる。シナリオ作成役が仕様の曖昧な点を挙げていたら、それも見せる。
-2. AskUserQuestion で、直したいシナリオを選んでもらう（multiSelect。「直すものはない」も選べるようにする）。
-3. 選ばれたシナリオだけ、1 本ずつ AskUserQuestion で直し方を聞いて直す（中身の修正・削除・追加）。
-4. 必須（`required: true`）にするシナリオを AskUserQuestion（multiSelect）で確かめ、各ファイルの `required` を合わせる。
-5. 最後に「このシナリオで承認する」を AskUserQuestion で確かめる。
+2. 1 回の AskUserQuestion で、次の 2 問をまとめて聞く（答えが互いに関係しないため）。
+   - 直したいシナリオ（multiSelect。「直すものはない」も選べるようにする）
+   - 必須（`required: true`）にするシナリオ（multiSelect。シナリオ作成役の提案を先に並べる）
+3. 選ばれたシナリオだけ、1 本ずつ AskUserQuestion で直し方を聞いて直す（中身の修正・削除・追加）。各ファイルの `required` も答えに合わせる。
+4. 最後に「このシナリオで承認する」を AskUserQuestion で確かめる。
 
 ## 5. ラインに流す
 

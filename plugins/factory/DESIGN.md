@@ -281,6 +281,16 @@ plugins/factory/
 - 最後に1つ失敗した: `gh pr merge --squash --delete-branch` は、マージのあとで手元のチェックアウトを main に切り替えようとし、main が元のチェックアウトで使われているため worktree では失敗した（マージ自体は済んでいた）。
 - 直したこと: `--delete-branch` を付けず、リモートのブランチはラインが `git push origin --delete` で消す。マージのコマンドが失敗しても PR がすでに MERGED なら成功とみなし、同じ工程をやり直せるようにした。merge の工程から再開して、マージ済みとして片づけ（リモートのブランチ・worktree・手元のブランチ）まで済むことを確かめた。
 
+### 3回目（プラグインとしてインストールした状態。機能「空白だけのメモに『メモを入力してください』と出す」）
+
+- 別のセッションで、`/factory:init`・`/factory:start`・`/factory:status` をスキルとして実際に呼んだ。3つとも最後まで動き、1周目で満足度100%、PR #3 が自動で squash マージされた（submit から約13分）。
+- `${CLAUDE_PLUGIN_ROOT}` はインストール先のパスに、`$ARGUMENTS` は要望の文に置き換わった。`factory:scenario-writer` も呼べた。`/factory:status` は、ヘッドレスの通常の権限モードでも、許可の確認なしに動いた。
+- そのセッションは auto モードだったので、`init` と `start` の `allowed-tools` が通常の権限モードで足りているかは確かめていない。
+- 見つかった問題と直したこと:
+  - 手元の main が origin より遅れていて、シナリオ作成役は古いコードを読んだ（ラインは origin/HEAD から始めるので、前提が食い違う）。→ `/factory:start` の最初に `git fetch` し、遅れていれば pull してよいか尋ねる。
+  - シナリオ承認の「直すシナリオ」と「必須にするシナリオ」は、答えが互いに関係しないので、1回の質問にまとめた。
+  - `line.log` に毎回 ExperimentalWarning が出ていた。→ ラインを `--disable-warning=ExperimentalWarning` で起動する。
+
 ## 15. リスクと未解決の点
 
 - **判定役も LLM**。作る側と採点する側が同じ種類の技術なので、評価が循環する。最初のうちは、判定結果と、人が実際にアプリを触った感想が一致するかを見る。
