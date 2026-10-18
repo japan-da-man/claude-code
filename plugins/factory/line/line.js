@@ -46,6 +46,7 @@ export function defaultDeps() {
       findApp: ios.findApp,
       resetApp: ios.resetApp,
       shutdown: ios.shutdown,
+      closeSession: ios.closeSession,
     },
     gh: (args, cwd) => sh('gh', args, cwd),
     notify: (title, body) => sh('osascript', ['-e', `display notification ${JSON.stringify(body)} with title ${JSON.stringify(title)}`]),
@@ -62,6 +63,15 @@ export function readScenarios(dir) {
       const id = /^id:\s*(.+)$/m.exec(head)?.[1].trim() ?? name.replace(/\.md$/, '')
       return { id, path: join(dir, name), required: /^required:\s*true\s*$/m.test(head) }
     })
+}
+
+// 検証役が書く result.json。書かれていなければ、検証役が最後まで動けなかったとみなす。
+function readVerifyResult(out) {
+  try {
+    return JSON.parse(readFileSync(join(out, 'result.json'), 'utf8'))
+  } catch {
+    return { completed: false, blocked_by_tool: true, reason: 'result.json がない' }
+  }
 }
 
 function list(items) {
@@ -107,7 +117,14 @@ export async function runFeature({ entry, home, deps }) {
   const branch = `factory/${id}`
   const specRel = join('docs', 'factory', id, 'spec.md')
   let state = { ...loadState(fdir, entry), status: 'running', paused_until: null }
-  const save = () => saveState(fdir, state)
+  // 工程が変わるたびに保存し、ログにも 1 行残す。
+  let logged = `${state.round}-${state.step}`
+  const save = () => {
+    saveState(fdir, state)
+    const now = `${state.round}-${state.step}`
+    if (now !== logged) deps.log(`${id}: ${state.round} 周目 ${state.step}`)
+    logged = now
+  }
 
   if (!existsSync(wt)) {
     mkdirSync(work, { recursive: true })
@@ -124,9 +141,9 @@ export async function runFeature({ entry, home, deps }) {
   const cmds = deps.adapter.commands({ config, repo: wt, udid, derived })
   let decision = { merge: false, reasons: [] }
 
+  deps.log(`${id}: ${state.round} 周目 ${state.step} から始めます`)
   while (state.status === 'running') {
     const round = state.round
-    deps.log(`${id}: ${round} 周目 ${state.step}`)
 
     if (state.step === 'implement') {
       const prompt = render('implement', {
@@ -154,9 +171,19 @@ export async function runFeature({ entry, home, deps }) {
         for (let run = 1; run <= config.satisfaction.runs_per_scenario; run++) {
           const out = join(fdir, 'runs', String(round), sc.id, String(run))
           mkdirSync(out, { recursive: true })
-          deps.adapter.resetApp({ udid, bundleId: config.ios.bundle_id, app })
           const session = `factory-${id}-${round}-${sc.id}-${run}`.slice(0, 80)
-          await call(deps, state, fdir, ios.verifyRole({ config, udid, scenario: sc.path, scenarioDir: join(fdir, 'scenarios'), out, session }))
+          // 道具の都合（端末が使用中、権限など）で操作できなかった実行は、アプリの不具合ではない。
+          // 1 回だけやり直し、それでもだめなら工場のエラーとして止め、実装役には何も渡さない。
+          for (let attempt = 1; ; attempt++) {
+            deps.adapter.closeSession(session)
+            deps.adapter.resetApp({ udid, bundleId: config.ios.bundle_id, app })
+            await call(deps, state, fdir, ios.verifyRole({ config, udid, scenario: sc.path, scenarioDir: join(fdir, 'scenarios'), out, session }))
+            deps.adapter.closeSession(session)
+            const result = readVerifyResult(out)
+            if (!result.blocked_by_tool) break
+            if (attempt === 2) throw new Error(`検証の道具が動きませんでした（${sc.id} ${run} 回目）: ${result.reason}`)
+            deps.log(`${id}: ${sc.id} ${run} 回目は道具の都合で操作できなかったので、やり直します（${result.reason}）`)
+          }
         }
       }
       deps.adapter.shutdown(udid)
@@ -252,6 +279,10 @@ export async function runLine({ home = factoryHome(), deps = defaultDeps() } = {
         await runFeature({ entry, home, deps })
       } catch (e) {
         deps.log(`${entry.id}: ${e.stack || e.message}`)
+        try {
+          const fdir = featureDir(projectHome(entry.repo, home), entry.id)
+          saveState(fdir, { ...loadState(fdir, entry), status: 'error', error: String(e.message) })
+        } catch {}
         deps.notify(`factory: ${entry.id} でエラー`, String(e.message).slice(0, 200))
       }
     }
