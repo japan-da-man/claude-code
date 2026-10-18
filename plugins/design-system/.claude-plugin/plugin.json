@@ -1,0 +1,6 @@
+{
+  "name": "design-system",
+  "description": "[skills] Build and grow an app's design system that people decide: read the current look from the code, settle tokens, components, copy rules and screen patterns in a one-question-at-a-time interview, generate SwiftUI parts and a catalog screen, check the code mechanically and mirror it to a Design System artifact",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}
