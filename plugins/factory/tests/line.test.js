@@ -16,7 +16,7 @@ function git(cwd, args) {
 }
 
 // 一時的なリポジトリ（origin は bare）と、工場の置き場所に仕様とシナリオを用意する。
-function setup({ protectedPaths = ['**/*.entitlements'], workflows = false } = {}) {
+function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, models = {} } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'factory-line-'))
   const origin = join(root, 'origin.git')
   const repo = join(root, 'repo')
@@ -28,7 +28,7 @@ function setup({ protectedPaths = ['**/*.entitlements'], workflows = false } = {
   mkdirSync(join(repo, '.factory'))
   writeFileSync(
     join(repo, '.factory', 'config.json'),
-    JSON.stringify({ type: 'ios', ios: { project: 'App.xcodeproj', scheme: 'App', bundle_id: 'com.example.App' }, protected_paths: protectedPaths, max_rounds: 2, notify: { mac: true, pr_report: true } }),
+    JSON.stringify({ type: 'ios', ios: { project: 'App.xcodeproj', scheme: 'App', bundle_id: 'com.example.App' }, protected_paths: protectedPaths, models, max_rounds: 2, notify: { mac: true, pr_report: true } }),
   )
   writeFileSync(join(repo, 'README.md'), 'app\n')
   if (workflows) {
@@ -52,7 +52,12 @@ function setup({ protectedPaths = ['**/*.entitlements'], workflows = false } = {
 
 // judge: 周ごとに満足かどうかを返す関数。
 function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Share.swift', ciPasses = true, blocked = () => false } = {}) {
-  const calls = { claude: [], gh: [], notify: [], round: 0, closed: [], verifies: 0 }
+  const calls = { claude: [], codex: [], gh: [], notify: [], round: 0, closed: [], verifies: 0 }
+  const judgeRuns = (role) => {
+    const runs = (role.prompt.match(/^- .*runs\//gm) || []).length
+    const ok = judge(calls.round)
+    return Array.from({ length: runs }, (_, i) => ({ run: i + 1, satisfied: ok, symptom: ok ? null : '保存されない' }))
+  }
   const deps = {
     workRoot: s.work,
     now: () => 0,
@@ -75,10 +80,11 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
         writeFileSync(join(role.cwd, 'result.json'), JSON.stringify({ completed: !b, blocked_by_tool: b, reason: b ? 'DEVICE_IN_USE' : '' }))
         return { result: '記録しました' }
       }
-      const runs = (role.prompt.match(/^- .*runs\//gm) || []).length
-      const ok = judge(calls.round)
-      const list = Array.from({ length: runs }, (_, i) => ({ run: i + 1, satisfied: ok, symptom: ok ? null : '保存されない' }))
-      return { result: '```json\n' + JSON.stringify(list) + '\n```' }
+      return { result: '```json\n' + JSON.stringify(judgeRuns(role)) + '\n```' }
+    },
+    codex: async (role) => {
+      calls.codex.push(role)
+      return { result: JSON.stringify({ runs: judgeRuns(role) }) }
     },
     adapter: {
       udid: () => 'UDID',
@@ -240,4 +246,18 @@ test('a merge that already went through on GitHub counts as merged when the step
   await runLine({ home: s.home, deps })
   assert.equal(loadState(s.fdir, {}).status, 'merged')
   assert.ok(calls.gh.some((a) => a.startsWith('pr view')))
+})
+
+test('with models.judge set to codex, judging goes to Codex read-only with the schema', async () => {
+  const s = setup({ models: { judge: 'codex' } })
+  const { deps, calls } = fakeDeps(s, { judge: (round) => round >= 2 })
+  await runLine({ home: s.home, deps })
+  assert.equal(calls.claude.filter((r) => r.prompt.includes('採点する担当')).length, 0)
+  assert.equal(calls.codex.length, 4)
+  assert.equal(calls.codex[0].sandbox, 'read-only')
+  assert.equal(calls.codex[0].cwd, s.fdir)
+  assert.match(calls.codex[0].schema, /judge\.schema\.json$/)
+  // Codex の判定で見つかった症状も、次の周の実装役に渡る
+  assert.match(calls.claude.filter((r) => r.prompt.includes('機能を実装する担当'))[1].prompt, /保存されない/)
+  assert.equal(loadState(s.fdir, {}).status, 'merged')
 })

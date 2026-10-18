@@ -23,5 +23,5 @@
 最後に、記録の順番どおりに次の形の JSON を書いてください。
 
 ```json
-[{"run": 1, "satisfied": true, "symptom": null}, {"run": 2, "satisfied": false, "symptom": "<症状>"}]
+{"runs": [{"run": 1, "satisfied": true, "symptom": null}, {"run": 2, "satisfied": false, "symptom": "<症状>"}]}
 ```

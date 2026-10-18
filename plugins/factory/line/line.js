@@ -7,6 +7,7 @@ import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as ios from './adapters/ios.js'
 import { runClaude, withUsageWait } from './claude.js'
+import { isCodex, runCodex } from './codex.js'
 import { loadConfig } from './config.js'
 import { decideMerge, protectedChanges, summarize } from './gate.js'
 import { factoryHome, featureDir, projectHome, projectSlug } from './paths.js'
@@ -20,6 +21,7 @@ const IMPLEMENT_TOOLS = [
   'Bash(git add *)', 'Bash(git commit *)', 'Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)',
 ]
 const UNSANDBOXED = ['xcodebuild *', 'xcodegen *']
+const JUDGE_SCHEMA = fileURLToPath(new URL('./prompts/judge.schema.json', import.meta.url))
 
 function sh(cmd, args, cwd) {
   const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
@@ -39,6 +41,7 @@ export function defaultDeps() {
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     log: (msg) => console.log(`[${new Date().toISOString()}] ${msg}`),
     claude: (role) => runClaude(role),
+    codex: (role) => runCodex(role),
     adapter: {
       udid: (config) => ios.resolveDevice(ios.listDevices(), config.ios.device),
       commands: ios.commands,
@@ -95,8 +98,9 @@ function report({ id, state, config, decision, prUrl }) {
   ].join('\n')
 }
 
+// 設定のモデル名が codex で始まる役は Codex に、それ以外は Claude に回す。
 async function call(deps, state, fdir, role) {
-  return withUsageWait(() => deps.claude(role), {
+  return withUsageWait(() => (isCodex(role.model) ? deps.codex(role) : deps.claude(role)), {
     now: deps.now,
     sleep: deps.sleep,
     onPause: (until) => {
@@ -196,7 +200,10 @@ export async function runFeature({ entry, home, deps }) {
       for (const sc of scenarios) {
         const dirs = Array.from({ length: config.satisfaction.runs_per_scenario }, (_, i) => join(fdir, 'runs', String(round), sc.id, String(i + 1)))
         const prompt = render('judge', { scenario: sc.path, runs: list(dirs) })
-        const res = await call(deps, state, fdir, { cwd: fdir, model: config.models.judge, allowedTools: ['Read', 'Glob'], prompt })
+        const model = config.models.judge
+        // Codex は読むだけのサンドボックスで動かし、答えの形をスキーマで強制する。
+        const role = isCodex(model) ? { cwd: fdir, model, sandbox: 'read-only', schema: JUDGE_SCHEMA, prompt } : { cwd: fdir, model, allowedTools: ['Read', 'Glob'], prompt }
+        const res = await call(deps, state, fdir, role)
         for (const j of parseJudgement(res.result, dirs.length)) runs.push({ ...j, scenario: sc.id, required: sc.required })
       }
       mkdirSync(join(fdir, 'judgements'), { recursive: true })

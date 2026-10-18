@@ -43,3 +43,7 @@ test('a judgement with the wrong shape is rejected', () => {
   assert.throws(() => parseJudgement('[{"run": 1, "satisfied": true}]', 3), /3/)
   assert.throws(() => parseJudgement('no json here', 1), /JSON/)
 })
+
+test('a judgement can also come as an object with runs, which is what the Codex schema asks for', () => {
+  assert.deepEqual(parseJudgement('{"runs": [{"run": 1, "satisfied": false, "symptom": "x"}]}', 1), [{ run: 1, satisfied: false, symptom: 'x' }])
+})
