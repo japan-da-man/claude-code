@@ -248,8 +248,14 @@ export async function runFeature({ entry, home, deps }) {
           save()
           continue
         }
-        const m = deps.gh(['pr', 'merge', prUrl, '--squash', '--delete-branch'], wt)
-        if (!m.ok) throw new Error(`マージに失敗しました: ${m.out}`)
+        // --delete-branch は手元のチェックアウトを既定のブランチに切り替えようとし、worktree では失敗するので付けない。
+        const m = deps.gh(['pr', 'merge', prUrl, '--squash'], wt)
+        if (!m.ok) {
+          // マージ自体は GitHub で済んでいて、そのあとで失敗することがある。やり直したときもここに来る。
+          const v = deps.gh(['pr', 'view', prUrl, '--json', 'state', '--jq', '.state'], wt)
+          if (v.out.trim() !== 'MERGED') throw new Error(`マージに失敗しました: ${m.out}`)
+        }
+        sh('git', ['push', '-q', 'origin', '--delete', branch], wt)
       }
       state = { ...state, status: merging ? 'merged' : 'stopped', step: 'done' }
       save()
@@ -258,7 +264,10 @@ export async function runFeature({ entry, home, deps }) {
     }
   }
 
-  if (state.status === 'merged') sh('git', ['worktree', 'remove', '--force', wt], repo)
+  if (state.status === 'merged') {
+    sh('git', ['worktree', 'remove', '--force', wt], repo)
+    sh('git', ['branch', '-D', branch], repo)
+  }
   return state
 }
 
