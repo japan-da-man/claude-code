@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { newFeature, startLine, statusReport, submit } from '../line/cli.js'
+import { newFeature, startLine, statusReport, submit, writeScenarios } from '../line/cli.js'
 import { featureDir, projectHome } from '../line/paths.js'
 import { acquireLock, listQueue } from '../line/queue.js'
 import { saveState } from '../line/state.js'
@@ -59,4 +59,28 @@ test('status lists the line, the queue and every feature', () => {
   assert.equal(r.line.running, false)
   assert.deepEqual(r.queue, [])
   assert.deepEqual(r.features, [{ repo: '/r/memo', id: '20261018-share', status: 'running', round: 2, step: 'verify', lastScore: 0.8, pr: null }])
+})
+
+test('scenarios with Codex: writes only in the feature folder and passes the role, spec and repo', async () => {
+  const h = home()
+  const f = newFeature({ repo: '/r/memo', name: 'share', home: h })
+  writeFileSync(f.spec, '# s\n')
+  const calls = []
+  const out = await writeScenarios({ repo: '/r/memo', id: f.id, home: h, model: 'codex', run: async (role) => (calls.push(role), { result: '| id | title | required |' }) })
+  assert.equal(out, '| id | title | required |')
+  const [role] = calls
+  assert.equal(role.cwd, f.dir)
+  assert.equal(role.sandbox, 'workspace-write')
+  assert.equal(role.model, 'codex')
+  assert.match(role.prompt, /シナリオ作成担当|受け入れシナリオ/)
+  assert.ok(role.prompt.includes(f.spec))
+  assert.ok(role.prompt.includes(f.scenarios))
+  assert.ok(role.prompt.includes('/r/memo'))
+  assert.doesNotMatch(role.prompt, /^---\nname:/)
+})
+
+test('scenarios refuses to run before the spec is written', async () => {
+  const h = home()
+  const f = newFeature({ repo: '/r/memo', name: 'share', home: h })
+  await assert.rejects(writeScenarios({ repo: '/r/memo', id: f.id, home: h, model: 'codex', run: async () => ({ result: '' }) }), /spec\.md/)
 })
