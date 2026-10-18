@@ -62,6 +62,7 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
       calls.claude.push(role)
       if (role.prompt.includes('機能を実装する担当')) {
         calls.round += 1
+        calls.specInWorktree = existsSync(join(role.cwd, 'docs', 'factory', ID, 'spec.md'))
         writeFileSync(join(role.cwd, touch), `// round ${calls.round}\n`)
         git(role.cwd, 'add -A')
         git(role.cwd, `commit -q -m "round ${calls.round}"`)
@@ -120,13 +121,18 @@ test('a feature that satisfies the scenarios is merged and the line stops', asyn
   const implement = calls.claude.find((r) => r.prompt.includes('機能を実装する担当'))
   assert.doesNotMatch(implement.prompt, /scenarios/)
   assert.equal(implement.hide, s.home)
-  assert.equal(git(join(s.root, 'origin.git'), `show factory/${ID}:docs/factory/${ID}/spec.md`), '# 共有\n')
+  assert.equal(calls.specInWorktree, true)
+  assert.equal(git(s.repo, `branch --list factory/${ID}`), '')
   // マージしたら worktree は片づける
   assert.equal(existsSync(implement.cwd), false)
 
   assert.ok(calls.gh.some((a) => a.startsWith('pr create')))
   assert.ok(calls.gh.some((a) => a.startsWith('pr comment')))
-  assert.ok(calls.gh.some((a) => a.startsWith('pr merge') && a.includes('--squash')))
+  const merge = calls.gh.find((a) => a.startsWith('pr merge'))
+  assert.match(merge, /--squash/)
+  // --delete-branch は手元のチェックアウトを切り替えようとして worktree では失敗するので使わない
+  assert.doesNotMatch(merge, /--delete-branch/)
+  assert.equal(git(join(s.root, 'origin.git'), `branch --list factory/${ID}`), '')
   assert.match(calls.notify.at(-1).title, /マージ/)
   assert.ok(existsSync(join(s.fdir, 'report.md')))
 })
@@ -213,4 +219,25 @@ test('tooling that stays blocked stops the feature as a factory error, without s
   assert.equal(calls.claude.filter((r) => r.prompt.includes('機能を実装する担当')).length, 1)
   assert.match(calls.notify.at(-1).title, /エラー/)
   assert.equal(listQueue(s.home).length, 0)
+})
+
+test('a merge that already went through on GitHub counts as merged when the step is retried', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s)
+  const gh = deps.gh
+  deps.gh = (argv, cwd) => {
+    const a = argv.join(' ')
+    if (a.startsWith('pr merge')) {
+      calls.gh.push(a)
+      return { ok: false, out: "failed to run git: fatal: 'main' is already used by worktree" }
+    }
+    if (a.startsWith('pr view')) {
+      calls.gh.push(a)
+      return { ok: true, out: 'MERGED\n' }
+    }
+    return gh(argv, cwd)
+  }
+  await runLine({ home: s.home, deps })
+  assert.equal(loadState(s.fdir, {}).status, 'merged')
+  assert.ok(calls.gh.some((a) => a.startsWith('pr view')))
 })
