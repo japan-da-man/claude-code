@@ -1,0 +1,6 @@
+{
+  "name": "factory",
+  "description": "[skills] AI software factory: interview a feature into a spec, have hidden scenarios approved, then a background line implements, verifies on the iOS simulator, judges a satisfaction score and squash-merges the PR",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}

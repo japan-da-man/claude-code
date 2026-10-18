@@ -94,7 +94,7 @@ AI エージェントで機能を作るソフトウェアファクトリーを�
 
 ```text
 <リポジトリ>/
-  .factory/config.yml              工場の設定（コミットする）
+  .factory/config.json             工場の設定（コミットする）
   docs/factory/<id>/spec.md        仕様（PR に含める）
 
 ~/.factory/<project>/
@@ -110,33 +110,38 @@ AI エージェントで機能を作るソフトウェアファクトリーを�
 
 `<project>` はリポジトリの絶対パスから作る短い名前。`<id>` は `YYYYMMDD-<短い英語名>`（日時は `date` で取る）。
 
-## 6. 設定 `.factory/config.yml`
+## 6. 設定 `.factory/config.json`
 
-```yaml
-type: ios                     # 初回に自動判定して人が確認
-ios:
-  scheme: MyApp
-  device: iPhone 17           # 検証に使うシミュレーター
-autonomy: 5
-models:
-  interview: opus
-  scenario: opus
-  implement: sonnet
-  verify: sonnet
-  judge: opus
-satisfaction:
-  runs_per_scenario: 3
-  threshold: 0.95
-max_rounds: 5
-protected_paths:              # 初回に AI が候補を出し、人が承認する
-  - "**/*.entitlements"
-  - ".github/workflows/**"
-  - ".factory/**"
-external_services: []         # 将来モックサーバーを差し込む口
-notify:
-  mac: true
-  pr_report: true
+Node の標準機能だけで読めるように JSON にする（YAML は依存パッケージが要るため使わない）。
+
+```json
+{
+  "type": "ios",
+  "ios": {
+    "project": "App.xcodeproj",
+    "scheme": "App",
+    "bundle_id": "com.example.App",
+    "device": "iPhone 17"
+  },
+  "autonomy": 5,
+  "models": {
+    "interview": "opus",
+    "scenario": "opus",
+    "implement": "sonnet",
+    "verify": "sonnet",
+    "judge": "opus"
+  },
+  "satisfaction": { "runs_per_scenario": 3, "threshold": 0.95 },
+  "max_rounds": 5,
+  "protected_paths": ["**/*.entitlements", ".github/workflows/**", ".factory/**"],
+  "external_services": [],
+  "notify": { "mac": true, "pr_report": true }
+}
 ```
+
+- `type` と `ios` は初回に自動判定して、人が確認する。`device` は検証に使うシミュレーター。
+- `protected_paths` は初回に AI が候補を出し、人が承認する。
+- `external_services` は、将来モックサーバーを差し込むための口。
 
 ## 7. 仕様インタビュー
 
