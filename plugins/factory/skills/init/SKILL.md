@@ -1,0 +1,71 @@
+---
+name: init
+description: factory を使う前に、プロジェクトごとに 1 回だけ行う初期設定。プロジェクトの種類を判定し、触ってはいけないファイルを決め、.factory/config.json を作る。必要な道具（Xcode、xcodegen、agent-device、gh）も確かめる。「factory を使えるようにして」「/factory:init」と言われたとき、/factory:start で設定がないと言われたときに使う。
+allowed-tools: Bash(xcodebuild -list *) Bash(xcodebuild -showBuildSettings *) Bash(xcrun simctl list *) Bash(command -v *) Bash(gh auth status*) Bash(git remote -v)
+---
+
+# factory:init: 工場の初期設定
+
+このリポジトリで factory を使えるようにする。書くのは `.factory/config.json` だけで、アプリのコードは変えない。
+
+## 1. 種類を判定する
+
+リポジトリを見て判定する（いまは iOS だけに対応）。
+
+- `*.xcodeproj` か、XcodeGen の `project.yml` があれば **iOS**。
+- どちらもなければ、「いまは iOS アプリにだけ対応しています」と伝えて終える。
+
+iOS なら、次を調べる（推測で埋めない）。
+
+- `project`: `.xcodeproj` のパス（`project.yml` しかなければ、生成される `<name>.xcodeproj`）
+- `scheme`: `xcodebuild -list -json -project <project>` の schemes から、アプリのもの
+- `bundle_id`: `xcodebuild -showBuildSettings -project <project> -scheme <scheme>` の `PRODUCT_BUNDLE_IDENTIFIER`
+- `device`: `xcrun simctl list devices available` にある iPhone から（既定は `iPhone 17`）
+
+`project.yml` しかなく、まだ `.xcodeproj` が生成されていないときは、先に `xcodegen generate` が必要だと伝え、許可を得てから実行する。
+
+判定した結果を AskUserQuestion で見せて、合っているか確かめる。
+
+## 2. 触ってはいけないファイルを決める
+
+リポジトリを見て、実装役に変えさせたくないファイルの候補を出す。候補の例:
+
+- 署名・権限: `**/*.entitlements`、署名やチーム ID の設定ファイル
+- CI: `.github/workflows/**`
+- 工場の設定: `.factory/**`（必ず入れる）
+- 認証・課金・個人情報を扱うコードのフォルダ（あれば）
+- データの移行（マイグレーション）
+
+`project.pbxproj` は、ファイルを足すたびに変わるので **候補に入れない**。
+
+AskUserQuestion（multiSelect）で候補を見せ、選ばれたものを `protected_paths` にする。
+
+## 3. 設定を書く
+
+`.factory/config.json` を次の形で書く。ここで決めた値以外は書かない（既定値が使われる）。
+
+```json
+{
+  "type": "ios",
+  "ios": { "project": "...", "scheme": "...", "bundle_id": "...", "device": "..." },
+  "protected_paths": ["..."]
+}
+```
+
+既定値: モデルはインタビュー・シナリオ・判定が `opus`、実装・検証が `sonnet`。満足度は各シナリオ 3 回・95% 以上。周回の上限は 5。
+
+## 4. 道具を確かめる
+
+次がそろっているか確かめ、足りないものは **入れ方を伝えるだけ** にする（勝手に入れない）。
+
+| 道具 | 確かめ方 | 入れ方 |
+| - | - | - |
+| Xcode と iOS シミュレーター | `xcrun simctl list devices available` | App Store の Xcode |
+| xcodegen（`project.yml` があるときだけ） | `command -v xcodegen` | `brew install xcodegen` |
+| agent-device | `command -v agent-device` | `npm install -g agent-device` |
+| gh（ログイン済み） | `gh auth status` | `brew install gh` → `gh auth login` |
+| GitHub のリモート | `git remote -v` に `origin` | GitHub にリポジトリを作って push |
+
+## 5. 終わりに
+
+作った設定と、足りない道具があればその一覧を伝える。`.factory/config.json` をコミットするよう勧め、次は `/factory:start <作りたい機能>` で始められると伝える。
