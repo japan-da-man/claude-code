@@ -8,7 +8,7 @@
     {
       "name": "japan-da-man-mods",
       "source": "./plugins/japan-da-man-mods",
-      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow, dev-extras, mod-dev and factory"
+      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow, dev-extras, mod-dev, factory and design-system"
     },
     {
       "name": "todo-mod",
@@ -59,6 +59,11 @@
       "name": "factory",
       "source": "./plugins/factory",
       "description": "[skills] AI software factory: interview a feature into a spec, have hidden scenarios approved, then a background line implements, verifies on the iOS simulator, judges a satisfaction score and squash-merges the PR"
+    },
+    {
+      "name": "design-system",
+      "source": "./plugins/design-system",
+      "description": "[skills] Build and grow an app's design system that people decide: read the current look from the code, settle tokens, components, copy rules and screen patterns one question at a time, generate SwiftUI parts and a catalog screen, check the code mechanically and mirror it to a Design System artifact"
     }
   ]
 }
