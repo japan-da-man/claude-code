@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DESIGN_SYSTEM_FILE } from './design.js'
+import { originBase } from './git.js'
 
 function git(cwd, ...args) {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8' })
@@ -21,8 +22,7 @@ export function prepareMock({ repo, id, workRoot, outDir }) {
   if (existsSync(dir)) cleanMock({ repo, dir })
   mkdirSync(workRoot, { recursive: true })
   spawnSync('git', ['fetch', '-q', 'origin'], { cwd: repo })
-  const base = spawnSync('git', ['rev-parse', '--verify', '-q', 'origin/HEAD'], { cwd: repo }).status === 0 ? 'origin/HEAD' : 'HEAD'
-  git(repo, 'worktree', 'add', '-q', '--detach', dir, base)
+  git(repo, 'worktree', 'add', '-q', '--detach', dir, originBase(repo))
   mkdirSync(outDir, { recursive: true })
   return {
     dir,

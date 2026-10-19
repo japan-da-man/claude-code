@@ -10,6 +10,7 @@ import { runClaude, withUsageWait } from './claude.js'
 import { isCodex, runCodex } from './codex.js'
 import { loadConfig } from './config.js'
 import { loadDesignSystem, parseComponentCandidates } from './design.js'
+import { originBase } from './git.js'
 import { parseSeed } from './seed.js'
 import { decideMerge, protectedChanges, summarize } from './gate.js'
 import { factoryHome, featureDir, projectHome, projectSlug } from './paths.js'
@@ -102,7 +103,7 @@ function list(items) {
 }
 
 function report({ id, state, config, decision, prUrl }) {
-  const rows = state.rounds.map((r) => `| ${r.round} | ${r.tests ? '通過' : '失敗'} | ${r.score === null ? '—' : `${(r.score * 100).toFixed(1)}%`} | ${r.requiredFailures?.join(', ') || '—'} |`)
+  const rows = state.rounds.map((r) => `| ${r.round} | ${r.noChanges ? '実装なし' : r.tests ? '通過' : '失敗'} | ${r.score === null ? '—' : `${(r.score * 100).toFixed(1)}%`} | ${r.requiredFailures?.join(', ') || '—'} |`)
   return [
     `# factory レポート: ${id}`,
     '',
@@ -154,8 +155,7 @@ export async function runFeature({ entry, home, deps }) {
   if (!existsSync(wt)) {
     mkdirSync(work, { recursive: true })
     sh('git', ['fetch', '-q', 'origin'], repo)
-    const base = sh('git', ['rev-parse', '--verify', '-q', 'origin/HEAD'], repo).ok ? 'origin/HEAD' : 'HEAD'
-    git(repo, 'worktree', 'add', '-q', '-b', branch, wt, base)
+    git(repo, 'worktree', 'add', '-q', '-b', branch, wt, originBase(repo))
     mkdirSync(join(wt, 'docs', 'factory', id), { recursive: true })
     copyFileSync(join(fdir, 'spec.md'), join(wt, specRel))
     // UI 案の段階で選んだ画面の画像も、仕様と同じフォルダに入れる（シナリオは入れない）。
@@ -163,7 +163,10 @@ export async function runFeature({ entry, home, deps }) {
     git(wt, 'add', join('docs', 'factory', id))
     git(wt, 'commit', '-q', '-m', `Add factory spec for ${id}`)
   }
-  const base = git(wt, 'merge-base', 'HEAD', sh('git', ['rev-parse', '--verify', '-q', 'origin/HEAD'], wt).ok ? 'origin/HEAD' : 'main')
+  const base = git(wt, 'merge-base', 'HEAD', originBase(wt))
+  const specDir = join('docs', 'factory', id) + '/'
+  // 仕様（docs/factory/<id>/）のほかに変わったファイル
+  const codeChanges = () => git(wt, 'diff', '--name-only', base, 'HEAD').split('\n').filter((f) => f && !f.startsWith(specDir))
   const ds = loadDesignSystem(wt)
   const protectedPaths = [...config.protected_paths, ...(ds?.protected_paths ?? [])]
   const udid = deps.adapter.udid(config)
@@ -186,7 +189,17 @@ export async function runFeature({ entry, home, deps }) {
       })
       const res = await call(deps, state, fdir, { cwd: wt, model: config.models.implement, allowedTools: IMPLEMENT_TOOLS, hide: home, unsandboxed: UNSANDBOXED, prompt })
       const candidates = [...new Set([...(state.candidates ?? []), ...parseComponentCandidates(String(res.result ?? ''))])]
-      state = { ...state, step: 'test', candidates }
+      // 実装役がコミットし忘れても、検証するものとマージするものがずれないよう、ラインがコミットする
+      if (git(wt, 'status', '--porcelain')) {
+        git(wt, 'add', '-A')
+        git(wt, 'commit', '-q', '-m', `Implement ${id} (factory round ${round})`)
+      }
+      if (codeChanges().length === 0) {
+        // 仕様のほかに何も変わっていなければ、テストも検証もせずに次へ
+        state = { ...state, step: 'decide', candidates, rounds: [...state.rounds.filter((r) => r.round !== round), { round, tests: null, design: null, score: null, requiredFailures: [], noChanges: true }] }
+      } else {
+        state = { ...state, step: 'test', candidates }
+      }
       save()
     }
 
@@ -248,17 +261,20 @@ export async function runFeature({ entry, home, deps }) {
     if (state.step === 'decide') {
       const r = state.rounds.find((x) => x.round === round)
       const changed = git(wt, 'diff', '--name-only', base, 'HEAD').split('\n').filter(Boolean)
+      const codeChanged = codeChanges().length > 0
       const protectedHits = protectedChanges(changed, protectedPaths)
       decision = decideMerge({
         summary: { score: r.score ?? 0, requiredFailures: r.requiredFailures },
         threshold: config.satisfaction.threshold,
-        testsPassed: r.tests,
+        testsPassed: r.tests === true,
+        codeChanged,
         designPassed: r.design === null ? undefined : r.design,
         ci: 'none',
         protectedHits,
       })
       const symptoms = [
-        ...(r.tests ? [] : [`ビルドか全テストが通らない:\n${r.testLog}`]),
+        ...(r.noChanges ? ['実装の変更がない（仕様のほかに、変わったファイルがない）。仕様どおりにアプリのコードを変えること'] : []),
+        ...(r.tests === false ? [`ビルドか全テストが通らない:\n${r.testLog}`] : []),
         ...(r.design === false ? [`デザインシステムの決まりに違反している（\`${ds.check}\` の結果）:\n${r.designLog}`] : []),
         ...(protectedHits.length ? [`変更してはいけないファイルを変更した: ${protectedHits.join(', ')}`] : []),
         ...state.symptoms,
