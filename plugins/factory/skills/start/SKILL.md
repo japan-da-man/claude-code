@@ -65,14 +65,14 @@ node ${CLAUDE_PLUGIN_ROOT}/line/cli.js new "$(git rev-parse --show-toplevel)" <�
    ```
 
 2. サブエージェント `factory:ui-mocker` に、仕様のパス、出力の `dir`・`mocks`・`catalog`、作る案の数（ふつうは 2、迷う機能なら 3）を渡して、案を作らせる。
-3. 案のページを撮る（ビルドがあるので数分かかる。Bash のタイムアウトは 10 分にする）。ラインが動いているあいだはシミュレーターを使えないので、断られたら、待つか飛ばすかを AskUserQuestion で尋ねる。
+3. 案のページを撮る（ビルドがあるので数分かかる。Bash のタイムアウトは 10 分にする）。撮影はアプリの `design-system/shoot.mjs` が行い、画像は `<出力の out>/factory-mock-<x>-light.png` になる。`shoot.mjs` がないと言われたら、`/design-system:update` でデザインシステムを新しい版にするよう伝える。ラインが動いているあいだはシミュレーターを使えないので、断られたら、待つか飛ばすかを AskUserQuestion で尋ねる。
 
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/line/cli.js mock-shoot "$(git rev-parse --show-toplevel)" <id> factory-mock-a factory-mock-b
    ```
 
 4. 撮れた画像を Read で見て、案ごとに「どこが違うか」を短く添えて、ユーザーに画像を見せる（SendUserFile が使えれば、それで画像を送る）。AskUserQuestion で選んでもらう（選択肢は案ごと。おすすめを先頭に。「どれも違う」なら直したい点を聞き、作成役にもう一度作らせる）。
-5. 選ばれた案の画像を、仕様と同じフォルダの `ui/chosen.png` に写す（`mkdir -p <機能のフォルダ>/ui && cp <出力の out>/factory-mock-<x>.png <機能のフォルダ>/ui/chosen.png`）。ほかの案の画像はブランチに入れない（`ui-options/` に残るだけ）。
+5. 選ばれた案の画像を、仕様と同じフォルダの `ui/chosen.png` に写す（`mkdir -p <機能のフォルダ>/ui && cp <出力の out>/factory-mock-<x>-light.png <機能のフォルダ>/ui/chosen.png`）。ほかの案の画像はブランチに入れない（`ui-options/` に残るだけ）。
 6. 仕様の「6. 画面と操作」を、選ばれた案に合わせて書き直す。どこに・どの部品で・どんな文言が出るかを具体的に書き、「選んだ UI 案: `ui/chosen.png`」と添える。作成役が「部品の候補」を挙げていたら、それも書く。
 7. 撮影用の worktree を消す。
 
