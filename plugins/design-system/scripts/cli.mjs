@@ -77,12 +77,18 @@ export function artifactStage(repo, dir) {
     copyFileSync(join(repo, p), to)
     files[`project/${basename(p)}`] = to
   }
+  // Artifact へのアップロードは作業フォルダかスクラッチの中のファイルしか受け付けないので、画像も <dir> に写す
   const shots = join(repo, DS_DIR, 'screenshots')
   const screenshots = existsSync(shots)
     ? readdirSync(shots)
         .filter((n) => n.endsWith('.png'))
         .sort()
-        .map((name) => ({ name, path: join(shots, name), size: statSync(join(shots, name)).size }))
+        .map((name) => {
+          const to = join(dir, 'screenshots', name)
+          mkdirSync(dirname(to), { recursive: true })
+          copyFileSync(join(shots, name), to)
+          return { name, path: to, size: statSync(to).size }
+        })
     : []
   return { files, screenshots, hash: artifactHash(repo, config) }
 }

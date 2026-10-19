@@ -82,7 +82,9 @@ test('artifact-stage lays out the files under project/ and lists the screenshots
   const r = artifactStage(repo, dir)
   assert.deepEqual(Object.keys(r.files).sort(), ['project/README.md', 'project/components.md', 'project/copy.md', 'project/patterns.md', 'project/tokens.json'])
   assert.equal(readFileSync(join(dir, 'project', 'tokens.json'), 'utf8'), readFileSync(join(repo, 'design-system', 'tokens.json'), 'utf8'))
-  assert.deepEqual(r.screenshots, [{ name: 'colors-light.png', path: join(repo, 'design-system', 'screenshots', 'colors-light.png'), size: 3 }])
+  // アップロードできるよう、画像も並べたフォルダ（スクラッチ）に写す
+  assert.deepEqual(r.screenshots, [{ name: 'colors-light.png', path: join(dir, 'screenshots', 'colors-light.png'), size: 3 }])
+  assert.equal(readFileSync(join(dir, 'screenshots', 'colors-light.png'), 'utf8'), 'png')
   assert.match(r.hash, /^[0-9a-f]{64}$/)
 })
 
