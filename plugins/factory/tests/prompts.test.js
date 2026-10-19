@@ -6,6 +6,7 @@ const implementVars = {
   spec: 'docs/factory/20261018-share-memo/spec.md',
   round: '2',
   symptoms: '- 共有したあと、相手側の一覧に新しいメモが出ない',
+  tools: '- Bash: cat > a.swift <<EOF',
   build: 'xcodebuild build -project App.xcodeproj -scheme App',
   test: 'xcodebuild test -project App.xcodeproj -scheme App',
   protected: '- **/*.entitlements',
@@ -16,6 +17,7 @@ test('implement prompt names the spec and the symptoms but never the scenarios',
   const text = render('implement', implementVars)
   assert.match(text, /docs\/factory\/20261018-share-memo\/spec\.md/)
   assert.match(text, /相手側の一覧/)
+  assert.match(text, /cat > a\.swift/)
   assert.doesNotMatch(text, /scenario|シナリオ|\.factory\//i)
   assert.doesNotMatch(text, /\{\{/)
 })
@@ -47,4 +49,14 @@ test('a judgement with the wrong shape is rejected', () => {
 
 test('a judgement can also come as an object with runs, which is what the Codex schema asks for', () => {
   assert.deepEqual(parseJudgement('{"runs": [{"run": 1, "satisfied": false, "symptom": "x"}]}', 1), [{ run: 1, satisfied: false, symptom: 'x' }])
+})
+
+test('sabotage and review prompts fill every placeholder and never name the scenarios', () => {
+  const sab = render('sabotage', { spec: 'docs/factory/x/spec.md' })
+  const rev = render('review', { base: 'abc', sha: 'def', spec: 'docs/factory/x/spec.md' })
+  for (const t of [sab, rev]) {
+    assert.doesNotMatch(t, /\{\{/)
+    assert.doesNotMatch(t, /scenario|シナリオ|\.factory\//i)
+  }
+  assert.match(rev, /git diff abc def/)
 })

@@ -1,4 +1,4 @@
-// iOS の検証アダプター: ビルド、全テスト、アプリの入れ直し、検証役による 1 シナリオの実行。
+// iOS の検証アダプター: 環境の事前確認、ビルド、全テスト、アプリの入れ直し、シナリオの XCUITest、検証役による 1 シナリオの実行。
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -30,14 +30,22 @@ export function listDevices() {
 }
 
 // derived: ビルド結果の置き場所。リポジトリの外に置き、実装役がコミットしてしまわないようにする。
+// buildForTesting と uiTest は検証用のビルド（コミットした SHA のきれいなチェックアウト）で使う。
 export function commands({ config, repo, udid, derived }) {
-  const { project, scheme, prebuild } = config.ios
+  const { project, scheme, prebuild, ui_tests } = config.ios
   const base = `-project ${q(project)} -scheme ${q(scheme)} -destination ${q(`platform=iOS Simulator,id=${udid}`)} -derivedDataPath ${q(derived)}`
   return {
     prebuild: prebuild ?? (existsSync(join(repo, 'project.yml')) ? 'xcodegen generate' : null),
     build: `xcodebuild build ${base}`,
     test: `xcodebuild test ${base}`,
+    buildForTesting: `xcodebuild build-for-testing ${base}`,
+    uiTest: (cls) => `xcodebuild test-without-building ${base} -only-testing:${q(`${ui_tests?.target}/${cls}`)}`,
   }
+}
+
+// シナリオの XCUITest のファイルから、テストのクラス名を取り出す（-only-testing に渡す）。
+export function uiTestClass(swift) {
+  return /\bclass\s+(\w+)\s*:\s*XCTestCase\b/.exec(swift)?.[1] ?? null
 }
 
 export function findApp(derived) {
@@ -59,6 +67,34 @@ export function buildAndTest(cmds, cwd) {
     if (!r.ok) return { ok: false, command: cmd, log: r.out.slice(-8000) }
   }
   return { ok: true }
+}
+
+// 実装役を呼ぶ前に、ラインが使う道具がそろっているかを確かめる。足りないものの一覧を返す（空なら問題なし）。
+export function preflight({ config, repo }) {
+  const problems = []
+  const need = (ok, what) => ok || problems.push(what)
+  need(sh('xcodebuild -version').ok, 'xcodebuild が動かない（Xcode を確かめる）')
+  need(sh('xcrun simctl list devices available -j').ok, 'xcrun simctl が動かない')
+  need(sh('command -v agent-device').ok, 'agent-device がない（npm install -g agent-device）')
+  if (!config.ios.prebuild && existsSync(join(repo, 'project.yml'))) need(sh('command -v xcodegen').ok, 'xcodegen がない（brew install xcodegen）')
+  need(sh('git ls-remote -q --exit-code origin HEAD', repo).ok, 'origin に繋がらない')
+  return problems
+}
+
+// 検証用のビルド。シナリオの XCUITest を入れたまま、テストもアプリもまとめて作る。
+export function buildForVerify(cmds, cwd) {
+  for (const cmd of [cmds.prebuild, cmds.buildForTesting].filter(Boolean)) {
+    const r = sh(cmd, cwd)
+    if (!r.ok) return { ok: false, command: cmd, log: r.out.slice(-8000) }
+  }
+  return { ok: true }
+}
+
+// 1 シナリオの XCUITest を流す。前提のデータは TEST_RUNNER_FACTORY_SEED で渡す（テスト側で FACTORY_SEED として読める）。
+export function runUiTest({ cmds, cls, seed, cwd }) {
+  const env = { ...process.env, ...(seed ? { TEST_RUNNER_FACTORY_SEED: Buffer.from(seed, 'utf8').toString('base64') } : {}) }
+  const r = spawnSync('/bin/sh', ['-c', cmds.uiTest(cls)], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  return { ok: r.status === 0, log: ((r.stdout || '') + (r.stderr || '')).slice(-4000) }
 }
 
 // 前の実行の状態を持ち越さないよう、毎回アプリを消してから入れ直す。

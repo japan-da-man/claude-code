@@ -43,3 +43,19 @@ test('Codex can judge but not implement, since it cannot be kept from the scenar
   assert.equal(mergeConfig({ type: 'ios', models: { judge: 'codex' } }).models.judge, 'codex')
   assert.throws(() => mergeConfig({ type: 'ios', models: { implement: 'codex' } }), /models\.implement/)
 })
+
+test('the new gates have defaults and are checked', () => {
+  const c = mergeConfig({ type: 'ios' })
+  assert.equal(c.satisfaction.rerun, 'on_failure')
+  assert.deepEqual(c.control, { base: true, mutant: false })
+  assert.equal(c.quality.max_changed_lines, 800)
+  assert.equal(c.quality.require_tests, true)
+  assert.equal(c.ios.ui_tests, null)
+  assert.equal(c.models.review, 'codex')
+  assert.deepEqual(mergeConfig({ type: 'ios', ios: { ui_tests: { target: 'FactoryUITests', dir: 'FactoryUITests' } } }).ios.ui_tests, { target: 'FactoryUITests', dir: 'FactoryUITests' })
+  assert.throws(() => mergeConfig({ type: 'ios', satisfaction: { rerun: 'never' } }), /rerun/)
+  assert.throws(() => mergeConfig({ type: 'ios', quality: { max_changed_lines: 0 } }), /max_changed_lines/)
+  assert.throws(() => mergeConfig({ type: 'ios', ios: { ui_tests: { target: 'X' } } }), /ui_tests/)
+  // 破壊役も、実装役と同じくシナリオから隠す必要があるので Codex は使えない
+  assert.throws(() => mergeConfig({ type: 'ios', models: { sabotage: 'codex' } }), /models\.sabotage/)
+})
