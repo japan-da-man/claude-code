@@ -1,7 +1,7 @@
 // スキルから呼ぶ CLI。結果は JSON で出す。
-//   node cli.mjs install <repo>              check.mjs を写し、ないものだけひな形（tokens.json・文書・SwiftUI の部品とカタログ）を置き、Tokens.swift を作る
+//   node cli.mjs install <repo>              check.mjs と shoot.mjs を写し、ないものだけひな形（tokens.json・文書・SwiftUI の部品とカタログ）を置き、Tokens.swift を作る
 //   node cli.mjs tokens <repo>               tokens.json を確かめて Tokens.swift を作り直す
-//   node cli.mjs status <repo>               チェックの結果に、古くなった check.mjs を加えて出す
+//   node cli.mjs status <repo>               チェックの結果に、古くなった check.mjs・shoot.mjs を加えて出す
 //   node cli.mjs screenshot <repo> [--pages a,b] [--appearance light,dark] [--app] [--out <dir>]
 //                                            シミュレーターでカタログ（と、ふつうの起動の画面）を撮る
 //   node cli.mjs artifact-stage <repo> <dir> Artifact に写すファイルを <dir>/project/ に並べ、上げるスクリーンショットの一覧を出す
@@ -12,10 +12,13 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { CONFIG_PATH, artifactHash, generateSwift, loadConfig, runCheck, validateTokens } from './check.mjs'
-import { exec, factoryLineRunning, findApp, resolveDevice, runPlan, screenshotPlan } from './ios.mjs'
+import { shoot } from './shoot.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CHECK = join(ROOT, 'scripts', 'check.mjs')
+const SHOOT = join(ROOT, 'scripts', 'shoot.mjs')
+// アプリの design-system/ に写すスクリプト（プラグインがなくても動く）
+const VENDORED = { 'check.mjs': CHECK, 'shoot.mjs': SHOOT }
 const TEMPLATES = join(ROOT, 'templates')
 const DS_DIR = dirname(CONFIG_PATH)
 
@@ -50,20 +53,22 @@ export function install(repo) {
     copyFileSync(from, abs)
     copied.push(posix(to))
   }
-  copyFileSync(CHECK, join(repo, DS_DIR, 'check.mjs'))
+  for (const [name, from] of Object.entries(VENDORED)) copyFileSync(from, join(repo, DS_DIR, name))
   place(join(TEMPLATES, 'tokens.json'), config.tokens)
   for (const f of filesUnder(join(TEMPLATES, 'docs'))) place(join(TEMPLATES, 'docs', f), join(DS_DIR, f))
   const ios = join(TEMPLATES, 'ios', 'DesignSystem')
   for (const f of filesUnder(ios)) place(join(ios, f), join(config.ios.code, f))
   const { written, errors } = writeTokens(repo)
-  return { check: posix(join(DS_DIR, 'check.mjs')), copied, skipped, tokens: written, errors }
+  return { check: posix(join(DS_DIR, 'check.mjs')), shoot: posix(join(DS_DIR, 'shoot.mjs')), copied, skipped, tokens: written, errors }
 }
 
 export function status(repo) {
   const r = runCheck(repo)
-  const vendored = join(repo, DS_DIR, 'check.mjs')
-  if (!existsSync(vendored) || readFileSync(vendored, 'utf8') !== readFileSync(CHECK, 'utf8')) {
-    r.stale.unshift(`${DS_DIR}/check.mjs がプラグインの版と違います（/design-system:update で写し直す）`)
+  for (const [name, from] of Object.entries(VENDORED).reverse()) {
+    const vendored = join(repo, DS_DIR, name)
+    if (!existsSync(vendored) || readFileSync(vendored, 'utf8') !== readFileSync(from, 'utf8')) {
+      r.stale.unshift(`${DS_DIR}/${name} がプラグインの版と違います（/design-system:update で写し直す）`)
+    }
   }
   return r
 }
@@ -101,19 +106,9 @@ export function artifactDone(repo, url) {
   return config.artifact
 }
 
-export function screenshot(repo, { pages, appearances = ['light', 'dark'], app = false, out } = {}) {
-  const config = loadConfig(repo)
-  const factoryHome = process.env.FACTORY_HOME || join(homedir(), '.factory')
-  if (factoryLineRunning(factoryHome)) throw new Error('factory のラインが動いていて、シミュレーターを使っています。ラインが終わってから撮ってください（/factory:status）')
-  const list = JSON.parse(exec('xcrun', ['simctl', 'list', 'devices', 'available', '-j']).out)
-  const udid = resolveDevice(list, config.ios.device ?? 'iPhone 17')
-  const key = createHash('sha256').update(resolve(repo)).digest('hex').slice(0, 8)
-  const derived = join(homedir(), 'Library', 'Caches', 'design-system', `${basename(resolve(repo))}-${key}`, 'DerivedData')
-  const outDir = out ? resolve(out) : join(repo, DS_DIR, 'screenshots')
-  mkdirSync(outDir, { recursive: true })
-  const steps = screenshotPlan({ config, repo, udid, derived, out: outDir, pages: pages ?? config.ios.catalog_pages ?? [], appearances, app })
-  const { unsettled } = runPlan(steps, { cwd: repo, app: () => findApp(derived) })
-  return { device: udid, images: steps.filter((s) => s.shot).map((s) => s.shot), unsettled }
+// 撮影は shoot.mjs（アプリにも写して、factory と共有する）に任せる。
+export function screenshot(repo, opts = {}) {
+  return shoot(repo, opts)
 }
 
 function option(args, name) {

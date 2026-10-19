@@ -1,9 +1,15 @@
 // カタログ画面のスクリーンショットを、シミュレーターで撮る。
 // 手順は screenshotPlan が組み立て（テストできるように、実行はしない）、runPlan が順に実行する。
+// check.mjs と一緒にアプリの design-system/ に写し、そこからコマンドとしても使う（factory の UI 案の撮影もこれを使う）:
+//   node design-system/shoot.mjs [--pages a,b] [--appearance light,dark] [--app] [--out <dir>]
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { inflateSync } from 'node:zlib'
+import { CONFIG_PATH, loadConfig } from './check.mjs'
 
 function runtimeVersion(key) {
   const m = /iOS-(\d+)-(\d+)/.exec(key)
@@ -106,8 +112,17 @@ export function changedRows(a, b) {
   return pa.rows.filter((row, i) => !row.equals(pb.rows[i])).length / pa.rows.length
 }
 
+// 状態バーより下（上の 10% と下の 5% を除く）が、ほぼ同じ行ばかりなら、まだ何も描かれていない画面とみなす。
+export function looksBlank(buf) {
+  const p = pngRows(buf)
+  if (!p) return false
+  const body = p.rows.slice(Math.floor(p.rows.length * 0.1), Math.floor(p.rows.length * 0.95))
+  return new Set(body.map((r) => r.toString('base64'))).size <= 3
+}
+
 // 回り続ける読み込み中の印などの小さな動きは、落ち着いたとみなす。
-const settled = (a, b) => (Buffer.isBuffer(a) ? changedRows(a, b) <= SHOT.rows : a === b)
+// 真っ白な画面が続いても、それは落ち着いたのではなく、まだ描かれていないだけ。
+const settled = (a, b) => (Buffer.isBuffer(a) ? !looksBlank(b) && changedRows(a, b) <= SHOT.rows : a === b)
 
 // 起動の途中（真っ白な画面や、表示のアニメーションの途中）を撮らないよう、同じ画面が続けて撮れるまで撮り直す。
 function settledShot(step, { run, read, sleep }) {
@@ -147,4 +162,45 @@ export function runPlan(steps, { exec: run = exec, cwd, app, sleep = sleepSync, 
     if (!r.ok && !step.mayFail) throw new Error(`失敗しました: ${[step.cmd, ...args].join(' ')}\n${(r.out || '').slice(-4000)}`)
   }
   return { unsettled }
+}
+
+// この Mac ではシミュレーターを 1 台ずつしか使えないので、factory のラインが動いている間は撮らない。
+export function shoot(repo, { pages, appearances = ['light', 'dark'], app = false, out } = {}) {
+  const config = loadConfig(repo)
+  const factoryHome = process.env.FACTORY_HOME || join(homedir(), '.factory')
+  if (factoryLineRunning(factoryHome)) throw new Error('factory のラインが動いていて、シミュレーターを使っています。ラインが終わってから撮ってください（/factory:status）')
+  const list = JSON.parse(exec('xcrun', ['simctl', 'list', 'devices', 'available', '-j']).out)
+  const udid = resolveDevice(list, config.ios.device ?? 'iPhone 17')
+  const key = createHash('sha256').update(resolve(repo)).digest('hex').slice(0, 8)
+  const derived = join(homedir(), 'Library', 'Caches', 'design-system', `${basename(resolve(repo))}-${key}`, 'DerivedData')
+  const outDir = out ? resolve(out) : join(repo, dirname(CONFIG_PATH), 'screenshots')
+  mkdirSync(outDir, { recursive: true })
+  const steps = screenshotPlan({ config, repo, udid, derived, out: outDir, pages: pages ?? config.ios.catalog_pages ?? [], appearances, app })
+  const { unsettled } = runPlan(steps, { cwd: repo, app: () => findApp(derived) })
+  return { device: udid, images: steps.filter((s) => s.shot).map((s) => s.shot), unsettled }
+}
+
+function option(args, name) {
+  const i = args.indexOf(name)
+  return i >= 0 ? args[i + 1] : undefined
+}
+
+export function parseShootArgs(argv) {
+  return {
+    pages: option(argv, '--pages')?.split(',').filter(Boolean),
+    appearances: option(argv, '--appearance')?.split(',').filter(Boolean) ?? ['light', 'dark'],
+    app: argv.includes('--app'),
+    out: option(argv, '--out'),
+  }
+}
+
+// アプリに写した design-system/shoot.mjs をコマンドとして実行したとき。リポジトリは design-system/ の 1 つ上。
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  try {
+    const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+    console.log(JSON.stringify(shoot(repo, parseShootArgs(process.argv.slice(2))), null, 2))
+  } catch (e) {
+    console.error(e.message)
+    process.exitCode = 1
+  }
 }

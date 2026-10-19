@@ -58,7 +58,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs screenshot <repo> --pages <ページ,
 
 ## 4. 書き換える
 
-- まず、プラグインの新しい版を取り込む（`check.mjs` を上書きし、ないひな形だけ足す。今の部品と文書は上書きしない）:
+- まず、プラグインの新しい版を取り込む（`check.mjs` と `shoot.mjs` を上書きし、ないひな形だけ足す。今の部品と文書は上書きしない）:
 
   ```bash
   node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs install <repo>

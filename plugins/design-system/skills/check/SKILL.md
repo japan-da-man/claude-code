@@ -1,6 +1,6 @@
 ---
 name: check
-description: アプリのコードがデザインシステムの決まりに沿っているかを機械で調べ、違反（ファイル:行と決まり）と、古くなったもの（Tokens.swift・check.mjs・Artifact）を一覧にする。直さない。「デザインシステムに沿ってる？」「見た目の決まりを守れているか調べて」「/design-system:check」と言われたときに使う。
+description: アプリのコードがデザインシステムの決まりに沿っているかを機械で調べ、違反（ファイル:行と決まり）と、古くなったもの（Tokens.swift・check.mjs・shoot.mjs・Artifact）を一覧にする。直さない。「デザインシステムに沿ってる？」「見た目の決まりを守れているか調べて」「/design-system:check」と言われたときに使う。
 allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs status *) Bash(git rev-parse *)
 ---
 

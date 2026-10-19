@@ -234,7 +234,7 @@ plugins/design-system/
   scripts/
     check.mjs                  トークンの検証と Swift の生成、コードのチェック（1ファイルで完結。アプリに写す）
     cli.mjs                    スキルから呼ぶ CLI（install / tokens / status / screenshot / artifact-stage / artifact-done）
-    ios.mjs                    シミュレーターのビルドとスクリーンショット
+    shoot.mjs                  シミュレーターのビルドとスクリーンショット。check.mjs と一緒にアプリの design-system/ に写し、`node design-system/shoot.mjs` でも動く（factory の UI 案の撮影もこれを使う）。起動の途中や真っ白な画面は撮り直す
   templates/
     tokens.json                最初のトークン（必ずある役割がすべて入った、iOS の標準に近い値）
     docs/                      文書のひな形（README・components・copy・patterns）
