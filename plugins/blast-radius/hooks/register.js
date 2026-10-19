@@ -4,7 +4,8 @@
 // Blast Radius: holds a risky Bash command and shows what it would change.
 //
 // tool.call (Bash): if the command is risky, work out its blast radius, open a
-// pane with Proceed and Cancel, and hold the call until one is pressed.
+// pane with Proceed and Cancel, and hold the call until one is pressed. With no
+// terminal attached, ask in the engine's dialog instead (see askInDialog).
 // ui.render (Pane): draws the report. If the surface won't place the pane (a
 // narrow terminal), the same report is drawn in the AbovePrompt band instead.
 //
@@ -23,7 +24,10 @@
 // - find -delete / find -exec rm（消える一覧は削除なしの find で下見）、xargs rm を捕まえる
 // - git branch -D、git stash drop / clear、パスを指定した git checkout -- / git restore を捕まえる
 // - rm の対象が変数のときや、ルート・ホーム・フォルダ全体のときは注意書きを出す
-// - 答える人がいない（claude -p など）ときは待たずに止める
+// - ターミナルがないセッション（デスクトップアプリなど）ではペインが描かれないことがあるので、
+//   エンジンの確認ダイアログ（$.ui.ask、AskUserQuestion）で Proceed / Cancel を聞く。
+//   聞けない（claude -p など）ときは待たずに止め、ユーザーが Terminal で自分で実行するコマンドを Claude に返す
+// - git branch -D は git cherry で patch ごとに比べ、すべて HEAD にある（rebase マージ済み）なら止めない
 // - フック自体が失敗・時間切れになったときも止める（.catch）
 // - /blast-radius で、最近止めたコマンドとその結果を一覧する
 
@@ -59,11 +63,6 @@ export function register(on) {
     if (risk === null) {
       return next(e);
     }
-    // 答える人がいない（claude -p など）ときは、10 分待たずにすぐ止める
-    if ((await $.session.surfaces()).length === 0) {
-      remember(String(e.command), risk.label, "refused");
-      return { deny: `Blast Radius held this command and did not run it: there is no one to answer (a non-interactive session). It is a risky command (${risk.label}). Do not retry it unless the user asks you to.` };
-    }
     // One hold at a time. If another risky call is already held (a subagent's,
     // say), wait until it is answered. `held` is claimed with no await between
     // the check and the claim, so two waiting calls can't both get through.
@@ -73,7 +72,7 @@ export function register(on) {
       }
       await $.process.run(["sleep", POLL_SECONDS], { timeoutMs: 5000 });
     }
-    const mine = { command: String(e.command), risk, report: null, decision: null, where: "pane" };
+    const mine = { command: String(e.command), risk, report: null, decision: null, where: "pane", answer: null, sessionCwd: null };
     held = mine;
 
     let opened = { isPlaced: false };
@@ -83,29 +82,40 @@ export function register(on) {
       // Measure where the command will run: the session folder, moved by any
       // `cd dir &&` or `git -C dir` earlier in the same command line.
       const sessionCwd = await $.session.cwd();
+      mine.sessionCwd = sessionCwd;
       const cwd = risk.dir ? await resolveDir($, sessionCwd, risk.dir) : sessionCwd;
       mine.report = cwd === null
         ? { summary: `${risk.label} in ${risk.dir}`, lines: [], note: `Couldn't find the folder ${risk.dir}, so I couldn't measure what this would change.` }
         : await measure($, risk, cwd);
       summary = mine.report.summary;
 
-      opened = await $.ui.open({ id: PANE_ID, title: "Blast Radius", focus: true, rows: paneRows(mine.report) });
-      if (!opened.isPlaced) {
-        mine.where = "band";
-      }
-      $.ui.invalidate("ui.render");
+      if (mine.report.isHarmless) {
+        // 測った結果、失うものがない（patch がすべて HEAD にあるブランチの削除など）ので聞かない
+        mine.decision = "harmless";
+      } else if ((await $.session.surfaces()).includes("terminal")) {
+        opened = await $.ui.open({ id: PANE_ID, title: "Blast Radius", focus: true, rows: paneRows(mine.report) });
+        if (!opened.isPlaced) {
+          mine.where = "band";
+        }
+        $.ui.invalidate("ui.render");
 
-      const startedAt = await $.clock.now();
-      while (mine.decision === null) {
-        if (next.signal.aborted) {
-          mine.decision = "interrupted";
-          break;
+        const startedAt = await $.clock.now();
+        while (mine.decision === null) {
+          if (next.signal.aborted) {
+            mine.decision = "interrupted";
+            break;
+          }
+          if ((await $.clock.now()) - startedAt > HOLD_LIMIT_MS) {
+            mine.decision = "timeout";
+            break;
+          }
+          await $.process.run(["sleep", POLL_SECONDS], { timeoutMs: 5000 });
         }
-        if ((await $.clock.now()) - startedAt > HOLD_LIMIT_MS) {
-          mine.decision = "timeout";
-          break;
-        }
-        await $.process.run(["sleep", POLL_SECONDS], { timeoutMs: 5000 });
+      } else {
+        // ターミナルがない（デスクトップアプリ、claude -p など）。ペインは描かれないことがあるので、
+        // エンジン自身の確認ダイアログ（AskUserQuestion）で聞く。聞けなければすぐ断る
+        mine.where = "dialog";
+        await askInDialog($, mine, next.signal);
       }
     } catch {
       mine.decision = "error"; // anything unexpected refuses the command
@@ -126,19 +136,28 @@ export function register(on) {
       $.ui.invalidate("ui.render");
     }
 
-    remember(mine.command, summary, decision === "proceed" ? "ran" : decision);
+    remember(mine.command, summary, decision === "proceed" || decision === "harmless" ? "ran" : decision);
+    if (decision === "harmless") {
+      return next(e);
+    }
     if (decision === "proceed") {
       $.ui.toast("Blast Radius: running it");
       return next(e);
     }
     const why = {
-      cancel: "the user pressed Cancel",
+      cancel: mine.where === "dialog" ? "the user chose Cancel" : "the user pressed Cancel",
+      other: `the user answered "${mine.answer}" instead of Proceed`,
+      unanswerable: "Blast Radius could not ask the user (this session can show neither its pane nor a question dialog)",
       timeout: "no answer within 10 minutes",
       interrupted: "the turn was interrupted",
       error: "Blast Radius hit an error while holding it",
     }[decision] ?? "no answer was recorded";
+    // 聞けなかった・答えがなかったときは、ユーザーが自分で実行できるコマンドを渡す
+    const yourself = (decision === "unanswerable" || decision === "timeout") && mine.sessionCwd !== null
+      ? ` If the user wants it run, give them this command to run themselves in Terminal:\n\n${terminalCommand(mine.sessionCwd, mine.command)}\n`
+      : "";
     return {
-      deny: `Blast Radius held this command and did not run it: ${why}. It would have: ${summary}. Do not retry it unless the user asks you to.`,
+      deny: `Blast Radius held this command and did not run it: ${why}. It would have: ${summary}.${yourself} Do not retry it unless the user asks you to.`,
     };
   })
     // このフック自体が失敗したり 10 秒の持ち時間を超えたりすると、Claude Code はフックを飛ばしてコマンドを実行してしまう。
@@ -166,6 +185,60 @@ export function register(on) {
 
 function remember(command, summary, outcome) {
   history = [{ command, summary, outcome }, ...history].slice(0, HISTORY_MAX);
+}
+
+// ---- Asking without a pane --------------------------------------------------
+
+const DIALOG_LINES = 5;
+
+/** The question for the engine's dialog: the command, then the report the pane would show. */
+function dialogQuestion(state) {
+  const { report } = state;
+  const lines = report.lines.slice(0, DIALOG_LINES);
+  const more = report.lines.length - lines.length + (report.more ?? 0);
+  return [
+    `Run this command? It would: ${report.summary}.`,
+    state.command,
+    lines.length > 0 ? lines.join("\n") + (more > 0 ? `\n+ ${more} more` : "") : null,
+    report.note || null,
+  ].filter(Boolean).join("\n\n");
+}
+
+// $.ui.ask は答えが来るまで返らないので、待つ間は時計と中断を見張る。
+// 閉じられた・聞けない（claude -p）ときは reject され、「聞けなかった」としてすぐ断る
+async function askInDialog($, state, signal) {
+  let settled = null;
+  $.ui.ask(dialogQuestion(state), { header: "Blast Radius", options: ["Proceed", "Cancel"] })
+    .then((answer) => { settled = { answer }; }, () => { settled = { answer: null }; });
+  const startedAt = await $.clock.now();
+  while (settled === null) {
+    if (signal.aborted) {
+      state.decision = "interrupted";
+      return;
+    }
+    if ((await $.clock.now()) - startedAt > HOLD_LIMIT_MS) {
+      state.decision = "timeout";
+      return;
+    }
+    await $.process.run(["sleep", POLL_SECONDS], { timeoutMs: 5000 });
+  }
+  if (settled.answer === null) {
+    state.decision = "unanswerable";
+  } else if (settled.answer === "Proceed" || settled.answer === "Cancel") {
+    state.decision = settled.answer.toLowerCase();
+  } else {
+    state.decision = "other"; // typed under Other
+    state.answer = settled.answer;
+  }
+}
+
+/** The command as the user would run it in their own Terminal: from the session folder. */
+function terminalCommand(cwd, command) {
+  return `cd ${shellQuote(cwd)} && ${command}`;
+}
+
+function shellQuote(text) {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
 }
 
 // ---- What counts as risky -------------------------------------------------
@@ -361,7 +434,7 @@ function classifySegment(segment, dir, pushed) {
         return { kind: "git-checkout", label, args: rest, paths, dir: gitDir };
       }
       if (sub === "branch" && (rest.includes("-D") || (rest.includes("--delete") && rest.includes("--force")))) {
-        const branches = rest.filter((a) => !a.startsWith("-"));
+        const branches = withoutRedirects(rest).filter((a) => !a.startsWith("-"));
         if (branches.length > 0) {
           return { kind: "git-branch-delete", label: `git branch -D ${branches.join(" ")}`, branches, dir: gitDir };
         }
@@ -453,6 +526,19 @@ async function resolveDir($, sessionCwd, dir) {
   const run = await $.process.run(["bash", "-c", CD_SCRIPT, "blast-radius", dir], { cwd: sessionCwd, timeoutMs: 5000 });
   const out = run.stdout.trim();
   return run.exitCode === 0 && out !== "" ? out : null;
+}
+
+/** Words without redirects: `2>&1` and `>/dev/null` go, and so does the file after a bare `>`. */
+function withoutRedirects(words) {
+  const out = [];
+  for (let k = 0; k < words.length; k += 1) {
+    if (/^(\d*|&)(>>?|<)$/.test(words[k])) {
+      k += 1;
+    } else if (!/^(\d*|&)(>>?|<)/.test(words[k])) {
+      out.push(words[k]);
+    }
+  }
+  return out;
 }
 
 /** Splits one segment into words, honouring quotes. Good enough to read flags and paths. */
@@ -556,20 +642,29 @@ async function measureGit($, risk, cwd) {
     return await measurePush($, risk, cwd);
   }
   if (risk.kind === "git-branch-delete") {
+    // git cherry は patch で比べるので、rebase マージで SHA が変わったコミットも「HEAD にある」と数える
     const lines = [];
     let total = 0;
+    let isReadable = true;
     for (const branch of risk.branches) {
-      const log = await $.process.run(["git", "log", "--oneline", "--no-decorate", `HEAD..${branch}`], { cwd, timeoutMs: 15000 });
-      const commits = log.exitCode === 0 ? log.stdout.split("\n").filter((l) => l !== "") : [];
-      total += commits.length;
-      lines.push(`${branch}: ${log.exitCode !== 0 ? "no such branch" : commits.length === 0 ? "merged into HEAD" : `${commits.length} unmerged ${commits.length === 1 ? "commit" : "commits"}`}`);
-      lines.push(...commits.slice(0, LIST_MAX).map((c) => `  ${c}`));
+      const cherry = await $.process.run(["git", "cherry", "-v", "HEAD", branch], { cwd, timeoutMs: 15000 });
+      if (cherry.exitCode !== 0) {
+        isReadable = false;
+        lines.push(`${branch}: no such branch`);
+        continue;
+      }
+      const rows = cherry.stdout.split("\n").filter((l) => l !== "");
+      const missing = rows.filter((l) => l.startsWith("+")).map((l) => l.slice(2).replace(/^([0-9a-f]{7})[0-9a-f]+/, "$1"));
+      total += missing.length;
+      lines.push(`${branch}: ${missing.length === 0 ? "every commit is in HEAD" : `${missing.length} ${missing.length === 1 ? "commit" : "commits"} not in HEAD`}`);
+      lines.push(...missing.slice(0, LIST_MAX).map((c) => `  ${c}`));
     }
     return {
-      summary: total === 0 ? "delete branches with no unmerged commits" : `delete ${total} ${total === 1 ? "commit" : "commits"} that are not in HEAD`,
+      summary: total === 0 ? "delete branches whose commits are all in HEAD" : `delete ${total} ${total === 1 ? "commit that is" : "commits that are"} not in HEAD`,
       lines: lines.slice(0, LIST_MAX),
       more: Math.max(0, lines.length - LIST_MAX),
-      note: "From git log HEAD..branch. Unmerged commits can be hard to find again once the branch is gone.",
+      note: "From git cherry HEAD branch, which counts a rebased commit as in HEAD. Commits not in HEAD can be hard to find again once the branch is gone.",
+      isHarmless: total === 0 && isReadable,
     };
   }
   if (risk.kind === "git-stash") {
