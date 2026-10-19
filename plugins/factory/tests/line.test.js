@@ -697,3 +697,15 @@ test('steps and calls are recorded as factory metrics and summarized in the repo
   assert.equal(lines.filter((l) => l.type === 'call' && l.role === 'verify').length, 2)
   assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /工場の記録[\s\S]*\$0\.50/)
 })
+
+test('the verify commands are made after the checkout exists, so a project.yml there is seen', async () => {
+  const s = setup()
+  const { deps } = fakeDeps(s)
+  const seen = []
+  const commands = deps.adapter.commands
+  deps.adapter.commands = (o) => (seen.push({ repo: o.repo, exists: existsSync(o.repo) }), commands(o))
+  await runLine({ home: s.home, deps })
+  const verify = seen.filter((c) => c.repo.endsWith('-verify'))
+  assert.ok(verify.length >= 1)
+  assert.ok(verify.every((c) => c.exists))
+})
