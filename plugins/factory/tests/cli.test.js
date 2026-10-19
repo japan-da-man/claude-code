@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mockPaths, mockShoot, newFeature, startLine, statusReport, submit, writeScenarios } from '../line/cli.js'
+import { execSync } from 'node:child_process'
+import { realpathSync } from 'node:fs'
+import { mockPaths, mockShoot, newFeature, resolveRepo, startLine, statusReport, submit, writeScenarios } from '../line/cli.js'
 import { featureDir, projectHome } from '../line/paths.js'
 import { acquireLock, listQueue } from '../line/queue.js'
 import { saveState } from '../line/state.js'
@@ -97,4 +99,14 @@ test('mock options and the chosen image live in separate folders, so only the ch
   const p = mockPaths({ repo: '/r/memo', id: f.id, home: h })
   assert.equal(p.options, join(f.dir, 'ui-options'))
   assert.equal(p.chosen, join(f.dir, 'ui'))
+})
+
+test('"." means the git repository the command runs in, so skills need no $(git rev-parse) substitution', () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), 'factory-repo-')))
+  execSync('git init -q', { cwd: repo })
+  mkdirSync(join(repo, 'App', 'Sub'), { recursive: true })
+  assert.equal(resolveRepo('.', join(repo, 'App', 'Sub')), repo)
+  assert.equal(resolveRepo(undefined, repo), repo)
+  assert.equal(resolveRepo('/some/where', repo), '/some/where')
+  assert.throws(() => resolveRepo('.', realpathSync(mkdtempSync(join(tmpdir(), 'not-a-repo-')))), /git/)
 })

@@ -47,3 +47,13 @@ test('the built app is found under the derived data products', () => {
   assert.equal(findApp(derived), join(products, 'App.app'))
   assert.throws(() => findApp(mkdtempSync(join(tmpdir(), 'factory-derived-'))), /\.app/)
 })
+
+test('a booted simulator with the name wins over a newer runtime, so only one runs', () => {
+  const list = {
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [{ name: 'iPhone 17', udid: 'OLD-BOOTED', isAvailable: true, state: 'Booted' }],
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [{ name: 'iPhone 17', udid: 'NEW', isAvailable: true, state: 'Shutdown' }],
+    },
+  }
+  assert.equal(resolveDevice(list, 'iPhone 17'), 'OLD-BOOTED')
+})

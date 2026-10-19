@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { featureDir, projectHome } from '../line/paths.js'
 import { enqueue, listQueue, readLock } from '../line/queue.js'
 import { loadState } from '../line/state.js'
@@ -81,7 +81,10 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
       if (role.prompt.includes('機能を実装する担当')) {
         calls.round += 1
         calls.specInWorktree = existsSync(join(role.cwd, 'docs', 'factory', ID, 'spec.md'))
-        if (write) writeFileSync(join(role.cwd, touch), `// round ${calls.round}\n`)
+        if (write) {
+          mkdirSync(dirname(join(role.cwd, touch)), { recursive: true })
+          writeFileSync(join(role.cwd, touch), `// round ${calls.round}\n`)
+        }
         if (violate(calls.round)) writeFileSync(join(role.cwd, 'Violation.swift'), '// Color.red\n')
         else if (existsSync(join(role.cwd, 'Violation.swift'))) git(role.cwd, 'rm -q Violation.swift')
         if (commit && write) {
@@ -398,4 +401,16 @@ test('the branch starts from origin, not from unpushed local commits, even witho
   assert.match(branchFiles, /Share\.swift/)
   assert.doesNotMatch(branchFiles, /Local\.txt/)
   assert.ok(calls.claude.length > 0)
+})
+
+test('the seed hook and the factory settings are always protected, whatever the config lists', async () => {
+  for (const touch of ['App/FactorySeed.swift', '.factory/seed.md']) {
+    const s = setup({ protectedPaths: ['**/*.entitlements'] })
+    const { deps, calls } = fakeDeps(s, { touch })
+    await runLine({ home: s.home, deps })
+    assert.equal(loadState(s.fdir, {}).status, 'stopped', touch)
+    assert.equal(calls.gh.some((a) => a.startsWith('pr merge')), false, touch)
+    const implement = calls.claude.find((r) => r.prompt.includes('機能を実装する担当'))
+    assert.match(implement.prompt, /FactorySeed\.swift/)
+  }
 })

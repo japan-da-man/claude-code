@@ -24,6 +24,8 @@ const IMPLEMENT_TOOLS = [
   'Bash(git add *)', 'Bash(git commit *)', 'Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)',
 ]
 const UNSANDBOXED = ['xcodebuild *', 'xcodegen *']
+// 設定に関係なく、実装役に変えさせないもの: 工場の設定と、前提のデータを仕込む口（init で足すもの）
+const ALWAYS_PROTECTED = ['.factory/**', '**/FactorySeed.swift']
 const JUDGE_SCHEMA = fileURLToPath(new URL('./prompts/judge.schema.json', import.meta.url))
 
 function sh(cmd, args, cwd) {
@@ -168,7 +170,7 @@ export async function runFeature({ entry, home, deps }) {
   // 仕様（docs/factory/<id>/）のほかに変わったファイル
   const codeChanges = () => git(wt, 'diff', '--name-only', base, 'HEAD').split('\n').filter((f) => f && !f.startsWith(specDir))
   const ds = loadDesignSystem(wt)
-  const protectedPaths = [...config.protected_paths, ...(ds?.protected_paths ?? [])]
+  const protectedPaths = [...new Set([...ALWAYS_PROTECTED, ...config.protected_paths, ...(ds?.protected_paths ?? [])])]
   const udid = deps.adapter.udid(config)
   const cmds = deps.adapter.commands({ config, repo: wt, udid, derived })
   let decision = { merge: false, reasons: [] }
