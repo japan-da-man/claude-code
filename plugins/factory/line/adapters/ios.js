@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { render } from '../prompts.js'
+import { seedLaunchArgs } from '../seed.js'
 
 const q = (s) => `'${String(s).replaceAll("'", "'\\''")}'`
 
@@ -65,6 +66,14 @@ export function resetApp({ udid, bundleId, app }) {
   sh(`xcrun simctl uninstall ${q(udid)} ${q(bundleId)}`)
   const r = sh(`xcrun simctl install ${q(udid)} ${q(app)}`)
   if (!r.ok) throw new Error(`アプリを入れられませんでした: ${r.out.slice(-2000)}`)
+}
+
+// アプリを -FactorySeed つきで一度起動してデータを保存させ、閉じる（アプリ側の口が保存し終えるまで少し待つ）。
+export function seedApp({ udid, bundleId, seed }) {
+  const r = spawnSync('xcrun', seedLaunchArgs({ udid, bundleId, seed }), { encoding: 'utf8' })
+  if (r.status !== 0) throw new Error(`前提のデータを仕込めませんでした: ${(r.stdout || '') + (r.stderr || '')}`)
+  spawnSync('sleep', ['3'])
+  sh(`xcrun simctl terminate ${q(udid)} ${q(bundleId)}`)
 }
 
 export function shutdown(udid) {
