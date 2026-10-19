@@ -14,8 +14,10 @@ export function protectedChanges(changedFiles, globs) {
 }
 
 // ci: GitHub に CI がなければ 'none'。あれば 'success' / 'failure'（待ち終わった結果）。
-export function decideMerge({ summary, threshold, testsPassed, ci, protectedHits }) {
+// designPassed: デザインシステムのチェックの結果。デザインシステムのないアプリでは undefined で、条件にしない。
+export function decideMerge({ summary, threshold, testsPassed, designPassed, ci, protectedHits }) {
   const reasons = []
+  if (designPassed === false) reasons.push('デザインシステムの決まりに違反している')
   if (summary.score < threshold) reasons.push(`満足度 ${(summary.score * 100).toFixed(1)}% が基準 ${threshold * 100}% に届かない`)
   if (summary.requiredFailures.length) reasons.push(`必須シナリオが不合格: ${summary.requiredFailures.join(', ')}`)
   if (!testsPassed) reasons.push('ローカルのビルドか全テストが通らない')

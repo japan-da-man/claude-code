@@ -26,7 +26,14 @@ iOS なら、次を調べる（推測で埋めない）。
 
 判定した結果を AskUserQuestion で見せて、合っているか確かめる。
 
-## 2. 触ってはいけないファイルを決める
+## 2. デザインシステムを確かめる
+
+`design-system/design-system.json`（design-system プラグインが作る）があるか確かめる。
+
+- **ある**：その `protected_paths`（例: `design-system/**` と `<アプリ>/DesignSystem/**`）は、ラインが自動で禁止ファイルに足すので、ここで書き写さなくてよい。実装役は部品とトークンだけで画面を作り、`check.command` のチェックもマージの条件になる、と伝える。
+- **ない**：factory はレベル5（人が画面を見ない）なので、見た目の基準がないと機能ごとに見た目がばらつく。AskUserQuestion で「先に `/design-system:init` でデザインシステムを作る（Recommended）」か「今はなしで進める」かを尋ねる。先に作るなら、ここで終えて `/design-system:init` を案内する。
+
+## 3. 触ってはいけないファイルを決める
 
 リポジトリを見て、実装役に変えさせたくないファイルの候補を出す。候補の例:
 
@@ -40,7 +47,7 @@ iOS なら、次を調べる（推測で埋めない）。
 
 AskUserQuestion（multiSelect）で候補を見せ、選ばれたものを `protected_paths` にする。
 
-## 3. 設定を書く
+## 4. 設定を書く
 
 `.factory/config.json` を次の形で書く。ここで決めた値以外は書かない（既定値が使われる）。
 
@@ -54,7 +61,7 @@ AskUserQuestion（multiSelect）で候補を見せ、選ばれたものを `prot
 
 既定値: モデルはインタビュー・シナリオ・判定が `opus`、実装・検証が `sonnet`。満足度は各シナリオ 3 回・95% 以上。周回の上限は 5。
 
-## 4. 道具を確かめる
+## 5. 道具を確かめる
 
 次がそろっているか確かめ、足りないものは **入れ方を伝えるだけ** にする（勝手に入れない）。
 
@@ -66,6 +73,6 @@ AskUserQuestion（multiSelect）で候補を見せ、選ばれたものを `prot
 | gh（ログイン済み） | `gh auth status` | `brew install gh` → `gh auth login` |
 | GitHub のリモート | `git remote -v` に `origin` | GitHub にリポジトリを作って push |
 
-## 5. 終わりに
+## 6. 終わりに
 
 作った設定と、足りない道具があればその一覧を伝える。`.factory/config.json` をコミットするよう勧め、次は `/factory:start <作りたい機能>` で始められると伝える。

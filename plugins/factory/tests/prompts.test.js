@@ -9,6 +9,7 @@ const implementVars = {
   build: 'xcodebuild build -project App.xcodeproj -scheme App',
   test: 'xcodebuild test -project App.xcodeproj -scheme App',
   protected: '- **/*.entitlements',
+  design: 'なし',
 }
 
 test('implement prompt names the spec and the symptoms but never the scenarios', () => {

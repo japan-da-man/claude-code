@@ -16,7 +16,7 @@ function git(cwd, args) {
 }
 
 // 一時的なリポジトリ（origin は bare）と、工場の置き場所に仕様とシナリオを用意する。
-function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, models = {} } = {}) {
+function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, models = {}, designSystem = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'factory-line-'))
   const origin = join(root, 'origin.git')
   const repo = join(root, 'repo')
@@ -31,6 +31,19 @@ function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, mode
     JSON.stringify({ type: 'ios', ios: { project: 'App.xcodeproj', scheme: 'App', bundle_id: 'com.example.App' }, protected_paths: protectedPaths, models, max_rounds: 2, notify: { mac: true, pr_report: true } }),
   )
   writeFileSync(join(repo, 'README.md'), 'app\n')
+  if (designSystem) {
+    mkdirSync(join(repo, 'design-system'))
+    writeFileSync(join(repo, 'design-system', 'copy.md'), '# 文言\n')
+    writeFileSync(
+      join(repo, 'design-system', 'design-system.json'),
+      JSON.stringify({
+        docs: ['design-system/README.md', 'design-system/copy.md'],
+        protected_paths: ['design-system/**'],
+        // Violation.swift があれば違反（終了コード 1）
+        check: { command: `node -e "process.exit(require('fs').existsSync('Violation.swift')?1:0)"` },
+      }),
+    )
+  }
   if (workflows) {
     mkdirSync(join(repo, '.github', 'workflows'), { recursive: true })
     writeFileSync(join(repo, '.github', 'workflows', 'ci.yml'), 'on: push\n')
@@ -51,7 +64,7 @@ function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, mode
 }
 
 // judge: 周ごとに満足かどうかを返す関数。
-function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Share.swift', ciPasses = true, blocked = () => false } = {}) {
+function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Share.swift', ciPasses = true, blocked = () => false, violate = () => false, report = 'implemented' } = {}) {
   const calls = { claude: [], codex: [], gh: [], notify: [], round: 0, closed: [], verifies: 0 }
   const judgeRuns = (role) => {
     const runs = (role.prompt.match(/^- .*runs\//gm) || []).length
@@ -69,9 +82,11 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
         calls.round += 1
         calls.specInWorktree = existsSync(join(role.cwd, 'docs', 'factory', ID, 'spec.md'))
         writeFileSync(join(role.cwd, touch), `// round ${calls.round}\n`)
+        if (violate(calls.round)) writeFileSync(join(role.cwd, 'Violation.swift'), '// Color.red\n')
+        else if (existsSync(join(role.cwd, 'Violation.swift'))) git(role.cwd, 'rm -q Violation.swift')
         git(role.cwd, 'add -A')
         git(role.cwd, `commit -q -m "round ${calls.round}"`)
-        return { result: 'implemented' }
+        return { result: report }
       }
       if (role.prompt.includes('記録する担当')) {
         calls.verifies += 1
@@ -260,4 +275,44 @@ test('with models.judge set to codex, judging goes to Codex read-only with the s
   // Codex の判定で見つかった症状も、次の周の実装役に渡る
   assert.match(calls.claude.filter((r) => r.prompt.includes('機能を実装する担当'))[1].prompt, /保存されない/)
   assert.equal(loadState(s.fdir, {}).status, 'merged')
+})
+
+test('with a design system, the implementer is told to follow it and cannot touch it', async () => {
+  const s = setup({ designSystem: true })
+  const { deps, calls } = fakeDeps(s)
+  await runLine({ home: s.home, deps })
+  const implement = calls.claude.find((r) => r.prompt.includes('機能を実装する担当'))
+  assert.match(implement.prompt, /design-system\/README\.md/)
+  assert.match(implement.prompt, /部品の候補/)
+  assert.match(implement.prompt, /design-system\/\*\*/)
+  assert.equal(loadState(s.fdir, {}).status, 'merged')
+})
+
+test('a design check violation fails the round, skips verification and hands the violations on', async () => {
+  const s = setup({ designSystem: true })
+  const { deps, calls } = fakeDeps(s, { violate: (round) => round === 1 })
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.rounds[0].design, false)
+  assert.equal(state.rounds[1].design, true)
+  // 1 周目は検証しない（2 シナリオ × 3 回は 2 周目の分だけ）
+  assert.equal(calls.verifies, 6)
+  const impls = calls.claude.filter((r) => r.prompt.includes('機能を実装する担当'))
+  assert.match(impls[1].prompt, /デザインシステムの決まりに違反/)
+  assert.equal(state.status, 'merged')
+})
+
+test('changing the design system itself blocks the merge', async () => {
+  const s = setup({ designSystem: true })
+  const { deps } = fakeDeps(s, { touch: 'design-system/copy.md' })
+  await runLine({ home: s.home, deps })
+  assert.equal(loadState(s.fdir, {}).status, 'stopped')
+  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /design-system\/copy\.md/)
+})
+
+test('component candidates from the implementer end up in the report', async () => {
+  const s = setup({ designSystem: true })
+  const { deps } = fakeDeps(s, { report: '実装しました。\n\n## 部品の候補\n\n- 文字数の表示\n' })
+  await runLine({ home: s.home, deps })
+  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /部品の候補[\s\S]*文字数の表示/)
 })
