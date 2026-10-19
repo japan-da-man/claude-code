@@ -10,6 +10,7 @@ import { runClaude, withUsageWait } from './claude.js'
 import { isCodex, runCodex } from './codex.js'
 import { loadConfig } from './config.js'
 import { loadDesignSystem, parseComponentCandidates } from './design.js'
+import { parseSeed } from './seed.js'
 import { decideMerge, protectedChanges, summarize } from './gate.js'
 import { factoryHome, featureDir, projectHome, projectSlug } from './paths.js'
 import { parseJudgement, render } from './prompts.js'
@@ -67,6 +68,7 @@ export function defaultDeps() {
       resetApp: ios.resetApp,
       shutdown: ios.shutdown,
       closeSession: ios.closeSession,
+      seedApp: ios.seedApp,
     },
     gh: (args, cwd) => sh('gh', args, cwd),
     notify: (title, body) => sh('osascript', ['-e', `display notification ${JSON.stringify(body)} with title ${JSON.stringify(title)}`]),
@@ -79,9 +81,10 @@ export function readScenarios(dir) {
     .filter((n) => n.endsWith('.md'))
     .sort()
     .map((name) => {
-      const head = /^---\n([\s\S]*?)\n---/.exec(readFileSync(join(dir, name), 'utf8'))?.[1] ?? ''
+      const text = readFileSync(join(dir, name), 'utf8')
+      const head = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? ''
       const id = /^id:\s*(.+)$/m.exec(head)?.[1].trim() ?? name.replace(/\.md$/, '')
-      return { id, path: join(dir, name), required: /^required:\s*true\s*$/m.test(head) }
+      return { id, path: join(dir, name), required: /^required:\s*true\s*$/m.test(head), seed: parseSeed(text, id) }
     })
 }
 
@@ -208,6 +211,8 @@ export async function runFeature({ entry, home, deps }) {
           for (let attempt = 1; ; attempt++) {
             deps.adapter.closeSession(session)
             deps.adapter.resetApp({ udid, bundleId: config.ios.bundle_id, app })
+            // 前提のデータがあれば、入れ直したアプリに仕込んでから検証役に渡す
+            if (sc.seed) deps.adapter.seedApp({ udid, bundleId: config.ios.bundle_id, seed: sc.seed })
             await call(deps, state, fdir, ios.verifyRole({ config, udid, scenario: sc.path, scenarioDir: join(fdir, 'scenarios'), out, session }))
             deps.adapter.closeSession(session)
             const result = readVerifyResult(out)

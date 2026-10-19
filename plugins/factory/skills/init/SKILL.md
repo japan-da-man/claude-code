@@ -33,7 +33,20 @@ iOS なら、次を調べる（推測で埋めない）。
 - **ある**：その `protected_paths`（例: `design-system/**` と `<アプリ>/DesignSystem/**`）は、ラインが自動で禁止ファイルに足すので、ここで書き写さなくてよい。実装役は部品とトークンだけで画面を作り、`check.command` のチェックもマージの条件になる、と伝える。
 - **ない**：factory はレベル5（人が画面を見ない）なので、見た目の基準がないと機能ごとに見た目がばらつく。AskUserQuestion で「先に `/design-system:init` でデザインシステムを作る（Recommended）」か「今はなしで進める」かを尋ねる。先に作るなら、ここで終えて `/design-system:init` を案内する。
 
-## 3. 触ってはいけないファイルを決める
+## 3. 前提のデータを仕込む口を用意する
+
+検証役は、毎回アプリを入れ直した直後の状態から操作する。そのままでは「古い版で保存したデータがある」「メモが 100 件ある」のような前提を作れず、大事な確認ができない。そこで、**DEBUG のときだけ動く、データを仕込む口** をアプリに足すかを AskUserQuestion で尋ねる（足す (Recommended) / 今は足さない）。
+
+`.factory/seed.md` がすでにあれば、この段階は飛ばす。足すときは:
+
+1. アプリがデータをどこにどう保存しているか（UserDefaults、ファイル、SwiftData など）を読む。
+2. `<アプリ>/FactorySeed.swift` を書く。全体を `#if DEBUG` で囲み、起動引数 `-FactorySeed <JSON を Base64 にしたもの>`（`UserDefaults.standard.string(forKey: "FactorySeed")`）があれば、Base64 を JSON に戻して、そのデータを **アプリのふつうの保存の仕組みを通して** 保存する。値を Base64 にするのは、`{` で始まる起動引数を iOS が property list として読んでしまうため。保存のあとは、すぐディスクに書き出す（ラインは仕込んだ直後にアプリを止める。UserDefaults なら `synchronize()`）。リリースのビルドには入らないようにする。
+3. アプリの入口で、保存したデータを読み込む **前に** 仕込むようにする（例: `@main` の `init()` で、ストアを作る前に `FactorySeed.applyIfRequested()` を呼ぶ）。
+4. `.factory/seed.md` に、JSON の形（キーと値の意味）と例を書く。シナリオ作成役は、これを見て前提のデータを書く。
+5. 試す: ビルドしてアプリを入れ、`xcrun simctl launch <udid> <bundle_id> -FactorySeed "$(printf '%s' '<例の JSON>' | base64)"` で一度起動して閉じ、ふつうに起動し直してデータが見えるか（スクリーンショットで）確かめる。保存は アプリの中の場所にあるので、`simctl spawn … defaults read` では見えない。全テストも通す。
+6. 次の段階の禁止ファイルに、`<アプリ>/FactorySeed.swift` と `.factory/seed.md` を必ず入れる（実装役が変えないように）。
+
+## 4. 触ってはいけないファイルを決める
 
 リポジトリを見て、実装役に変えさせたくないファイルの候補を出す。候補の例:
 
@@ -47,7 +60,7 @@ iOS なら、次を調べる（推測で埋めない）。
 
 AskUserQuestion（multiSelect）で候補を見せ、選ばれたものを `protected_paths` にする。
 
-## 4. 設定を書く
+## 5. 設定を書く
 
 `.factory/config.json` を次の形で書く。ここで決めた値以外は書かない（既定値が使われる）。
 
@@ -61,7 +74,7 @@ AskUserQuestion（multiSelect）で候補を見せ、選ばれたものを `prot
 
 既定値: モデルはインタビュー・シナリオ・判定が `opus`、実装・検証が `sonnet`。満足度は各シナリオ 3 回・95% 以上。周回の上限は 5。
 
-## 5. 道具を確かめる
+## 6. 道具を確かめる
 
 次がそろっているか確かめ、足りないものは **入れ方を伝えるだけ** にする（勝手に入れない）。
 
@@ -73,6 +86,6 @@ AskUserQuestion（multiSelect）で候補を見せ、選ばれたものを `prot
 | gh（ログイン済み） | `gh auth status` | `brew install gh` → `gh auth login` |
 | GitHub のリモート | `git remote -v` に `origin` | GitHub にリポジトリを作って push |
 
-## 6. 終わりに
+## 7. 終わりに
 
 作った設定と、足りない道具があればその一覧を伝える。`.factory/config.json` をコミットするよう勧め、次は `/factory:start <作りたい機能>` で始められると伝える。
