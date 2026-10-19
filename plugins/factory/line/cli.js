@@ -7,14 +7,16 @@
 //   node cli.js mock-shoot <repo> <id> <page...>  案のページをビルドしてシミュレーターで撮る
 //   node cli.js mock-clean <repo> <id>       UI 案の worktree を消す
 //   node cli.js status                      ライン・待ち行列・機能の状態を JSON で出す
+//   node cli.js feedback <repo> <id> good|bad [メモ]  マージされたアプリを人が触った評価を残す（判定との一致率を測る）
 import { spawn as spawnChild, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, openSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { factoryHome, featureDir, featureId, projectHome, projectSlug } from './paths.js'
 import { homedir } from 'node:os'
 import { runCodex } from './codex.js'
 import { cleanMock, prepareMock, shootCommand } from './mock.js'
+import { readMetrics, summarizeMetrics } from './metrics.js'
 import { enqueue, listQueue, readLock } from './queue.js'
 
 const LINE = fileURLToPath(new URL('./line.js', import.meta.url))
@@ -68,7 +70,9 @@ export function submit({ repo, id, home = factoryHome(), spawn = spawnLine }) {
   const abs = resolve(repo)
   const dir = featureDir(projectHome(abs, home), id)
   if (!existsSync(join(dir, 'spec.md'))) throw new Error(`${join(dir, 'spec.md')} がありません`)
-  if (!readdirSync(join(dir, 'scenarios')).some((n) => n.endsWith('.md'))) throw new Error('承認したシナリオがありません')
+  const scenarios = readdirSync(join(dir, 'scenarios')).filter((n) => n.endsWith('.md'))
+  if (!scenarios.length) throw new Error('承認したシナリオがありません')
+  if (scenarios.every((n) => /^holdout:\s*true\s*$/m.test(readFileSync(join(dir, 'scenarios', n), 'utf8')))) throw new Error('すべてのシナリオが最終関門（holdout）になっています。開発用のシナリオを残してください')
   enqueue(home, { repo: abs, id })
   return { queued: id, started: startLine({ home, spawn }) }
 }
@@ -118,18 +122,40 @@ export function mockClean({ repo, id, home = factoryHome() }) {
   return { removed: p.worktree }
 }
 
+// 人の評価。判定役が合格にしたもの（マージされたもの）を人が触って、good か bad かを残す。
+export function feedback({ repo, id, verdict, note = '', home = factoryHome(), now = new Date() }) {
+  if (!['good', 'bad'].includes(verdict)) throw new Error('評価は good か bad で書いてください')
+  const dir = featureDir(projectHome(resolve(repo), home), id)
+  if (!existsSync(join(dir, 'state.json'))) throw new Error(`${id} はまだラインに流れていません`)
+  const entry = { verdict, note, at: now.toISOString() }
+  writeFileSync(join(dir, 'feedback.json'), JSON.stringify(entry, null, 2))
+  return { id, ...entry }
+}
+
+function readJson(file) {
+  return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null
+}
+
 export function statusReport(home = factoryHome()) {
   const features = []
   for (const project of existsSync(home) ? readdirSync(home, { withFileTypes: true }) : []) {
     if (!project.isDirectory() || project.name === 'queue') continue
     for (const id of readdirSync(join(home, project.name))) {
-      const file = join(home, project.name, id, 'state.json')
-      if (!existsSync(file)) continue
-      const s = JSON.parse(readFileSync(file, 'utf8'))
-      features.push({ repo: s.repo, id: s.id, status: s.status, round: s.round, step: s.step, lastScore: s.rounds.at(-1)?.score ?? null, pr: s.pr ?? null })
+      const dir = join(home, project.name, id)
+      const s = readJson(join(dir, 'state.json'))
+      if (!s) continue
+      const m = summarizeMetrics(readMetrics(dir))
+      features.push({
+        repo: s.repo, id: s.id, status: s.status, round: s.round, step: s.step, lastScore: s.rounds.at(-1)?.score ?? null, pr: s.pr ?? null,
+        minutes: Math.round(m.total_ms / 6000) / 10, cost_usd: Math.round(m.cost_usd * 100) / 100,
+        feedback: readJson(join(dir, 'feedback.json'))?.verdict ?? null,
+      })
     }
   }
-  return { line: { running: lineRunning(home), pid: readLock(home)?.pid ?? null }, queue: listQueue(home), features }
+  // 判定役が合格にした（マージした）もののうち、人も good と言った割合
+  const rated = features.filter((f) => f.status === 'merged' && f.feedback)
+  const agreement = { rated: rated.length, good: rated.filter((f) => f.feedback === 'good').length, rate: rated.length ? rated.filter((f) => f.feedback === 'good').length / rated.length : null }
+  return { line: { running: lineRunning(home), pid: readLock(home)?.pid ?? null }, queue: listQueue(home), features, agreement }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -148,8 +174,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       : cmd === 'mock-shoot' ? mockShoot({ repo: a, id: b, pages })
       : cmd === 'mock-clean' ? mockClean({ repo: a, id: b })
       : cmd === 'status' ? statusReport()
+      : cmd === 'feedback' ? feedback({ repo: a, id: b, verdict: c, note: process.argv.slice(6).join(' ') })
       : null
-    if (!out) throw new Error('使い方: cli.js new <repo> <name> | submit <repo> <id> | scenarios <repo> <id> <model> | mock-prepare|mock-clean <repo> <id> | mock-shoot <repo> <id> <page...> | status')
+    if (!out) throw new Error('使い方: cli.js new <repo> <name> | submit <repo> <id> | scenarios <repo> <id> <model> | mock-prepare|mock-clean <repo> <id> | mock-shoot <repo> <id> <page...> | status | feedback <repo> <id> good|bad [メモ]')
     console.log(JSON.stringify(out, null, 2))
   } catch (e) {
     console.error(e.message)

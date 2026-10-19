@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
-import { mockPaths, mockShoot, newFeature, resolveRepo, startLine, statusReport, submit, writeScenarios } from '../line/cli.js'
+import { feedback, mockPaths, mockShoot, newFeature, resolveRepo, startLine, statusReport, submit, writeScenarios } from '../line/cli.js'
 import { featureDir, projectHome } from '../line/paths.js'
 import { acquireLock, listQueue } from '../line/queue.js'
 import { saveState } from '../line/state.js'
@@ -60,7 +60,8 @@ test('status lists the line, the queue and every feature', () => {
   const r = statusReport(h)
   assert.equal(r.line.running, false)
   assert.deepEqual(r.queue, [])
-  assert.deepEqual(r.features, [{ repo: '/r/memo', id: '20261018-share', status: 'running', round: 2, step: 'verify', lastScore: 0.8, pr: null }])
+  assert.deepEqual(r.features, [{ repo: '/r/memo', id: '20261018-share', status: 'running', round: 2, step: 'verify', lastScore: 0.8, pr: null, minutes: 0, cost_usd: 0, feedback: null }])
+  assert.deepEqual(r.agreement, { rated: 0, good: 0, rate: null })
 })
 
 test('scenarios with Codex: writes only in the feature folder and passes the role, spec and repo', async () => {
@@ -109,4 +110,31 @@ test('"." means the git repository the command runs in, so skills need no $(git 
   assert.equal(resolveRepo(undefined, repo), repo)
   assert.equal(resolveRepo('/some/where', repo), '/some/where')
   assert.throws(() => resolveRepo('.', realpathSync(mkdtempSync(join(tmpdir(), 'not-a-repo-')))), /git/)
+})
+
+test('submit refuses a feature whose scenarios are all holdout', () => {
+  const h = home()
+  const f = newFeature({ repo: '/r/memo', name: 'share', home: h })
+  writeFileSync(f.spec, '# s\n')
+  writeFileSync(join(f.scenarios, 'share-01.md'), '---\nid: share-01\nholdout: true\n---\n')
+  assert.throws(() => submit({ repo: '/r/memo', id: f.id, home: h, spawn: () => {} }), /holdout/)
+})
+
+test('feedback from a person is kept per feature, and status shows how often they agree with the judge', () => {
+  const h = home()
+  for (const [id, verdict] of [['20261020-a', 'good'], ['20261020-b', 'bad'], ['20261020-c', 'good']]) {
+    const dir = featureDir(projectHome('/r/memo', h), id)
+    mkdirSync(dir, { recursive: true })
+    saveState(dir, { id, repo: '/r/memo', status: 'merged', round: 1, step: 'done', rounds: [{ round: 1, score: 1 }], symptoms: [] })
+    writeFileSync(join(dir, 'metrics.jsonl'), JSON.stringify({ type: 'step', step: 'verify', ms: 120000 }) + '\n' + JSON.stringify({ type: 'call', role: 'implement', ms: 1, cost_usd: 0.25 }) + '\n')
+    feedback({ repo: '/r/memo', id, verdict, note: 'n', home: h })
+  }
+  assert.throws(() => feedback({ repo: '/r/memo', id: '20261020-a', verdict: 'meh', home: h }), /good か bad/)
+  assert.throws(() => feedback({ repo: '/r/memo', id: '20261020-zzz', verdict: 'good', home: h }), /まだ/)
+  const r = statusReport(h)
+  assert.deepEqual(r.agreement, { rated: 3, good: 2, rate: 2 / 3 })
+  const a = r.features.find((f) => f.id === '20261020-a')
+  assert.equal(a.minutes, 2)
+  assert.equal(a.cost_usd, 0.25)
+  assert.equal(a.feedback, 'good')
 })

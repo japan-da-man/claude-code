@@ -54,6 +54,32 @@ required: true
 - `required` は、これが満たせなければ機能として出せない、というものだけ `true` にする（提案。最終的には人が決める）。
 - 仕様に書かれていないことを期待しない。仕様の曖昧な点に気づいたら、シナリオには書かず、最後の報告に書く。
 
+## XCUITest も書く（設定に `ios.ui_tests` があるときだけ）
+
+対象のリポジトリの `.factory/config.json` に `ios.ui_tests`（UI テストのターゲット）があれば、**「期待する結果」がすべて画面の要素の有無と文字で確かめられるシナリオ** には、同じ名前の `.swift`（例 `share-01.swift`）で XCUITest も書く。ラインはまずこれを流し、通れば検証役を呼ばずに合格にする（数秒で済む）。落ちたときや、コンパイルできないときは、検証役が `.md` を見て確かめ直すので、迷うシナリオは書かなくてよい。見た目・分かりやすさ・待たされ方のように、要素の有無で確かめられない観点のシナリオには書かない。
+
+```swift
+import XCTest
+
+// クラス名はシナリオの id から作り、ほかのシナリオと重ねない（share-01 → Share01Tests）
+final class Share01Tests: XCTestCase {
+    func testScenario() {
+        let app = XCUIApplication()
+        // 前提のデータ（factory-seed）は、ラインが FACTORY_SEED に入れて渡す。そのまま起動引数にする
+        if let seed = ProcessInfo.processInfo.environment["FACTORY_SEED"] { app.launchArguments += ["-FactorySeed", seed] }
+        app.launch()
+        app.textFields["メモを入力"].tap()
+        app.textFields["メモを入力"].typeText("milk")
+        app.buttons["追加"].tap()
+        XCTAssertTrue(app.staticTexts["milk"].waitForExistence(timeout: 5))
+    }
+}
+```
+
+- 要素は **画面に見える文字（ラベル）** で探す。コードの名前や、まだない accessibility identifier を前提にしない（今のリポジトリにすでにあるものは使ってよい）。
+- 表示を待つときは `waitForExistence(timeout:)` を使い、`sleep` しない。
+- 入力するテストデータは `.md` と同じ英数字にする。
+
 ## 最後に
 
-書いたファイルの一覧を、`id`・`title`・`required` の表で返してください。仕様の曖昧な点があれば、その下に箇条書きで添えてください。
+書いたファイルの一覧を、`id`・`title`・`required`・XCUITest の有無の表で返してください。仕様の曖昧な点があれば、その下に箇条書きで添えてください。
