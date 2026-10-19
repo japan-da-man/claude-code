@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateSync } from 'node:zlib'
-import { changedRows, factoryLineRunning, findApp, resolveDevice, runPlan, screenshotPlan } from '../scripts/ios.mjs'
+import { changedRows, factoryLineRunning, findApp, looksBlank, parseShootArgs, resolveDevice, runPlan, screenshotPlan } from '../scripts/shoot.mjs'
 
 // 幅 4・高さ rows.length の RGB の PNG。rows は各行の色（0〜255 の灰色）
 function png(rows) {
@@ -131,7 +131,8 @@ test('changedRows counts the share of pixel rows that differ between two PNGs', 
 })
 
 test('a spinner that keeps moving still counts as settled', () => {
-  const base = Array(100).fill(255)
+  // 中身の描かれた画面（行ごとに違う色）の上で、読み込み中の印（40 行目）だけが動き続ける
+  const base = Array.from({ length: 100 }, (_, r) => (r * 7) % 256)
   const frames = [png(Array(100).fill(0)), ...[1, 2, 3].map((i) => png(base.map((v, r) => (r === 40 ? i * 50 : v))))]
   let n = 0
   let last
@@ -147,4 +148,28 @@ test('a running factory line holds the simulator', () => {
   assert.equal(factoryLineRunning(home), true)
   writeFileSync(join(home, 'line.lock'), JSON.stringify({ pid: 999999 }))
   assert.equal(factoryLineRunning(home), false)
+})
+
+test('a blank screen that stays blank is not a settled screen', () => {
+  // 上 10% は状態バー（黒）、その下が真っ白なまま 3 枚続いても、落ち着いたとはみなさない
+  const blank = png([...Array(10).fill(0), ...Array(90).fill(255)])
+  const page = png([...Array(10).fill(0), ...Array.from({ length: 90 }, (_, i) => (i * 7) % 256)])
+  const frames = [blank, blank, blank, blank, page, page, page]
+  let n = 0
+  let last
+  const exec = () => ((last = frames[Math.min(n++, frames.length - 1)]), { ok: true })
+  const r = runPlan([{ shot: '/o/a.png', udid: 'U' }], { exec, read: () => last, sleep: () => {}, app: '/x' })
+  assert.deepEqual(r.unsettled, [])
+  assert.equal(n, 7)
+})
+
+test('looksBlank tells an empty screen from a drawn one', () => {
+  assert.equal(looksBlank(png([...Array(10).fill(0), ...Array(90).fill(255)])), true)
+  assert.equal(looksBlank(png([...Array(10).fill(0), ...Array.from({ length: 90 }, (_, i) => (i * 7) % 256)])), false)
+  assert.equal(looksBlank(Buffer.from('not a png')), false)
+})
+
+test('the vendored shoot.mjs parses its own command line', () => {
+  assert.deepEqual(parseShootArgs(['--pages', 'a,b', '--appearance', 'light', '--out', 'o']), { pages: ['a', 'b'], appearances: ['light'], app: false, out: 'o' })
+  assert.deepEqual(parseShootArgs(['--app']), { pages: undefined, appearances: ['light', 'dark'], app: true, out: undefined })
 })
