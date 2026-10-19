@@ -3,14 +3,14 @@ name: start
 description: factory で機能を 1 つ作り始める。一問一答のインタビューで仕様を固め、隠しシナリオを作って承認をもらい、裏のラインに流す。あとは実装・検証・判定・マージまで自動で進む。「factory で〇〇を作って」「/factory:start <要望>」と言われたときに使う。バグ修正や小さな改善にも使える。
 argument-hint: "<作りたい機能や直したいこと>"
 model: opus
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/line/cli.js *) Bash(git fetch *) Bash(git status *) Bash(git rev-parse *)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/line/cli.js *) Bash(git fetch *) Bash(git status *) Bash(git rev-parse *) Bash(mkdir -p *) Bash(cp *)
 ---
 
 # factory:start: 要望から裏のラインへ
 
 要望: $ARGUMENTS
 
-1. 仕様インタビュー → 2. 仕様を書く → 3. シナリオを作る → 4. シナリオの承認 → 5. ラインに流す、の順に進める。**このスキルではアプリのコードを変えない。**
+1. 仕様インタビュー → 2. 仕様を書く → 2.5 UI 案を選ぶ（画面が変わる機能だけ）→ 3. シナリオを作る → 4. シナリオの承認 → 5. ラインに流す、の順に進める。**このスキルではアプリのコードを変えない。**
 
 ## 0. 準備
 
@@ -48,6 +48,37 @@ node ${CLAUDE_PLUGIN_ROOT}/line/cli.js new "$(git rev-parse --show-toplevel)" <�
 仕様は、ラインがブランチの最初のコミットとして `docs/factory/<id>/spec.md` に入れる。手元のチェックアウトには書かない。
 
 書けたら、仕様の要点を短く見せて、AskUserQuestion で「この仕様で進める / 直す」を確かめる。
+
+## 2.5 UI 案を選ぶ（画面が変わる機能だけ）
+
+次の両方を満たすときに行う。満たさなければ飛ばす（飛ばした理由を一言伝える）。
+
+- `design-system/design-system.json` がある（案はデザインシステムの部品で作るため）
+- 仕様の「画面と操作」で、新しい表示や操作が増える・変わる（文言だけの変更やロジックだけの修正なら飛ばす）
+
+手順:
+
+1. 撮影用の、捨てる worktree を作る。
+
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/line/cli.js mock-prepare "$(git rev-parse --show-toplevel)" <id>
+   ```
+
+2. サブエージェント `factory:ui-mocker` に、仕様のパス、出力の `dir`・`mocks`・`catalog`、作る案の数（ふつうは 2、迷う機能なら 3）を渡して、案を作らせる。
+3. 案のページを撮る（ビルドがあるので数分かかる。Bash のタイムアウトは 10 分にする）。ラインが動いているあいだはシミュレーターを使えないので、断られたら、待つか飛ばすかを AskUserQuestion で尋ねる。
+
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/line/cli.js mock-shoot "$(git rev-parse --show-toplevel)" <id> factory-mock-a factory-mock-b
+   ```
+
+4. 撮れた画像を Read で見て、案ごとに「どこが違うか」を短く添えて、ユーザーに画像を見せる（SendUserFile が使えれば、それで画像を送る）。AskUserQuestion で選んでもらう（選択肢は案ごと。おすすめを先頭に。「どれも違う」なら直したい点を聞き、作成役にもう一度作らせる）。
+5. 選ばれた案の画像を、仕様と同じフォルダの `ui/chosen.png` に写す（`mkdir -p <機能のフォルダ>/ui && cp <出力の out>/factory-mock-<x>.png <機能のフォルダ>/ui/chosen.png`）。ほかの案の画像はブランチに入れない（`ui-options/` に残るだけ）。
+6. 仕様の「6. 画面と操作」を、選ばれた案に合わせて書き直す。どこに・どの部品で・どんな文言が出るかを具体的に書き、「選んだ UI 案: `ui/chosen.png`」と添える。作成役が「部品の候補」を挙げていたら、それも書く。
+7. 撮影用の worktree を消す。
+
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/line/cli.js mock-clean "$(git rev-parse --show-toplevel)" <id>
+   ```
 
 ## 3. シナリオを作る
 

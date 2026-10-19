@@ -316,3 +316,19 @@ test('component candidates from the implementer end up in the report', async () 
   await runLine({ home: s.home, deps })
   assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /部品の候補[\s\S]*文字数の表示/)
 })
+
+test('the chosen UI mock images go into the branch next to the spec, the scenarios do not', async () => {
+  const s = setup()
+  mkdirSync(join(s.fdir, 'ui'))
+  writeFileSync(join(s.fdir, 'ui', 'chosen.png'), 'png')
+  const { deps, calls } = fakeDeps(s)
+  let seen = null
+  const claude = deps.claude
+  deps.claude = async (role) => {
+    if (role.prompt.includes('機能を実装する担当')) seen = { ui: existsSync(join(role.cwd, 'docs', 'factory', ID, 'ui', 'chosen.png')), scenarios: existsSync(join(role.cwd, 'docs', 'factory', ID, 'scenarios')) }
+    return claude(role)
+  }
+  await runLine({ home: s.home, deps })
+  assert.deepEqual(seen, { ui: true, scenarios: false })
+  assert.ok(calls.claude.length > 0)
+})
