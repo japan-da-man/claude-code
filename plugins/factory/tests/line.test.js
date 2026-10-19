@@ -64,7 +64,7 @@ function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, mode
 }
 
 // judge: 周ごとに満足かどうかを返す関数。
-function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Share.swift', ciPasses = true, blocked = () => false, violate = () => false, report = 'implemented' } = {}) {
+function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Share.swift', ciPasses = true, blocked = () => false, violate = () => false, report = 'implemented', commit = true, write = true } = {}) {
   const calls = { claude: [], codex: [], gh: [], notify: [], round: 0, closed: [], verifies: 0 }
   const judgeRuns = (role) => {
     const runs = (role.prompt.match(/^- .*runs\//gm) || []).length
@@ -81,11 +81,13 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
       if (role.prompt.includes('機能を実装する担当')) {
         calls.round += 1
         calls.specInWorktree = existsSync(join(role.cwd, 'docs', 'factory', ID, 'spec.md'))
-        writeFileSync(join(role.cwd, touch), `// round ${calls.round}\n`)
+        if (write) writeFileSync(join(role.cwd, touch), `// round ${calls.round}\n`)
         if (violate(calls.round)) writeFileSync(join(role.cwd, 'Violation.swift'), '// Color.red\n')
         else if (existsSync(join(role.cwd, 'Violation.swift'))) git(role.cwd, 'rm -q Violation.swift')
-        git(role.cwd, 'add -A')
-        git(role.cwd, `commit -q -m "round ${calls.round}"`)
+        if (commit && write) {
+          git(role.cwd, 'add -A')
+          git(role.cwd, `commit -q -m "round ${calls.round}"`)
+        }
         return { result: report }
       }
       if (role.prompt.includes('記録する担当')) {
@@ -343,4 +345,57 @@ test('a scenario with seed data gets it loaded into the fresh app before each ve
   // share-02 の 3 回分だけ。share-01 には仕込まない
   assert.deepEqual(seeded, ['{"memos":["old"]}', '{"memos":["old"]}', '{"memos":["old"]}'])
   assert.equal(loadState(s.fdir, {}).status, 'merged')
+})
+
+test('the line commits what the implementer left uncommitted, so what is verified is what gets merged', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s, { commit: false })
+  let testedClean = null
+  const buildAndTest = deps.adapter.buildAndTest
+  deps.adapter.buildAndTest = (cmds, wt) => {
+    testedClean = git(wt, 'status --porcelain') === ''
+    return buildAndTest(cmds, wt)
+  }
+  // マージの命令が出た時点で、push されたブランチの中身を見る（マージのあとブランチは消される）
+  let merged = null
+  const gh = deps.gh
+  deps.gh = (argv, cwd) => {
+    if (argv[0] === 'pr' && argv[1] === 'merge') merged = git(join(s.root, 'origin.git'), `ls-tree -r --name-only factory/${ID}`)
+    return gh(argv, cwd)
+  }
+  await runLine({ home: s.home, deps })
+  assert.equal(testedClean, true)
+  assert.equal(loadState(s.fdir, {}).status, 'merged')
+  assert.match(merged, /Share\.swift/)
+  assert.ok(calls.gh.some((a) => a.startsWith('pr merge')))
+})
+
+test('a round that changes nothing besides the spec is not merged', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s, { write: false })
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'stopped')
+  assert.equal(calls.gh.some((a) => a.startsWith('pr merge')), false)
+  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /実装の変更がない/)
+})
+
+test('the branch starts from origin, not from unpushed local commits, even without origin/HEAD', async () => {
+  const s = setup()
+  // 手元だけのコミット（push していない）
+  writeFileSync(join(s.repo, 'Local.txt'), 'not pushed\n')
+  git(s.repo, 'add -A')
+  git(s.repo, 'commit -q -m local')
+  const { deps, calls } = fakeDeps(s)
+  let branchFiles = null
+  const gh = deps.gh
+  deps.gh = (argv, cwd) => {
+    if (argv[0] === 'pr' && argv[1] === 'merge') branchFiles = git(join(s.root, 'origin.git'), `ls-tree -r --name-only factory/${ID}`)
+    return gh(argv, cwd)
+  }
+  await runLine({ home: s.home, deps })
+  assert.equal(loadState(s.fdir, {}).status, 'merged')
+  assert.match(branchFiles, /Share\.swift/)
+  assert.doesNotMatch(branchFiles, /Local\.txt/)
+  assert.ok(calls.claude.length > 0)
 })
