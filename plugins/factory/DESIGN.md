@@ -360,7 +360,7 @@ ChatGPT の Pro プランで Codex CLI（`codex exec`）が使えるので、判
 
 1. `cli.js mock-prepare`：origin の最新から、捨てるための worktree を detached で作る。
 2. サブエージェント `ui-mocker`（Opus）が、案を 2〜3 個、デザインシステムの部品とトークンだけで SwiftUI の画面として作る。固定のサンプルデータで、大事な瞬間（エラー、空の状態など）を見せる。案はカタログのページ（`factory-mock-a` など）として登録する（カタログの切り替えも、その worktree の中でだけ書き換える）。
-3. `cli.js mock-shoot`：その worktree をビルドし、起動引数 `-DesignSystemCatalog <ページ>` で案を出して、シミュレーターで撮る。ラインがシミュレーターを使っている間は撮らない。起動の途中の画面を撮らないよう、1 秒おきに撮って、同じ画像が 2 枚続き、かつ状態バーより下が真っ白でなくなるまで撮り直す（PNG の行を読んで判定する）。
+3. `cli.js mock-shoot`：その worktree の中で、アプリの `design-system/shoot.mjs`（design-system プラグインがアプリに写す撮影のスクリプト）を実行し、起動引数 `-DesignSystemCatalog <ページ>` で案を出して撮る。撮影の処理は design-system と共有の 1 か所だけにある（同じ画面が続き、かつ状態バーより下が真っ白でなくなるまで撮り直す）。ラインがシミュレーターを使っている間は撮らない。
 4. 人がスクリーンショットを見て選ぶ。選んだ画像は機能のフォルダの `ui/chosen.png` に置き、仕様の「画面と操作」を、どこに・どの部品で・どんな文言が出るかまで書き直す。ほかの案の画像（`ui-options/`）はブランチに入れない。
 5. `cli.js mock-clean`：worktree を消す。案のコードは捨て、本物の画面は実装役が作る。
 

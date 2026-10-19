@@ -6,16 +6,14 @@
 //   node cli.js mock-shoot <repo> <id> <page...>  案のページをビルドしてシミュレーターで撮る
 //   node cli.js mock-clean <repo> <id>       UI 案の worktree を消す
 //   node cli.js status                      ライン・待ち行列・機能の状態を JSON で出す
-import { spawn as spawnChild } from 'node:child_process'
+import { spawn as spawnChild, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, openSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { factoryHome, featureDir, featureId, projectHome, projectSlug } from './paths.js'
 import { homedir } from 'node:os'
-import * as ios from './adapters/ios.js'
 import { runCodex } from './codex.js'
-import { loadConfig } from './config.js'
-import { cleanMock, mockShotPlan, prepareMock, runShotPlan } from './mock.js'
+import { cleanMock, prepareMock, shootCommand } from './mock.js'
 import { enqueue, listQueue, readLock } from './queue.js'
 
 const LINE = fileURLToPath(new URL('./line.js', import.meta.url))
@@ -91,19 +89,17 @@ export function mockPrepare({ repo, id, home = factoryHome() }) {
   return prepareMock({ repo: resolve(repo), id, workRoot: p.work, outDir: p.options })
 }
 
-export function mockShoot({ repo, id, pages, home = factoryHome() }) {
+export function mockShoot({ repo, id, pages, home = factoryHome(), exec = runShoot }) {
   // この Mac ではシミュレーターを 1 台しか動かせないので、ラインが使っている間は撮らない。
   if (lineRunning(home)) throw new Error('ラインがシミュレーターを使っているので撮れません。/factory:status でラインが止まるのを待ってください')
-  const abs = resolve(repo)
-  const p = mockPaths({ repo: abs, id, home })
-  const config = loadConfig(abs)
-  const udid = ios.resolveDevice(ios.listDevices(), config.ios.device)
-  const steps = mockShotPlan({ config, dir: p.worktree, udid, derived: p.derived, out: p.options, pages, xcodegen: existsSync(join(p.worktree, 'project.yml')) })
-  try {
-    return runShotPlan(steps, { cwd: p.worktree, findApp: () => ios.findApp(p.derived) })
-  } finally {
-    ios.shutdown(udid)
-  }
+  const p = mockPaths({ repo, id, home })
+  return exec(shootCommand({ dir: p.worktree, pages, out: p.options }))
+}
+
+function runShoot({ cmd, args, cwd }) {
+  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, FACTORY_HOME: factoryHome() } })
+  if (r.status !== 0) throw new Error(`撮影に失敗しました: ${(r.stderr || r.stdout).slice(-4000)}`)
+  return JSON.parse(r.stdout)
 }
 
 export function mockClean({ repo, id, home = factoryHome() }) {
