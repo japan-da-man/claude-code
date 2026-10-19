@@ -9,6 +9,7 @@ import * as ios from './adapters/ios.js'
 import { runClaude, withUsageWait } from './claude.js'
 import { isCodex, runCodex } from './codex.js'
 import { loadConfig } from './config.js'
+import { loadDesignSystem, parseComponentCandidates } from './design.js'
 import { decideMerge, protectedChanges, summarize } from './gate.js'
 import { factoryHome, featureDir, projectHome, projectSlug } from './paths.js'
 import { parseJudgement, render } from './prompts.js'
@@ -26,6 +27,22 @@ const JUDGE_SCHEMA = fileURLToPath(new URL('./prompts/judge.schema.json', import
 function sh(cmd, args, cwd) {
   const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   return { ok: r.status === 0, out: (r.stdout || '') + (r.stderr || '') }
+}
+
+function shell(cmd, cwd) {
+  return sh('/bin/sh', ['-c', cmd], cwd)
+}
+
+// 実装役に渡す、デザインシステムの使い方。
+function designRules(ds) {
+  return [
+    'このアプリにはデザインシステムがある。画面は、次の文書に書かれた部品とトークンだけで作ること。色・文字の大きさ・余白・角丸を直接書かない。',
+    '',
+    list(ds.docs),
+    '',
+    'デザインシステムにない部品が必要なら、既存の部品とトークンを組み合わせて作り、最後の報告に「## 部品の候補」という見出しで箇条書きにすること（デザインシステム自体は変えない）。',
+    ds.check ? `終わったら \`${ds.check}\` で違反がないことを確かめること。` : '',
+  ].join('\n')
 }
 
 function git(cwd, ...args) {
@@ -95,6 +112,7 @@ function report({ id, state, config, decision, prUrl }) {
     '',
     decision.reasons.length ? `## 満たせなかった条件\n\n${list(decision.reasons)}\n` : '',
     state.symptoms.length ? `## 最後の周で見つかった症状\n\n${list(state.symptoms)}\n` : '',
+    state.candidates?.length ? `## 部品の候補\n\nデザインシステムにない部品を、既存の部品とトークンで組みました。部品にするかは \`/design-system:update\` で決めてください。\n\n${list(state.candidates)}\n` : '',
   ].join('\n')
 }
 
@@ -141,6 +159,8 @@ export async function runFeature({ entry, home, deps }) {
     git(wt, 'commit', '-q', '-m', `Add factory spec for ${id}`)
   }
   const base = git(wt, 'merge-base', 'HEAD', sh('git', ['rev-parse', '--verify', '-q', 'origin/HEAD'], wt).ok ? 'origin/HEAD' : 'main')
+  const ds = loadDesignSystem(wt)
+  const protectedPaths = [...config.protected_paths, ...(ds?.protected_paths ?? [])]
   const udid = deps.adapter.udid(config)
   const cmds = deps.adapter.commands({ config, repo: wt, udid, derived })
   let decision = { merge: false, reasons: [] }
@@ -156,16 +176,21 @@ export async function runFeature({ entry, home, deps }) {
         symptoms: list(state.symptoms),
         build: [cmds.prebuild, cmds.build].filter(Boolean).join(' && '),
         test: [cmds.prebuild, cmds.test].filter(Boolean).join(' && '),
-        protected: list(config.protected_paths),
+        protected: list(protectedPaths),
+        design: ds ? designRules(ds) : 'なし（このアプリにはデザインシステムがない。今ある画面の書き方に合わせる）',
       })
-      await call(deps, state, fdir, { cwd: wt, model: config.models.implement, allowedTools: IMPLEMENT_TOOLS, hide: home, unsandboxed: UNSANDBOXED, prompt })
-      state = { ...state, step: 'test' }
+      const res = await call(deps, state, fdir, { cwd: wt, model: config.models.implement, allowedTools: IMPLEMENT_TOOLS, hide: home, unsandboxed: UNSANDBOXED, prompt })
+      const candidates = [...new Set([...(state.candidates ?? []), ...parseComponentCandidates(String(res.result ?? ''))])]
+      state = { ...state, step: 'test', candidates }
       save()
     }
 
     if (state.step === 'test') {
       const t = deps.adapter.buildAndTest(cmds, wt)
-      state = { ...state, step: t.ok ? 'verify' : 'decide', rounds: [...state.rounds.filter((r) => r.round !== round), { round, tests: t.ok, score: null, requiredFailures: [], testLog: t.ok ? null : `${t.command}\n${t.log}` }] }
+      // デザインシステムのチェックは、ビルドと全テストが通ったあとに行う。違反があれば、その周は検証しない。
+      const d = t.ok && ds?.check ? shell(ds.check, wt) : null
+      const entry = { round, tests: t.ok, design: d ? d.ok : null, score: null, requiredFailures: [], testLog: t.ok ? null : `${t.command}\n${t.log}`, designLog: d && !d.ok ? d.out.slice(-8000) : null }
+      state = { ...state, step: t.ok && d?.ok !== false ? 'verify' : 'decide', rounds: [...state.rounds.filter((r) => r.round !== round), entry] }
       save()
     }
 
@@ -216,16 +241,18 @@ export async function runFeature({ entry, home, deps }) {
     if (state.step === 'decide') {
       const r = state.rounds.find((x) => x.round === round)
       const changed = git(wt, 'diff', '--name-only', base, 'HEAD').split('\n').filter(Boolean)
-      const protectedHits = protectedChanges(changed, config.protected_paths)
+      const protectedHits = protectedChanges(changed, protectedPaths)
       decision = decideMerge({
         summary: { score: r.score ?? 0, requiredFailures: r.requiredFailures },
         threshold: config.satisfaction.threshold,
         testsPassed: r.tests,
+        designPassed: r.design === null ? undefined : r.design,
         ci: 'none',
         protectedHits,
       })
       const symptoms = [
         ...(r.tests ? [] : [`ビルドか全テストが通らない:\n${r.testLog}`]),
+        ...(r.design === false ? [`デザインシステムの決まりに違反している（\`${ds.check}\` の結果）:\n${r.designLog}`] : []),
         ...(protectedHits.length ? [`変更してはいけないファイルを変更した: ${protectedHits.join(', ')}`] : []),
         ...state.symptoms,
       ]

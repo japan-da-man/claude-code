@@ -43,3 +43,11 @@ test('CI is waited for only when the repo has one', () => {
   assert.equal(decideMerge({ ...good, ci: 'success' }).merge, true)
   assert.equal(decideMerge({ ...good, ci: 'failure' }).merge, false)
 })
+
+test('a design system violation blocks the merge with its own reason', () => {
+  const d = decideMerge({ summary: { score: 1, requiredFailures: [] }, threshold: 0.95, testsPassed: true, designPassed: false, ci: 'none', protectedHits: [] })
+  assert.equal(d.merge, false)
+  assert.match(d.reasons[0], /デザインシステム/)
+  // デザインシステムのないアプリでは designPassed を渡さないので、条件にならない
+  assert.equal(decideMerge({ summary: { score: 1, requiredFailures: [] }, threshold: 0.95, testsPassed: true, ci: 'none', protectedHits: [] }).merge, true)
+})
