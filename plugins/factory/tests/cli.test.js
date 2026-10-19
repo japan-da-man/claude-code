@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { newFeature, startLine, statusReport, submit, writeScenarios } from '../line/cli.js'
+import { mockPaths, mockShoot, newFeature, startLine, statusReport, submit, writeScenarios } from '../line/cli.js'
 import { featureDir, projectHome } from '../line/paths.js'
 import { acquireLock, listQueue } from '../line/queue.js'
 import { saveState } from '../line/state.js'
@@ -83,4 +83,18 @@ test('scenarios refuses to run before the spec is written', async () => {
   const h = home()
   const f = newFeature({ repo: '/r/memo', name: 'share', home: h })
   await assert.rejects(writeScenarios({ repo: '/r/memo', id: f.id, home: h, model: 'codex', run: async () => ({ result: '' }) }), /spec\.md/)
+})
+
+test('mock-shoot waits for no one: it refuses while the line holds the simulator', () => {
+  const h = home()
+  acquireLock(h, process.pid)
+  assert.throws(() => mockShoot({ repo: '/r/memo', id: '20261019-share', pages: ['factory-mock-a'], home: h }), /ライン/)
+})
+
+test('mock options and the chosen image live in separate folders, so only the choice reaches the branch', () => {
+  const h = home()
+  const f = newFeature({ repo: '/r/memo', name: 'share', home: h })
+  const p = mockPaths({ repo: '/r/memo', id: f.id, home: h })
+  assert.equal(p.options, join(f.dir, 'ui-options'))
+  assert.equal(p.chosen, join(f.dir, 'ui'))
 })

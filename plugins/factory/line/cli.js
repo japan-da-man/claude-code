@@ -2,13 +2,20 @@
 //   node cli.js new <repo> <英語の機能名>   機能 ID を決めてフォルダを作り、置き場所を JSON で出す
 //   node cli.js submit <repo> <id>          待ち行列に入れ、ラインが止まっていれば裏で起動する
 //   node cli.js scenarios <repo> <id> <model>  シナリオ作成役を Codex で動かし、作ったシナリオの一覧を出す
+//   node cli.js mock-prepare <repo> <id>     UI 案を作るための、捨てる worktree を作り、置き場所を JSON で出す
+//   node cli.js mock-shoot <repo> <id> <page...>  案のページをビルドしてシミュレーターで撮る
+//   node cli.js mock-clean <repo> <id>       UI 案の worktree を消す
 //   node cli.js status                      ライン・待ち行列・機能の状態を JSON で出す
 import { spawn as spawnChild } from 'node:child_process'
 import { existsSync, mkdirSync, openSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { factoryHome, featureDir, featureId, projectHome } from './paths.js'
+import { factoryHome, featureDir, featureId, projectHome, projectSlug } from './paths.js'
+import { homedir } from 'node:os'
+import * as ios from './adapters/ios.js'
 import { runCodex } from './codex.js'
+import { loadConfig } from './config.js'
+import { cleanMock, mockShotPlan, prepareMock, runShotPlan } from './mock.js'
 import { enqueue, listQueue, readLock } from './queue.js'
 
 const LINE = fileURLToPath(new URL('./line.js', import.meta.url))
@@ -71,6 +78,40 @@ export async function writeScenarios({ repo, id, home = factoryHome(), model, ru
   return out.result
 }
 
+// 案の画像（見比べる用）と、選んだ案の画像（仕様と一緒にブランチに入る）は別のフォルダに置く。
+export function mockPaths({ repo, id, home = factoryHome(), workRoot = join(homedir(), 'Library', 'Caches', 'factory') }) {
+  const abs = resolve(repo)
+  const dir = featureDir(projectHome(abs, home), id)
+  const work = join(workRoot, projectSlug(abs))
+  return { options: join(dir, 'ui-options'), chosen: join(dir, 'ui'), work, worktree: join(work, `${id}-mock`), derived: join(work, `${id}-mock-derived`) }
+}
+
+export function mockPrepare({ repo, id, home = factoryHome() }) {
+  const p = mockPaths({ repo, id, home })
+  return prepareMock({ repo: resolve(repo), id, workRoot: p.work, outDir: p.options })
+}
+
+export function mockShoot({ repo, id, pages, home = factoryHome() }) {
+  // この Mac ではシミュレーターを 1 台しか動かせないので、ラインが使っている間は撮らない。
+  if (lineRunning(home)) throw new Error('ラインがシミュレーターを使っているので撮れません。/factory:status でラインが止まるのを待ってください')
+  const abs = resolve(repo)
+  const p = mockPaths({ repo: abs, id, home })
+  const config = loadConfig(abs)
+  const udid = ios.resolveDevice(ios.listDevices(), config.ios.device)
+  const steps = mockShotPlan({ config, dir: p.worktree, udid, derived: p.derived, out: p.options, pages, xcodegen: existsSync(join(p.worktree, 'project.yml')) })
+  try {
+    return runShotPlan(steps, { cwd: p.worktree, findApp: () => ios.findApp(p.derived) })
+  } finally {
+    ios.shutdown(udid)
+  }
+}
+
+export function mockClean({ repo, id, home = factoryHome() }) {
+  const p = mockPaths({ repo, id, home })
+  cleanMock({ repo: resolve(repo), dir: p.worktree })
+  return { removed: p.worktree }
+}
+
 export function statusReport(home = factoryHome()) {
   const features = []
   for (const project of existsSync(home) ? readdirSync(home, { withFileTypes: true }) : []) {
@@ -92,8 +133,16 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       console.log(await writeScenarios({ repo: a, id: b, model: c }))
       process.exit(0)
     }
-    const out = cmd === 'new' ? newFeature({ repo: a, name: b }) : cmd === 'submit' ? submit({ repo: a, id: b }) : cmd === 'status' ? statusReport() : null
-    if (!out) throw new Error('使い方: cli.js new <repo> <name> | submit <repo> <id> | scenarios <repo> <id> <model> | status')
+    const pages = process.argv.slice(5)
+    const out =
+      cmd === 'new' ? newFeature({ repo: a, name: b })
+      : cmd === 'submit' ? submit({ repo: a, id: b })
+      : cmd === 'mock-prepare' ? mockPrepare({ repo: a, id: b })
+      : cmd === 'mock-shoot' ? mockShoot({ repo: a, id: b, pages: [c, ...pages].filter(Boolean) })
+      : cmd === 'mock-clean' ? mockClean({ repo: a, id: b })
+      : cmd === 'status' ? statusReport()
+      : null
+    if (!out) throw new Error('使い方: cli.js new <repo> <name> | submit <repo> <id> | scenarios <repo> <id> <model> | mock-prepare|mock-clean <repo> <id> | mock-shoot <repo> <id> <page...> | status')
     console.log(JSON.stringify(out, null, 2))
   } catch (e) {
     console.error(e.message)

@@ -1,7 +1,7 @@
 // ライン本体。待ち行列から機能を 1 つずつ取り出し、実装 → テスト → 検証 → 判定 → マージ判定 を進める。
 // 手順が決まっている工程はこのスクリプトが行い、モデルを呼ぶのは実装・検証・判定だけにする。
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -155,7 +155,9 @@ export async function runFeature({ entry, home, deps }) {
     git(repo, 'worktree', 'add', '-q', '-b', branch, wt, base)
     mkdirSync(join(wt, 'docs', 'factory', id), { recursive: true })
     copyFileSync(join(fdir, 'spec.md'), join(wt, specRel))
-    git(wt, 'add', specRel)
+    // UI 案の段階で選んだ画面の画像も、仕様と同じフォルダに入れる（シナリオは入れない）。
+    if (existsSync(join(fdir, 'ui'))) cpSync(join(fdir, 'ui'), join(wt, 'docs', 'factory', id, 'ui'), { recursive: true })
+    git(wt, 'add', join('docs', 'factory', id))
     git(wt, 'commit', '-q', '-m', `Add factory spec for ${id}`)
   }
   const base = git(wt, 'merge-base', 'HEAD', sh('git', ['rev-parse', '--verify', '-q', 'origin/HEAD'], wt).ok ? 'origin/HEAD' : 'main')
