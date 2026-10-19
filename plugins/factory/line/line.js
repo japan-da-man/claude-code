@@ -264,12 +264,12 @@ export async function runFeature({ entry, home, deps }) {
   const protectedPaths = [...new Set([...ALWAYS_PROTECTED, ...(ui ? [`${ui.dir}/**`] : []), ...config.protected_paths, ...(ds?.protected_paths ?? [])])]
   const udid = deps.adapter.udid(config)
   const cmds = deps.adapter.commands({ config, repo: wt, udid, derived })
-  const vcmds = deps.adapter.commands({ config, repo: vwt, udid, derived: vderived })
   const bundleId = config.ios.bundle_id
   let decision = { merge: false, reasons: [], stop: false }
 
   const checkout = (dir, sha) => {
     if (existsSync(dir)) sh('git', ['worktree', 'remove', '--force', dir], repo)
+    sh('git', ['worktree', 'prune'], repo)
     git(repo, 'worktree', 'add', '-q', '--detach', dir, sha)
   }
 
@@ -306,6 +306,8 @@ export async function runFeature({ entry, home, deps }) {
   // rerun が on_failure なら、検証役の 1 回目が合格したシナリオはそこで終え、落ちたときだけ上限まで流し直す。
   const verifyAt = async ({ sha, list: targets, label, maxRuns = config.satisfaction.runs_per_scenario }) => {
     checkout(vwt, sha)
+    // コマンドはチェックアウトのあとで作る（project.yml があるかで、xcodegen を先に動かすかが決まる）
+    const vcmds = deps.adapter.commands({ config, repo: vwt, udid, derived: vderived })
     const classes = {}
     for (const sc of ui ? targets.filter((t) => t.uiTest) : []) {
       const swift = readFileSync(sc.uiTest, 'utf8')
@@ -440,7 +442,8 @@ export async function runFeature({ entry, home, deps }) {
     }
 
     if (state.step === 'verify') {
-      const r = roundEntry()
+      // 20節より前の版で途中まで進んだ機能には、検証するコミットが記録されていない
+      const r = { ...roundEntry(), sha: roundEntry().sha ?? git(wt, 'rev-parse', 'HEAD') }
       const { runs, uiTestBuild, summary } = await verifyAt({ sha: r.sha, list: dev, label: String(round) })
       const passed = summary.score >= threshold && !summary.requiredFailures.length
       const next = passed && holdouts.length ? 'holdout' : passed && config.control.mutant ? 'mutant' : 'decide'
