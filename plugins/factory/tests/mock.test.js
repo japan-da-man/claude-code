@@ -4,7 +4,8 @@ import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cleanMock, mockShotPlan, prepareMock } from '../line/mock.js'
+import { deflateSync } from 'node:zlib'
+import { cleanMock, looksBlank, mockShotPlan, prepareMock, shootSettled } from '../line/mock.js'
 
 function repoWithDesignSystem() {
   const root = mkdtempSync(join(tmpdir(), 'factory-mock-'))
@@ -58,4 +59,76 @@ test('the shot plan builds once and shoots each mock page in light mode', () => 
   const launches = steps.filter((s) => s.cmd === 'xcrun' && s.args[1] === 'launch' && s.args.includes('-DesignSystemCatalog'))
   assert.deepEqual(launches.map((s) => s.args.at(-1)), ['factory-mock-a', 'factory-mock-b'])
   assert.ok(steps.some((s) => s.cmd === 'xcrun' && s.args.includes('appearance') && s.args.includes('light')))
+})
+
+test('each page is shot once even if named twice, and only after the screen settles', () => {
+  const config = { ios: { project: 'App.xcodeproj', scheme: 'App', bundle_id: 'com.example.App' } }
+  const steps = mockShotPlan({ config, dir: '/m', udid: 'U', derived: '/d', out: '/o', pages: ['factory-mock-a', 'factory-mock-a', 'factory-mock-b'], xcodegen: false })
+  const shots = steps.filter((s) => s.shot)
+  assert.deepEqual(shots.map((s) => s.shot), ['/o/factory-mock-a.png', '/o/factory-mock-b.png'])
+  assert.ok(shots.every((s) => s.settle === true))
+})
+
+test('a settling shot keeps shooting until two shots in a row are identical', () => {
+  const frames = ['fade-1', 'fade-2', 'final', 'final']
+  let i = 0
+  const written = []
+  const result = shootSettled({ shot: '/o/a.png', udid: 'U' }, {
+    capture: (path) => written.push(path),
+    read: () => frames[Math.min(i++, frames.length - 1)],
+    sleep: () => {},
+  })
+  assert.equal(result.settled, true)
+  assert.equal(i, 4)
+})
+
+test('a screen that never settles is reported, not silently kept', () => {
+  let i = 0
+  const result = shootSettled({ shot: '/o/a.png', udid: 'U' }, { capture: () => {}, read: () => `frame-${i++}`, sleep: () => {} })
+  assert.equal(result.settled, false)
+})
+
+// テスト用に、グレースケールの PNG を作る（行ごとに値を決める）
+function png(width, height, rowValue) {
+  const crc = (buf) => {
+    let c = ~0
+    for (const b of buf) {
+      c ^= b
+      for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xedb88320 : c >>> 1
+    }
+    return ~c >>> 0
+  }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4)
+    len.writeUInt32BE(data.length)
+    const td = Buffer.concat([Buffer.from(type), data])
+    const c = Buffer.alloc(4)
+    c.writeUInt32BE(crc(td))
+    return Buffer.concat([len, td, c])
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8
+  ihdr[9] = 0
+  const raw = Buffer.concat(Array.from({ length: height }, (_, y) => Buffer.concat([Buffer.from([0]), Buffer.alloc(width, rowValue(y))])))
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
+}
+
+test('a screen that is blank below the status bar is recognised as blank', () => {
+  const blank = png(40, 100, (y) => (y < 10 ? 0 : 255))
+  const content = png(40, 100, (y) => (y < 10 ? 0 : (y * 7) % 256))
+  assert.equal(looksBlank(blank), true)
+  assert.equal(looksBlank(content), false)
+  assert.equal(looksBlank(Buffer.from('not a png')), false)
+})
+
+test('two identical blank shots in a row are not a settled screen', () => {
+  const blank = png(40, 100, (y) => (y < 10 ? 0 : 255))
+  const content = png(40, 100, (y) => (y < 10 ? 0 : (y * 7) % 256))
+  const frames = [blank, blank, blank, content, content]
+  let i = 0
+  const result = shootSettled({ shot: '/o/a.png', udid: 'U' }, { capture: () => {}, read: () => frames[Math.min(i++, frames.length - 1)], sleep: () => {} })
+  assert.equal(result.settled, true)
+  assert.equal(i, 5)
 })
