@@ -1,7 +1,7 @@
 ---
 name: init
 description: factory を使う前に、プロジェクトごとに 1 回だけ行う初期設定。プロジェクトの種類を判定し、触ってはいけないファイルを決め、.factory/config.json を作る。必要な道具（Xcode、xcodegen、agent-device、gh）も確かめる。「factory を使えるようにして」「/factory:init」と言われたとき、/factory:start で設定がないと言われたときに使う。
-allowed-tools: Bash(xcodebuild -list *) Bash(xcodebuild -showBuildSettings *) Bash(xcrun simctl list *) Bash(command -v *) Bash(gh auth status*) Bash(git remote -v)
+allowed-tools: Bash(xcodebuild -list *) Bash(xcodebuild -showBuildSettings *) Bash(xcodebuild build-for-testing *) Bash(xcodebuild test-without-building *) Bash(xcrun simctl list *) Bash(command -v *) Bash(gh auth status*) Bash(git remote -v)
 ---
 
 # factory:init: 工場の初期設定
@@ -46,6 +46,25 @@ iOS なら、次を調べる（推測で埋めない）。
 5. 試す: ビルドしてアプリを入れ、`xcrun simctl launch <udid> <bundle_id> -FactorySeed "$(printf '%s' '<例の JSON>' | base64)"` で一度起動して閉じ、ふつうに起動し直してデータが見えるか（スクリーンショットで）確かめる。保存は アプリの中の場所にあるので、`simctl spawn … defaults read` では見えない。全テストも通す。
 6. 次の段階の禁止ファイルに、`<アプリ>/FactorySeed.swift` と `.factory/seed.md` を必ず入れる（実装役が変えないように）。
 
+## 3.5 シナリオの XCUITest を流すターゲットを用意する
+
+シナリオ作成役は、機械で確かめられるシナリオには XCUITest も書く。ラインはまずそれを流し、通れば LLM の検証役を呼ばない（1 本数秒。検証役は 1 本 1 分以上かかる）。そのための UI テストのターゲット `FactoryUITests` を足すかを AskUserQuestion で尋ねる（足す (Recommended) / 今は足さない）。`ios.ui_tests` がすでに設定にあれば飛ばす。
+
+1. ターゲットを足す。
+   - **XcodeGen（`project.yml`）**：`targets` に次を足し、アプリのスキームの `test.targets` にも `FactoryUITests` を足して、`xcodegen generate` する。
+     ```yaml
+     FactoryUITests:
+       type: bundle.ui-testing
+       platform: iOS
+       sources: [FactoryUITests]
+       dependencies:
+         - target: <アプリのターゲット>
+     ```
+   - **`.xcodeproj` だけのとき**：`project.pbxproj` を手で書き換えない。人に、Xcode の File › New › Target › UI Testing Bundle で `FactoryUITests` を足してもらう（Xcode 16 以降は、フォルダに置いたファイルが自動でターゲットに入る）。アプリのスキームの Test に入っていることも確かめてもらう。
+2. `FactoryUITests/FactoryPlaceholderTests.swift` を書く（中身は `import XCTest` と、テストのない `final class FactoryPlaceholderTests: XCTestCase {}`）。フォルダが空だとターゲットが作れないため。
+3. 試す: `xcodebuild build-for-testing` が通り、`xcodebuild test-without-building … -only-testing:FactoryUITests/FactoryPlaceholderTests` が終了コード 0 で終わることを確かめる。
+4. 設定に `"ui_tests": { "target": "FactoryUITests", "dir": "FactoryUITests" }` を `ios` の中に書く。ラインは `FactoryUITests/**` を、設定に関係なく禁止ファイルとして扱う（シナリオの XCUITest は、検証のときだけラインが入れる）。
+
 ## 4. 触ってはいけないファイルを決める
 
 リポジトリを見て、実装役に変えさせたくないファイルの候補を出す。候補の例:
@@ -72,7 +91,15 @@ AskUserQuestion（multiSelect）で候補を見せ、選ばれたものを `prot
 }
 ```
 
-既定値: モデルはインタビュー・シナリオ・判定が `opus`、実装・検証が `sonnet`。満足度は各シナリオ 3 回・95% 以上。周回の上限は 5。
+`swiftlint` があり（`command -v swiftlint`）、リポジトリに `.swiftlint.yml` があれば、`"quality": { "lint": "swiftlint lint --strict" }` を足すか AskUserQuestion で尋ねる。
+
+既定値:
+
+- モデル: インタビュー・シナリオ・判定が `opus`、実装・検証・破壊役が `sonnet`、レビューが `codex`（Codex がなければ `sonnet` にする）
+- 満足度: 95% 以上。各シナリオはまず 1 回流し、落ちたときだけ 3 回まで流し直す（`satisfaction.rerun: "on_failure"`）
+- 周回の上限: 5
+- 陰性対照: 実装の前に今のアプリでシナリオを流す（`control.base: true`）。壊したアプリを流す破壊役は無効（`control.mutant: false`）
+- 品質関門: テストのファイルが足されていること、変更が 800 行以内（超えたら Draft PR で人が見る）、別のモデルのレビューを PR に載せる（`quality`）
 
 ## 6. 道具を確かめる
 
