@@ -263,6 +263,6 @@ plugins/design-system/
 
 確かめていないこと:
 
-- プラグインとしてインストールした状態で `/design-system:init`・`/design-system:update`・`/design-system:check` を呼ぶこと（`${CLAUDE_PLUGIN_ROOT}` の置き換え、`allowed-tools` で確認なしに進むか）。
+- `/design-system:check` は、`claude -p --plugin-dir plugins/design-system "/design-system:check"` でサンプルアプリから呼び、ふつうの権限モードで拒否なし（`permission_denials` が空）に「違反なし」まで動いた。`/design-system:init` と `/design-system:update` は、スキルとして呼んで `allowed-tools` で確認なしに進むかを確かめていない。
 - `/design-system:update` の手順を最後まで通すこと（部品の追加など）。
 - Xcode のフォルダ同期（`PBXFileSystemSynchronizedRootGroup`）を使う `.xcodeproj` だけのアプリ。
