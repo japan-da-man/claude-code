@@ -12,13 +12,15 @@ function runtimeVersion(key) {
   return m ? Number(m[1]) * 1000 + Number(m[2]) : -1
 }
 
-// 同じ名前のシミュレーターが複数の iOS にあるときは、いちばん新しい iOS のものを使う。
+// 同じ名前のシミュレーターが複数の iOS にあるときは、起動中のものを、なければいちばん新しい iOS のものを使う。
 export function resolveDevice(simctlJson, name) {
-  const found = Object.entries(simctlJson.devices)
+  const candidates = Object.entries(simctlJson.devices)
     .filter(([key]) => key.includes('iOS'))
     .sort(([a], [b]) => runtimeVersion(b) - runtimeVersion(a))
     .flatMap(([, list]) => list)
-    .find((d) => d.name === name && d.isAvailable)
+    .filter((d) => d.name === name && d.isAvailable)
+  // すでに起動しているものがあれば、それを使う（デスクトップアプリのシミュレーターのペインなどが起動していると、2 台目を起動してメモリを圧迫するため）
+  const found = candidates.find((d) => d.state === 'Booted') ?? candidates[0]
   if (!found) throw new Error(`シミュレーター "${name}" が見つかりません（xcrun simctl list devices available で確かめてください）`)
   return found.udid
 }

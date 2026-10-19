@@ -10,6 +10,7 @@
   - `agent-device snapshot -i --session {{session}}` で画面の要素（`@e5` のような参照つき）を読む
   - `agent-device click <参照かセレクター> --settle --session {{session}}`、`fill <対象> <文字> --settle`、`scroll` で操作する。`id="..."` のようなセレクターも使える
   - `agent-device screenshot <ファイル> --session {{session}}` で画面を撮る
+  - **アプリを終了して起動し直す** 手順は、`agent-device open {{bundle_id}} --udid {{udid}} --platform ios --relaunch --session {{session}} --timeout 300000` で行う（`--relaunch` がアプリを終了させてから起動する）。`close` は agent-device のセッションを閉じるだけで、アプリは終了しないので、再起動の代わりにならない
   - 最後に `agent-device close --session {{session}}`
 - **Bash 1 回につき、`agent-device` のコマンドを 1 つだけ** 実行してください。`&&`・`;`・パイプ・ループ・`cd` は使えません（許可されておらず、拒否されます）。
 - 座標ではなく、参照かセレクターで操作してください。
@@ -21,7 +22,7 @@
 
 - `log.md`: 行った操作と、そのたびに画面に何が出たかを順番に
 - 各手順のあとのスクリーンショット（`step-01.png` のように番号つき）
-- 最後の画面の `snapshot -i` の出力（`final-snapshot.txt`）
+- 最後の画面の `snapshot -i` の出力（`final-snapshot.txt`）。出力を要約せず、そのまま書き写す（判定役はこれを証拠として読む）
 
 - `result.json`: 次の形で、最後まで操作できたかどうか
 

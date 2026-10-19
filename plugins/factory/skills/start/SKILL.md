@@ -3,7 +3,7 @@ name: start
 description: factory で機能を 1 つ作り始める。一問一答のインタビューで仕様を固め、隠しシナリオを作って承認をもらい、裏のラインに流す。あとは実装・検証・判定・マージまで自動で進む。「factory で〇〇を作って」「/factory:start <要望>」と言われたときに使う。バグ修正や小さな改善にも使える。
 argument-hint: "<作りたい機能や直したいこと>"
 model: opus
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/line/cli.js *) Bash(git fetch *) Bash(git status *) Bash(git rev-parse *) Bash(mkdir -p *) Bash(cp *)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/line/cli.js *) Bash(git fetch *) Bash(git status *) Bash(git rev-parse *) Bash(mkdir -p *) Bash(cp *) Write(~/.factory/**) Edit(~/.factory/**)
 ---
 
 # factory:start: 要望から裏のラインへ
@@ -14,6 +14,7 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/line/cli.js *) Bash(git fetch *) 
 
 ## 0. 準備
 
+- CLI に渡すリポジトリは `.`（Bash の作業フォルダのリポジトリ）なので、作業フォルダが対象のリポジトリの中にあることを `git rev-parse --show-toplevel` で確かめる。違えば、ユーザーに対象のリポジトリで始め直すよう伝える。
 - このリポジトリに `.factory/config.json` がなければ、先に `/factory:init` を実行するよう伝えて終える。
 - 要望が空なら、何を作りたいか尋ねる。
 - `git fetch -q origin` のあと `git status -sb` を見る。手元のブランチが origin より遅れていたら、AskUserQuestion で pull してよいか尋ね、よければ `git pull --ff-only` する。ラインは origin の最新から作業を始めるので、手元が古いままだと、インタビューとシナリオ作成が古いコードを前提にしてしまう。
@@ -40,7 +41,7 @@ AskUserQuestion で一問一答をして、仕様を固める。
 機能の短い英語名（例 `share-memo`）を決め、置き場所を作る:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/line/cli.js new "$(git rev-parse --show-toplevel)" <英語名>
+node ${CLAUDE_PLUGIN_ROOT}/line/cli.js new . <英語名>
 ```
 
 出力の `spec` のパスに仕様を書く。見出しは観点リストの 7 つにし、末尾に「インタビューの要約」として問答を短く残す。ユーザーの言葉（ふつうは日本語）で書く。
@@ -61,14 +62,14 @@ node ${CLAUDE_PLUGIN_ROOT}/line/cli.js new "$(git rev-parse --show-toplevel)" <�
 1. 撮影用の、捨てる worktree を作る。
 
    ```bash
-   node ${CLAUDE_PLUGIN_ROOT}/line/cli.js mock-prepare "$(git rev-parse --show-toplevel)" <id>
+   node ${CLAUDE_PLUGIN_ROOT}/line/cli.js mock-prepare . <id>
    ```
 
 2. サブエージェント `factory:ui-mocker` に、仕様のパス、出力の `dir`・`mocks`・`catalog`、作る案の数（ふつうは 2、迷う機能なら 3）を渡して、案を作らせる。
 3. 案のページを撮る（ビルドがあるので数分かかる。Bash のタイムアウトは 10 分にする）。撮影はアプリの `design-system/shoot.mjs` が行い、画像は `<出力の out>/factory-mock-<x>-light.png` になる。`shoot.mjs` がないと言われたら、`/design-system:update` でデザインシステムを新しい版にするよう伝える。ラインが動いているあいだはシミュレーターを使えないので、断られたら、待つか飛ばすかを AskUserQuestion で尋ねる。
 
    ```bash
-   node ${CLAUDE_PLUGIN_ROOT}/line/cli.js mock-shoot "$(git rev-parse --show-toplevel)" <id> factory-mock-a factory-mock-b
+   node ${CLAUDE_PLUGIN_ROOT}/line/cli.js mock-shoot . <id> factory-mock-a factory-mock-b
    ```
 
 4. 撮れた画像を Read で見て、案ごとに「どこが違うか」を短く添えて、ユーザーに画像を見せる（SendUserFile が使えれば、それで画像を送る）。AskUserQuestion で選んでもらう（選択肢は案ごと。おすすめを先頭に。「どれも違う」なら直したい点を聞き、作成役にもう一度作らせる）。
@@ -77,7 +78,7 @@ node ${CLAUDE_PLUGIN_ROOT}/line/cli.js new "$(git rev-parse --show-toplevel)" <�
 7. 撮影用の worktree を消す。
 
    ```bash
-   node ${CLAUDE_PLUGIN_ROOT}/line/cli.js mock-clean "$(git rev-parse --show-toplevel)" <id>
+   node ${CLAUDE_PLUGIN_ROOT}/line/cli.js mock-clean . <id>
    ```
 
 ## 3. シナリオを作る
@@ -87,7 +88,7 @@ node ${CLAUDE_PLUGIN_ROOT}/line/cli.js new "$(git rev-parse --show-toplevel)" <�
 - **`codex` か `codex:<モデル>` のとき**：Codex に書かせる。実装役（Claude）とは別の会社のモデルにして、死角を重ねないためのもの。数分かかるので、Bash のタイムアウトを長め（10 分）にする。
 
   ```bash
-  node ${CLAUDE_PLUGIN_ROOT}/line/cli.js scenarios "$(git rev-parse --show-toplevel)" <id> <models.scenario の値>
+  node ${CLAUDE_PLUGIN_ROOT}/line/cli.js scenarios . <id> <models.scenario の値>
   ```
 
   Codex は機能のフォルダの中でだけ書き込める（`workspace-write`）。出力の最後が、シナリオの一覧と仕様の曖昧な点。
@@ -116,7 +117,7 @@ node ${CLAUDE_PLUGIN_ROOT}/line/cli.js new "$(git rev-parse --show-toplevel)" <�
 承認されたら、待ち行列に入れる:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/line/cli.js submit "$(git rev-parse --show-toplevel)" <id>
+node ${CLAUDE_PLUGIN_ROOT}/line/cli.js submit . <id>
 ```
 
 ラインが止まっていれば、裏で起動する（`started: true`）。動いていれば、順番待ちになる。

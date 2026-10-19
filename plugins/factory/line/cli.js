@@ -1,4 +1,5 @@
 // スキルから呼ぶ小さな CLI。
+//   <repo> は "." にすると、実行したフォルダの git リポジトリを使う
 //   node cli.js new <repo> <英語の機能名>   機能 ID を決めてフォルダを作り、置き場所を JSON で出す
 //   node cli.js submit <repo> <id>          待ち行列に入れ、ラインが止まっていれば裏で起動する
 //   node cli.js scenarios <repo> <id> <model>  シナリオ作成役を Codex で動かし、作ったシナリオの一覧を出す
@@ -18,6 +19,15 @@ import { enqueue, listQueue, readLock } from './queue.js'
 
 const LINE = fileURLToPath(new URL('./line.js', import.meta.url))
 const SCENARIO_WRITER = fileURLToPath(new URL('../agents/scenario-writer.md', import.meta.url))
+
+// "." か省略なら、コマンドを実行したフォルダの git リポジトリの一番上を使う。
+// スキルで "$(git rev-parse --show-toplevel)" と書くと、コマンド置換のせいで allowed-tools に合わず、毎回許可を求められるため。
+export function resolveRepo(arg, cwd = process.cwd()) {
+  if (arg && arg !== '.') return resolve(arg)
+  const r = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' })
+  if (r.status !== 0) throw new Error(`${cwd} は git のリポジトリの中ではありません`)
+  return r.stdout.trim()
+}
 
 export function newFeature({ repo, name, home = factoryHome(), date = new Date() }) {
   const base = featureId(name, date)
@@ -123,8 +133,9 @@ export function statusReport(home = factoryHome()) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [cmd, a, b, c] = process.argv.slice(2)
+  const [cmd, repoArg, b, c] = process.argv.slice(2)
   try {
+    const a = cmd === 'status' ? undefined : resolveRepo(repoArg)
     if (cmd === 'scenarios') {
       console.log(await writeScenarios({ repo: a, id: b, model: c }))
       process.exit(0)

@@ -173,3 +173,13 @@ test('the vendored shoot.mjs parses its own command line', () => {
   assert.deepEqual(parseShootArgs(['--pages', 'a,b', '--appearance', 'light', '--out', 'o']), { pages: ['a', 'b'], appearances: ['light'], app: false, out: 'o' })
   assert.deepEqual(parseShootArgs(['--app']), { pages: undefined, appearances: ['light', 'dark'], app: true, out: undefined })
 })
+
+test('a booted simulator with the name wins over a newer runtime, so only one runs', () => {
+  const list = {
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [{ name: 'iPhone 17', udid: 'OLD-BOOTED', isAvailable: true, state: 'Booted' }],
+      'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [{ name: 'iPhone 17', udid: 'NEW', isAvailable: true, state: 'Shutdown' }],
+    },
+  }
+  assert.equal(resolveDevice(list, 'iPhone 17'), 'OLD-BOOTED')
+})
