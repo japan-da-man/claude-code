@@ -100,7 +100,7 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node desi
    node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs install <repo>
    ```
 
-   `design-system/check.mjs`、`tokens.json`、文書 4 つ、`<code>/` の部品とカタログ、`Tokens.swift` ができる（すでにあるファイルは上書きしない）。
+   `design-system/check.mjs`・`design-system/shoot.mjs`（撮影。factory の UI 案の撮影も使う）、`tokens.json`、文書 4 つ、`<code>/` の部品とカタログ、`Tokens.swift` ができる（すでにあるファイルは上書きしない）。
 
 4. `design-system/tokens.json` を、3 で決めた値に書き換える。「必ずある役割」は消さない。`usage` には、その色や文字をどこに使うかをユーザーの言葉で書く。役割を足してもよい（名前は小文字の kebab-case）。書いたら Swift を作り直す:
 

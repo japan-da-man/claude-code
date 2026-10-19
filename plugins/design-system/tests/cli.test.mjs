@@ -9,6 +9,7 @@ import { artifactDone, artifactStage, install, status, writeTokens } from '../sc
 
 const CLI = fileURLToPath(new URL('../scripts/cli.mjs', import.meta.url))
 const CHECK = fileURLToPath(new URL('../scripts/check.mjs', import.meta.url))
+const SHOOT = fileURLToPath(new URL('../scripts/shoot.mjs', import.meta.url))
 
 function makeRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'ds-cli-'))
@@ -71,6 +72,14 @@ test('status adds an outdated check.mjs to what is stale', () => {
   assert.deepEqual(status(repo).stale, [])
   writeFileSync(join(repo, 'design-system', 'check.mjs'), '// old\n')
   assert.match(status(repo).stale.join('\n'), /check\.mjs/)
+})
+
+test('install also vendors shoot.mjs, and status reports it when outdated', () => {
+  const repo = makeRepo()
+  assert.equal(install(repo).shoot, 'design-system/shoot.mjs')
+  assert.equal(readFileSync(join(repo, 'design-system', 'shoot.mjs'), 'utf8'), readFileSync(SHOOT, 'utf8'))
+  writeFileSync(join(repo, 'design-system', 'shoot.mjs'), '// old\n')
+  assert.match(status(repo).stale.join('\n'), /shoot\.mjs/)
 })
 
 test('artifact-stage lays out the files under project/ and lists the screenshots to upload', () => {
