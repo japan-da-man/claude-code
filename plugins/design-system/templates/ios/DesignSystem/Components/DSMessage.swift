@@ -129,11 +129,13 @@ extension View {
         }
     }
 
-    /// 取り消せない操作（削除など）の前の確認。
+    /// 取り消せない操作（削除など）の前の確認。「キャンセル」と、赤い実行のボタンをいつも並べる。
+    /// HIG では、破壊的な結果の確認にはアラートが合う（選択肢が複数あるときのアクションシートは別の部品にする）。
+    /// iOS 26 の confirmationDialog はポップオーバーになり「キャンセル」が見えなくなるので使わない。
     func dsConfirm(_ title: String, isPresented: Binding<Bool>, actionTitle: String, message: String? = nil, cancelTitle: String = "キャンセル", action: @escaping () -> Void) -> some View {
-        confirmationDialog(title, isPresented: isPresented, titleVisibility: .visible) {
-            Button(actionTitle, role: .destructive, action: action)
+        alert(title, isPresented: isPresented) {
             Button(cancelTitle, role: .cancel) {}
+            Button(actionTitle, role: .destructive, action: action)
         } message: {
             if let message {
                 Text(message)

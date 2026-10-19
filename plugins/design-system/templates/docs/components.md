@@ -73,7 +73,7 @@ DSPickerRow("並び順", selection: $order, options: Order.allCases) { $0.label 
 | `DSBanner(.error("…"), actionTitle: "再試行") { … }` | 画面の上。画面全体に関わる知らせ（通信できない、など） |
 | `.dsToast($toast)` | 操作の結果を短く知らせて消える（「保存しました」）。`toast = .success("保存しました")` で出す |
 | `.dsAlert($alert)` | 続けられないエラー。`alert = DSAlertContent(title: "…", message: "…")` で出す |
-| `.dsConfirm("…しますか？", isPresented: $confirming, actionTitle: "削除") { … }` | 取り消せない操作の前の確認 |
+| `.dsConfirm("…しますか？", isPresented: $confirming, actionTitle: "削除") { … }` | 取り消せない操作の前の確認。アラートで「キャンセル」と赤い実行のボタンを並べる（HIG：破壊的な結果の確認にはアラート） |
 
 ## 状態
 

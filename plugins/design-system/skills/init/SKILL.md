@@ -168,11 +168,14 @@ node design-system/check.mjs
    node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs artifact-stage <repo> <スクラッチのフォルダ>/artifact
    ```
 
-   `files`（`project/` に置いた tokens.json と文書）、`screenshots`（上げる画像）、`hash` が出る。
-2. Artifact の型の一覧（`Artifact` の `action: "quickstart"`、`intent: "other"`）から **Design System** の型を選び、`type_url` とアプリの名前の `title` で作る。作った結果に出る型の手順（SKILL.md）に従って、`project/` の下に写す:
-   - `tokens.json` はそのまま（同じ形にしてある）。`README.md` が表紙のあとの本文、`components.md`・`copy.md`・`patterns.md` はその節になる。
-   - スクリーンショットはアセットとして上げ、`Screenshots` のグループにする（README に、カタログ画面のスクリーンショットであること、正はリポジトリであることを書き添える）。
-   - 表紙と索引（`design-system.json`）は型の手順どおりに書く。索引の `lastChange.via` は `design-system plugin`。
+   `files`（`project/` に置いた tokens.json と文書）、`screenshots`（上げる画像。アップロードできるよう、同じフォルダの `screenshots/` に写してある）、`hash` が出る。
+2. Artifact の型の一覧（`Artifact` の `action: "quickstart"`、`intent: "other"`）から **Design System** の型を選び、`type_url` とアプリの名前の `title` で作る。作った結果に出る型の手順（SKILL.md）と、`artifact-type/reference/cover.md` に従って、`project/` の下に写す:
+   - スクリーンショットは `file_paths` でまとめてアセットとして上げ（1 回 25 枚まで）、索引の `assetGroups.Screenshots` に、カタログのページ順・ライトのあとにダークの順で記録する。
+   - `project/assets/Screenshots/README.md` に、カタログ画面のスクリーンショットであることと、**正はリポジトリで、このページで直してもリポジトリには戻らない** ことを書く。
+   - `tokens.json` はそのまま（同じ形にしてある）。`README.md` が本文、`components.md`・`copy.md`・`patterns.md` はその節になる。
+   - 表紙（`project/components/Cover/preview.html`）は型の手順どおり、トークンの色と角丸から作る。
+   - 索引（`project/design-system.json`）は `"editing": "off"` にして、ページの上で直せないようにする（一方向の写しなので）。`lastChange.via` は `design-system plugin`。
+   - 索引と残りのファイルは 1 回の `publish`（`root` に並べたフォルダ、`file_path` に索引）で送る。
 3. 写し終えたら、url と中身のハッシュを記録して、コミットする:
 
    ```bash
@@ -184,6 +187,6 @@ node design-system/check.mjs
 次を短く伝える。
 
 - 作ったもの（トークンの数、部品、文書、カタログのページ、書き換えた画面）と、`allow` で通した行があればその理由
-- 見た目の確認に使ったスクリーンショットの場所と、Artifact の url
+- 見た目の確認に使ったスクリーンショットの場所と、Artifact の url（Artifact は非公開。ほかの人に見せるときはページの共有メニューから共有する）
 - これからの変え方は `/design-system:update <変えたいこと>`、守られているかは `/design-system:check`（`node design-system/check.mjs`）で確かめられること
 - factory を使っているなら、`design-system/design-system.json` の `protected_paths` を `.factory/config.json` の `protected_paths` に足すとよいこと
