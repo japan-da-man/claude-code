@@ -138,7 +138,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       cmd === 'new' ? newFeature({ repo: a, name: b })
       : cmd === 'submit' ? submit({ repo: a, id: b })
       : cmd === 'mock-prepare' ? mockPrepare({ repo: a, id: b })
-      : cmd === 'mock-shoot' ? mockShoot({ repo: a, id: b, pages: [c, ...pages].filter(Boolean) })
+      : cmd === 'mock-shoot' ? mockShoot({ repo: a, id: b, pages })
       : cmd === 'mock-clean' ? mockClean({ repo: a, id: b })
       : cmd === 'status' ? statusReport()
       : null
