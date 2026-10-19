@@ -332,3 +332,15 @@ test('the chosen UI mock images go into the branch next to the spec, the scenari
   assert.deepEqual(seen, { ui: true, scenarios: false })
   assert.ok(calls.claude.length > 0)
 })
+
+test('a scenario with seed data gets it loaded into the fresh app before each verify run', async () => {
+  const s = setup()
+  writeFileSync(join(s.fdir, 'scenarios', 'share-02.md'), '---\nid: share-02\ntitle: b\nrequired: false\n---\n## 前提\n```json factory-seed\n{"memos": ["old"]}\n```\n')
+  const { deps } = fakeDeps(s)
+  const seeded = []
+  deps.adapter.seedApp = (o) => seeded.push(o.seed)
+  await runLine({ home: s.home, deps })
+  // share-02 の 3 回分だけ。share-01 には仕込まない
+  assert.deepEqual(seeded, ['{"memos":["old"]}', '{"memos":["old"]}', '{"memos":["old"]}'])
+  assert.equal(loadState(s.fdir, {}).status, 'merged')
+})
