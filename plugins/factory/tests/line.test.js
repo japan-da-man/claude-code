@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { featureDir, projectHome } from '../line/paths.js'
@@ -16,7 +16,7 @@ function git(cwd, args) {
 }
 
 // 一時的なリポジトリ（origin は bare）と、工場の置き場所に仕様とシナリオを用意する。
-function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, models = {}, designSystem = false } = {}) {
+function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, models = {}, designSystem = false, control = { base: false }, quality = { review: false }, ios = {}, satisfaction = {} } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'factory-line-'))
   const origin = join(root, 'origin.git')
   const repo = join(root, 'repo')
@@ -28,7 +28,7 @@ function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, mode
   mkdirSync(join(repo, '.factory'))
   writeFileSync(
     join(repo, '.factory', 'config.json'),
-    JSON.stringify({ type: 'ios', ios: { project: 'App.xcodeproj', scheme: 'App', bundle_id: 'com.example.App' }, protected_paths: protectedPaths, models, max_rounds: 2, notify: { mac: true, pr_report: true } }),
+    JSON.stringify({ type: 'ios', ios: { project: 'App.xcodeproj', scheme: 'App', bundle_id: 'com.example.App', ...ios }, protected_paths: protectedPaths, models, max_rounds: 2, notify: { mac: true, pr_report: true }, control, quality, satisfaction }),
   )
   writeFileSync(join(repo, 'README.md'), 'app\n')
   if (designSystem) {
@@ -63,12 +63,13 @@ function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, mode
   return { root, repo, home, fdir, work: join(root, 'work') }
 }
 
-// judge: 周ごとに満足かどうかを返す関数。
-function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Share.swift', ciPasses = true, blocked = () => false, violate = () => false, report = 'implemented', commit = true, write = true } = {}) {
-  const calls = { claude: [], codex: [], gh: [], notify: [], round: 0, closed: [], verifies: 0 }
+// judge: 周（陰性対照は 0）と判定役のプロンプトから、満足かどうかを返す関数。
+// tests: 実装役が足すテストのファイル（null なら足さない）。denials: 周ごとに、実装役が拒否された操作。
+function fakeDeps(s, { judge = (round) => round >= 1, testsPass = () => true, touch = 'Share.swift', content = null, tests = 'AppTests/ShareTests.swift', ciPasses = true, blocked = () => false, violate = () => false, report = 'implemented', commit = true, write = true, denials = () => [], uiTest = () => ({ ok: true, log: '' }), buildForVerify = () => ({ ok: true }), preflight = () => [] } = {}) {
+  const calls = { claude: [], codex: [], gh: [], notify: [], round: 0, closed: [], verifies: 0, verifyBuilds: [], uiTests: [], preflights: 0 }
   const judgeRuns = (role) => {
     const runs = (role.prompt.match(/^- .*runs\//gm) || []).length
-    const ok = judge(calls.round)
+    const ok = judge(calls.round, role.prompt)
     return Array.from({ length: runs }, (_, i) => ({ run: i + 1, satisfied: ok, symptom: ok ? null : '保存されない' }))
   }
   const deps = {
@@ -81,9 +82,19 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
       if (role.prompt.includes('機能を実装する担当')) {
         calls.round += 1
         calls.specInWorktree = existsSync(join(role.cwd, 'docs', 'factory', ID, 'spec.md'))
+        try {
+          readdirSync(join(s.fdir, 'scenarios'))
+          calls.scenariosReadable = true
+        } catch {
+          calls.scenariosReadable = false
+        }
         if (write) {
           mkdirSync(dirname(join(role.cwd, touch)), { recursive: true })
-          writeFileSync(join(role.cwd, touch), `// round ${calls.round}\n`)
+          writeFileSync(join(role.cwd, touch), content ? content(calls.round) : `// round ${calls.round}\n`)
+          if (tests) {
+            mkdirSync(dirname(join(role.cwd, tests)), { recursive: true })
+            writeFileSync(join(role.cwd, tests), `// test round ${calls.round}\n`)
+          }
         }
         if (violate(calls.round)) writeFileSync(join(role.cwd, 'Violation.swift'), '// Color.red\n')
         else if (existsSync(join(role.cwd, 'Violation.swift'))) git(role.cwd, 'rm -q Violation.swift')
@@ -91,7 +102,12 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
           git(role.cwd, 'add -A')
           git(role.cwd, `commit -q -m "round ${calls.round}"`)
         }
-        return { result: report }
+        return { result: typeof report === 'function' ? report(calls.round) : report, total_cost_usd: 0.5, usage: { input_tokens: 100, output_tokens: 20 }, permission_denials: denials(calls.round) }
+      }
+      if (role.prompt.includes('壊す担当')) {
+        calls.sabotaged = true
+        writeFileSync(join(role.cwd, touch), '// broken\n')
+        return { result: '保存されないようにした' }
       }
       if (role.prompt.includes('記録する担当')) {
         calls.verifies += 1
@@ -100,16 +116,27 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
         writeFileSync(join(role.cwd, 'result.json'), JSON.stringify({ completed: !b, blocked_by_tool: b, reason: b ? 'DEVICE_IN_USE' : '' }))
         return { result: '記録しました' }
       }
+      if (role.prompt.includes('レビューする担当')) return { result: '- 中・Share.swift:1・名前が短い' }
       return { result: '```json\n' + JSON.stringify(judgeRuns(role)) + '\n```' }
     },
     codex: async (role) => {
       calls.codex.push(role)
+      if (role.prompt.includes('レビューする担当')) return { result: '指摘なし' }
       return { result: JSON.stringify({ runs: judgeRuns(role) }) }
     },
     adapter: {
       udid: () => 'UDID',
-      commands: () => ({ prebuild: null, build: 'true', test: 'true' }),
+      preflight: () => (calls.preflights++, preflight(calls.preflights)),
+      commands: () => ({ prebuild: null, build: 'true', test: 'true', buildForTesting: 'true', uiTest: (cls) => `test ${cls}` }),
       buildAndTest: () => (testsPass(calls.round) ? { ok: true } : { ok: false, command: 'xcodebuild test', log: 'FAILED' }),
+      buildForVerify: (cmds, cwd) => {
+        calls.verifyBuilds.push({ cwd, head: git(cwd, 'rev-parse HEAD').trim(), files: git(cwd, 'ls-files --others --exclude-standard').trim() })
+        return buildForVerify(calls.verifyBuilds.length)
+      },
+      runUiTest: ({ cls, seed }) => {
+        calls.uiTests.push({ cls, seed })
+        return uiTest(cls, calls.round)
+      },
       findApp: () => '/x/App.app',
       resetApp: () => {},
       shutdown: () => {},
@@ -127,6 +154,8 @@ function fakeDeps(s, { judge = () => true, testsPass = () => true, touch = 'Shar
   return { deps, calls }
 }
 
+const implements_ = (calls) => calls.claude.filter((r) => r.prompt.includes('機能を実装する担当'))
+
 test('a feature that satisfies the scenarios is merged and the line stops', async () => {
   const s = setup()
   const { deps, calls } = fakeDeps(s)
@@ -139,8 +168,8 @@ test('a feature that satisfies the scenarios is merged and the line stops', asyn
   assert.equal(listQueue(s.home).length, 0)
   assert.equal(readLock(s.home), null)
 
-  // 2 シナリオ × 3 回の検証と、シナリオごとの判定
-  assert.equal(calls.claude.filter((r) => r.prompt.includes('記録する担当')).length, 6)
+  // 合格したシナリオは 1 回だけ流す（2 シナリオ × 1 回の検証と、1 回ごとの判定）
+  assert.equal(calls.claude.filter((r) => r.prompt.includes('記録する担当')).length, 2)
   assert.equal(calls.claude.filter((r) => r.prompt.includes('採点する担当')).length, 2)
 
   // 仕様はブランチにコミットされ、実装役のプロンプトにシナリオの場所は出てこない
@@ -167,10 +196,12 @@ test('symptoms from a failed round go to the next implement round', async () => 
   const s = setup()
   const { deps, calls } = fakeDeps(s, { judge: (round) => round >= 2 })
   await runLine({ home: s.home, deps })
-  const impls = calls.claude.filter((r) => r.prompt.includes('機能を実装する担当'))
+  const impls = implements_(calls)
   assert.equal(impls.length, 2)
   assert.match(impls[1].prompt, /保存されない/)
   assert.equal(loadState(s.fdir, {}).status, 'merged')
+  // 落ちた周は、各シナリオを上限の 3 回まで流し直し、合格した周は 1 回ずつ
+  assert.equal(calls.verifies, 2 * 3 + 2)
 })
 
 test('hitting the round limit leaves a draft PR and stops', async () => {
@@ -231,7 +262,7 @@ test('a run blocked by the tooling is retried once and not judged as a product f
   const s = setup()
   const { deps, calls } = fakeDeps(s, { blocked: (n) => n === 1 })
   await runLine({ home: s.home, deps })
-  assert.equal(calls.verifies, 7)
+  assert.equal(calls.verifies, 3)
   assert.equal(loadState(s.fdir, {}).status, 'merged')
 })
 
@@ -273,7 +304,8 @@ test('with models.judge set to codex, judging goes to Codex read-only with the s
   const { deps, calls } = fakeDeps(s, { judge: (round) => round >= 2 })
   await runLine({ home: s.home, deps })
   assert.equal(calls.claude.filter((r) => r.prompt.includes('採点する担当')).length, 0)
-  assert.equal(calls.codex.length, 4)
+  // 1 周目は 2 シナリオ × 3 回（落ちたので流し直す）、2 周目は 2 シナリオ × 1 回。判定は 1 回ごと
+  assert.equal(calls.codex.length, 8)
   assert.equal(calls.codex[0].sandbox, 'read-only')
   assert.equal(calls.codex[0].cwd, s.fdir)
   assert.match(calls.codex[0].schema, /judge\.schema\.json$/)
@@ -300,8 +332,8 @@ test('a design check violation fails the round, skips verification and hands the
   const state = loadState(s.fdir, {})
   assert.equal(state.rounds[0].design, false)
   assert.equal(state.rounds[1].design, true)
-  // 1 周目は検証しない（2 シナリオ × 3 回は 2 周目の分だけ）
-  assert.equal(calls.verifies, 6)
+  // 1 周目は検証しない（2 シナリオ × 1 回は 2 周目の分だけ）
+  assert.equal(calls.verifies, 2)
   const impls = calls.claude.filter((r) => r.prompt.includes('機能を実装する担当'))
   assert.match(impls[1].prompt, /デザインシステムの決まりに違反/)
   assert.equal(state.status, 'merged')
@@ -345,8 +377,8 @@ test('a scenario with seed data gets it loaded into the fresh app before each ve
   const seeded = []
   deps.adapter.seedApp = (o) => seeded.push(o.seed)
   await runLine({ home: s.home, deps })
-  // share-02 の 3 回分だけ。share-01 には仕込まない
-  assert.deepEqual(seeded, ['{"memos":["old"]}', '{"memos":["old"]}', '{"memos":["old"]}'])
+  // share-02 の 1 回分だけ。share-01 には仕込まない
+  assert.deepEqual(seeded, ['{"memos":["old"]}'])
   assert.equal(loadState(s.fdir, {}).status, 'merged')
 })
 
@@ -413,4 +445,255 @@ test('the seed hook and the factory settings are always protected, whatever the 
     const implement = calls.claude.find((r) => r.prompt.includes('機能を実装する担当'))
     assert.match(implement.prompt, /FactorySeed\.swift/)
   }
+})
+
+// ---- 2026-10-20 の改善（陰性対照、SHA、事前確認、再実行、XCUITest、最終関門、品質関門、抜け道、KPI）----
+
+const scenarioFile = (id, { required = false, holdout = false } = {}) => `---\nid: ${id}\ntitle: t\nrequired: ${required}\n${holdout ? 'holdout: true\n' : ''}---\n本文\n`
+
+test('verification builds the committed SHA in a clean checkout, and the merge is pinned to that SHA', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s)
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'merged')
+  const sha = state.rounds[0].sha
+  assert.match(sha, /^[0-9a-f]{40}$/)
+  const [build] = calls.verifyBuilds
+  assert.equal(build.head, sha)
+  assert.notEqual(build.cwd, implements_(calls)[0].cwd)
+  assert.ok(calls.gh.some((a) => a.startsWith('pr merge') && a.includes(`--match-head-commit ${sha}`)))
+  // 検証用のチェックアウトは片づける
+  assert.equal(existsSync(build.cwd), false)
+})
+
+test('if the branch moves after verification, nothing is merged', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s)
+  deps.adapter.shutdown = () => {
+    const wt = implements_(calls)[0].cwd
+    writeFileSync(join(wt, 'Late.swift'), '// pushed after verification\n')
+    git(wt, 'add -A')
+    git(wt, 'commit -q -m late')
+  }
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'error')
+  assert.match(state.error, /検証したコミット/)
+  assert.equal(calls.gh.some((a) => a.startsWith('pr merge')), false)
+})
+
+test('a failing preflight is retried once, and a second failure stops before any model is called', async () => {
+  const once = setup()
+  const a = fakeDeps(once, { preflight: (n) => (n === 1 ? ['agent-device がない'] : []) })
+  await runLine({ home: once.home, deps: a.deps })
+  assert.equal(loadState(once.fdir, {}).status, 'merged')
+
+  const twice = setup()
+  const b = fakeDeps(twice, { preflight: () => ['agent-device がない'] })
+  await runLine({ home: twice.home, deps: b.deps })
+  const state = loadState(twice.fdir, {})
+  assert.equal(state.status, 'error')
+  assert.match(state.error, /事前確認.*agent-device/)
+  assert.equal(b.calls.claude.length, 0)
+})
+
+test('commands the implementer was denied are passed on as tool notes, apart from the product symptoms', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s, { judge: (round) => round >= 2, denials: (round) => (round === 1 ? [{ tool_name: 'Bash', tool_input: { command: 'cat > A.swift <<EOF\nx\nEOF' } }] : []) })
+  await runLine({ home: s.home, deps })
+  const [first, second] = implements_(calls)
+  assert.match(first.prompt, /道具の注意[\s\S]*なし/)
+  assert.match(second.prompt, /道具の注意[\s\S]*Bash: cat > A\.swift <<EOF/)
+})
+
+test('a scenario whose XCUITest passes needs no verify agent, a failing one falls back to it', async () => {
+  const s = setup({ ios: { ui_tests: { target: 'FactoryUITests', dir: 'FactoryUITests' } } })
+  writeFileSync(join(s.fdir, 'scenarios', 'share-01.swift'), 'import XCTest\nfinal class Share01Tests: XCTestCase {}\n')
+  writeFileSync(join(s.fdir, 'scenarios', 'share-02.swift'), 'import XCTest\nfinal class Share02Tests: XCTestCase {}\n')
+  const { deps, calls } = fakeDeps(s, { uiTest: (cls) => ({ ok: cls === 'Share01Tests', log: '' }) })
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'merged')
+  assert.deepEqual(calls.uiTests.map((t) => t.cls), ['Share01Tests', 'Share02Tests'])
+  // share-02 だけ検証役が操作した
+  const verified = calls.claude.filter((r) => r.prompt.includes('記録する担当')).map((r) => /scenarios\/([\w-]+)\.md/.exec(r.prompt)[1])
+  assert.deepEqual(verified, ['share-02'])
+  assert.equal(state.rounds[0].xcuitest, 1)
+  // テストのファイルは検証用のチェックアウトにだけ入り、実装役のブランチには入らない
+  assert.match(calls.verifyBuilds[0].files, /FactoryUITests\/Share01Tests\.swift/)
+  const impl = implements_(calls)[0]
+  assert.match(impl.prompt, /FactoryUITests\/\*\*/)
+})
+
+test('scenario XCUITests that do not compile are dropped and the verify agent checks everything', async () => {
+  const s = setup({ ios: { ui_tests: { target: 'FactoryUITests', dir: 'FactoryUITests' } } })
+  writeFileSync(join(s.fdir, 'scenarios', 'share-01.swift'), 'import XCTest\nfinal class Share01Tests: XCTestCase { broken }\n')
+  const { deps, calls } = fakeDeps(s, { buildForVerify: (n) => ({ ok: n !== 1, command: 'xcodebuild build-for-testing', log: 'error: broken' }) })
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'merged')
+  assert.equal(calls.uiTests.length, 0)
+  assert.equal(calls.verifies, 2)
+  assert.equal(calls.verifyBuilds[1].files, '')
+  assert.equal(state.rounds[0].uiTestBuild, 'failed')
+  // コンパイルの失敗は実装役の症状にならない
+  assert.doesNotMatch(state.symptoms.join('\n'), /broken/)
+})
+
+test('holdout scenarios are run only once the others pass, and their failure stops the line without symptoms', async () => {
+  const s = setup()
+  writeFileSync(join(s.fdir, 'scenarios', 'share-03.md'), scenarioFile('share-03', { holdout: true }).replace('本文', '最終関門だけの観点'))
+  const { deps, calls } = fakeDeps(s, { judge: (round, prompt) => round >= 1 && !prompt.includes('share-03') })
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'stopped')
+  // 周を重ねない（最終関門の症状を返さない）
+  assert.equal(implements_(calls).length, 1)
+  assert.equal(state.rounds[0].holdout.score, 0)
+  assert.doesNotMatch(state.symptoms.join('\n'), /保存されない/)
+  assert.match(calls.gh.find((a) => a.startsWith('pr create')), /--draft/)
+  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /最終関門のシナリオが不合格/)
+})
+
+test('holdout scenarios are not run in a round whose other scenarios fail', async () => {
+  const s = setup()
+  writeFileSync(join(s.fdir, 'scenarios', 'share-03.md'), scenarioFile('share-03', { holdout: true }))
+  const { deps, calls } = fakeDeps(s, { judge: (round) => round >= 2 })
+  await runLine({ home: s.home, deps })
+  const judged = calls.claude.filter((r) => r.prompt.includes('採点する担当'))
+  const holdoutJudged = judged.filter((r) => r.prompt.includes('share-03'))
+  // 1 周目は開発用だけ。2 周目に開発用が合格してから 1 回
+  assert.equal(holdoutJudged.length, 1)
+  assert.match(holdoutJudged[0].prompt, /runs\/2-holdout\//)
+  assert.equal(loadState(s.fdir, {}).status, 'merged')
+})
+
+test('the negative control stops the feature when the current app already passes the scenarios', async () => {
+  const s = setup({ control: { base: true } })
+  const { deps, calls } = fakeDeps(s, { judge: () => true })
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'stopped')
+  assert.equal(implements_(calls).length, 0)
+  assert.equal(calls.gh.length, 0)
+  assert.equal(state.control.score, 1)
+  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /シナリオが機能を区別できていない/)
+  assert.match(calls.notify.at(-1).title, /止まりました/)
+})
+
+test('the negative control runs once before implementing and then the line goes on', async () => {
+  const s = setup({ control: { base: true } })
+  const { deps, calls } = fakeDeps(s)
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'merged')
+  assert.equal(state.control.score, 0)
+  // 陰性対照は 1 回ずつ（落ちても流し直さない）+ 1 周目
+  assert.equal(calls.verifies, 2 + 2)
+  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /陰性対照/)
+})
+
+test('with the saboteur on, a broken app that still passes blocks the merge, one that fails lets it through', async () => {
+  const caught = setup({ control: { base: false, mutant: true } })
+  const a = fakeDeps(caught, { judge: (round, prompt) => round >= 1 && !prompt.includes('-mutant/') })
+  await runLine({ home: caught.home, deps: a.deps })
+  assert.equal(a.calls.sabotaged, true)
+  const ok = loadState(caught.fdir, {})
+  assert.equal(ok.status, 'merged')
+  assert.equal(ok.rounds[0].mutant.detected, true)
+  // 壊したコミットはマージされたブランチに入らない
+  assert.notEqual(ok.rounds[0].mutant.sha, ok.rounds[0].sha)
+
+  const missed = setup({ control: { base: false, mutant: true } })
+  const b = fakeDeps(missed)
+  await runLine({ home: missed.home, deps: b.deps })
+  const state = loadState(missed.fdir, {})
+  assert.equal(state.status, 'stopped')
+  assert.equal(state.rounds[0].mutant.detected, false)
+  assert.equal(b.calls.gh.some((x) => x.startsWith('pr merge')), false)
+  assert.match(readFileSync(join(missed.fdir, 'report.md'), 'utf8'), /わざと壊したアプリも必須シナリオに合格した/)
+})
+
+test('a round without a test file is sent back before verification', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s, { tests: null })
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'stopped')
+  assert.equal(calls.verifies, 0)
+  assert.match(implements_(calls)[1].prompt, /テストが足されていない/)
+})
+
+test('a lint failure is a symptom for the next round', async () => {
+  const s = setup({ quality: { review: false, lint: 'node -e "process.exit(1)"' } })
+  const { deps, calls } = fakeDeps(s)
+  await runLine({ home: s.home, deps })
+  assert.equal(loadState(s.fdir, {}).rounds[0].lint, false)
+  assert.match(implements_(calls)[1].prompt, /lint が通らない/)
+})
+
+test('a change larger than the limit is left for a person as a draft, without another round', async () => {
+  const s = setup({ quality: { review: false, max_changed_lines: 1 } })
+  const { deps, calls } = fakeDeps(s)
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'stopped')
+  assert.equal(implements_(calls).length, 1)
+  assert.match(calls.gh.find((a) => a.startsWith('pr create')), /--draft/)
+  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /上限 1 行を超える/)
+})
+
+test('a round that adds a build script is thrown away and never reaches the branch', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s, { touch: 'project.yml', content: (round) => (round === 1 ? 'targets:\n  App:\n    preBuildScripts:\n      - script: cat ~/.factory/x\n' : 'name: App\n') })
+  let merged = null
+  const gh = deps.gh
+  deps.gh = (argv, cwd) => {
+    if (argv[0] === 'pr' && argv[1] === 'merge') merged = git(join(s.root, 'origin.git'), `log --format=%s factory/${ID}`)
+    return gh(argv, cwd)
+  }
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'merged')
+  assert.equal(state.rounds[0].discarded, true)
+  assert.match(implements_(calls)[1].prompt, /スクリプトを足したので、この周の変更はすべて捨てた/)
+  assert.doesNotMatch(merged, /round 1/)
+  assert.match(merged, /round 2/)
+})
+
+test('the scenarios are locked while the implementer runs, and a leaked canary stops the feature', async () => {
+  const s = setup()
+  const { deps, calls } = fakeDeps(s, { report: () => `memo: ${loadState(s.fdir, {}).canary}` })
+  await runLine({ home: s.home, deps })
+  assert.equal(calls.scenariosReadable, false)
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'error')
+  assert.match(state.error, /漏れました/)
+  assert.equal(calls.gh.length, 0)
+  // 目印はシナリオに埋めてあり、ロックは外れている
+  assert.match(readFileSync(join(s.fdir, 'scenarios', 'share-01.md'), 'utf8'), /factory-canary: [0-9a-f]+/)
+})
+
+test('a review from another model goes into the report and does not block the merge', async () => {
+  const s = setup({ quality: { review: true } })
+  const { deps, calls } = fakeDeps(s)
+  await runLine({ home: s.home, deps })
+  assert.equal(loadState(s.fdir, {}).status, 'merged')
+  const review = calls.codex.find((r) => r.prompt.includes('レビューする担当'))
+  assert.equal(review.sandbox, 'read-only')
+  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /コードのレビュー[\s\S]*指摘なし/)
+})
+
+test('steps and calls are recorded as factory metrics and summarized in the report', async () => {
+  const s = setup()
+  const { deps } = fakeDeps(s)
+  await runLine({ home: s.home, deps })
+  const lines = readFileSync(join(s.fdir, 'metrics.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  assert.ok(lines.some((l) => l.type === 'step' && l.step === 'verify'))
+  const impl = lines.find((l) => l.type === 'call' && l.role === 'implement')
+  assert.equal(impl.cost_usd, 0.5)
+  assert.equal(impl.input_tokens, 100)
+  assert.equal(lines.filter((l) => l.type === 'call' && l.role === 'verify').length, 2)
+  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /工場の記録[\s\S]*\$0\.50/)
 })

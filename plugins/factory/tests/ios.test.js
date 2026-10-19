@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { commands, findApp, resolveDevice } from '../line/adapters/ios.js'
+import { commands, findApp, resolveDevice, uiTestClass } from '../line/adapters/ios.js'
 
 const simctl = {
   devices: {
@@ -56,4 +56,16 @@ test('a booted simulator with the name wins over a newer runtime, so only one ru
     },
   }
   assert.equal(resolveDevice(list, 'iPhone 17'), 'OLD-BOOTED')
+})
+
+test('the verify build makes the tests too, and one scenario test runs by its class', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'factory-ios-'))
+  const c = commands({ config: { ios: { ...config.ios, ui_tests: { target: 'FactoryUITests', dir: 'FactoryUITests' } } }, repo, udid: 'U', derived: '/tmp/d' })
+  assert.match(c.buildForTesting, /^xcodebuild build-for-testing /)
+  assert.match(c.uiTest('Share01Tests'), /^xcodebuild test-without-building .* -only-testing:'FactoryUITests\/Share01Tests'$/)
+})
+
+test('the test class is read from the scenario XCUITest file', () => {
+  assert.equal(uiTestClass('import XCTest\n\nfinal class Share01Tests: XCTestCase {\n}\n'), 'Share01Tests')
+  assert.equal(uiTestClass('struct Helper {}\n'), null)
 })
