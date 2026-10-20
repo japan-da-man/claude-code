@@ -709,3 +709,19 @@ test('the verify commands are made after the checkout exists, so a project.yml t
   assert.ok(verify.length >= 1)
   assert.ok(verify.every((c) => c.exists))
 })
+
+// 8 回目の試運転: 今のアプリで落ちる XCUITest を、陰性対照のたびに検証役で確かめ直すと遅い
+test('in the negative control a failing XCUITest counts as a failure without the verify agent, a timed-out one still falls back', async () => {
+  const s = setup({ control: { base: true }, ios: { ui_tests: { target: 'FactoryUITests', dir: 'FactoryUITests' } } })
+  writeFileSync(join(s.fdir, 'scenarios', 'share-01.swift'), 'import XCTest\nfinal class Share01Tests: XCTestCase {}\n')
+  writeFileSync(join(s.fdir, 'scenarios', 'share-02.swift'), 'import XCTest\nfinal class Share02Tests: XCTestCase {}\n')
+  // 実装の前（round 0）は落ちる。share-02 は打ち切りになる。実装のあとは通る
+  const uiTest = (cls, round) => (round >= 1 ? { ok: true, log: '' } : { ok: false, timedOut: cls === 'Share02Tests', log: '' })
+  const { deps, calls } = fakeDeps(s, { uiTest, judge: () => false })
+  await runLine({ home: s.home, deps })
+  const state = loadState(s.fdir, {})
+  assert.equal(state.status, 'merged')
+  assert.equal(state.control.score, 0)
+  const verified = calls.claude.filter((r) => r.prompt.includes('記録する担当')).map((r) => /scenarios\/([\w-]+)\.md/.exec(r.prompt)[1])
+  assert.deepEqual(verified, ['share-02'])
+})

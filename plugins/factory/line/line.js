@@ -304,7 +304,10 @@ export async function runFeature({ entry, home, deps }) {
   // コミットした SHA を別のきれいなチェックアウトに取り出し、そこで 1 回だけビルドしたアプリで、シナリオを流す。
   // XCUITest のあるシナリオは先にそれを流し、通れば合格。通らないか、XCUITest がなければ検証役と判定役で確かめる。
   // rerun が on_failure なら、検証役の 1 回目が合格したシナリオはそこで終え、落ちたときだけ上限まで流し直す。
-  const verifyAt = async ({ sha, list: targets, label, maxRuns = config.satisfaction.runs_per_scenario }) => {
+  // finalUiTestFailure: XCUITest が最後まで走って落ちたら、検証役で確かめ直さずに不合格とする。
+  // 陰性対照で使う。今のアプリで落ちるのは当たり前で、見たいのは「機能がないのに合格するシナリオ」だけなので、
+  // 落ちたものを毎回検証役に回すと、陰性対照だけで 1 本 1 分以上 × 本数かかる（8 回目の試運転）。
+  const verifyAt = async ({ sha, list: targets, label, maxRuns = config.satisfaction.runs_per_scenario, finalUiTestFailure = false }) => {
     checkout(vwt, sha)
     // コマンドはチェックアウトのあとで作る（project.yml があるかで、xcodegen を先に動かすかが決まる）
     const vcmds = deps.adapter.commands({ config, repo: vwt, udid, derived: vderived })
@@ -338,8 +341,8 @@ export async function runFeature({ entry, home, deps }) {
         const t = deps.adapter.runUiTest({ cmds: vcmds, cls: classes[sc.id], seed: sc.seed, cwd: vwt })
         mkdirSync(join(fdir, 'runs', label, sc.id), { recursive: true })
         writeFileSync(join(fdir, 'runs', label, sc.id, 'xcuitest.log'), t.log ?? '')
-        if (t.ok) {
-          runs.push({ ...tag, run: 1, satisfied: true, symptom: null, by: 'xcuitest' })
+        if (t.ok || (finalUiTestFailure && !t.timedOut)) {
+          runs.push({ ...tag, run: 1, satisfied: t.ok, symptom: null, by: 'xcuitest' })
           continue
         }
       }
@@ -370,7 +373,7 @@ export async function runFeature({ entry, home, deps }) {
     // 陰性対照: 仕様だけのコミット（＝今のアプリ）でシナリオを流す。機能がないのに合格するなら、シナリオが機能を区別できていない。
     if (state.step === 'control') {
       const sha = git(wt, 'rev-parse', 'HEAD')
-      const { runs, summary } = await verifyAt({ sha, list: scenarios, label: 'control', maxRuns: 1 })
+      const { runs, summary } = await verifyAt({ sha, list: scenarios, label: 'control', maxRuns: 1, finalUiTestFailure: true })
       state = { ...state, control: { sha, score: summary.score, passed: [...new Set(runs.filter((r) => r.satisfied).map((r) => r.scenario))] } }
       if (summary.score >= threshold) {
         decision = { merge: false, stop: true, reasons: [`実装の前の今のアプリでも、シナリオの満足度が ${pct(summary.score)} で基準を超えた（シナリオが機能を区別できていない。シナリオを見直す）`] }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { commands, findApp, resolveDevice, uiTestClass } from '../line/adapters/ios.js'
+import { commands, findApp, resolveDevice, runUiTest, uiTestClass, uiTestPassed } from '../line/adapters/ios.js'
 
 const simctl = {
   devices: {
@@ -68,4 +68,24 @@ test('the verify build makes the tests too, and one scenario test runs by its cl
 test('the test class is read from the scenario XCUITest file', () => {
   assert.equal(uiTestClass('import XCTest\n\nfinal class Share01Tests: XCTestCase {\n}\n'), 'Share01Tests')
   assert.equal(uiTestClass('struct Helper {}\n'), null)
+})
+
+// 8 回目の試運転で、-only-testing の名前がターゲットにないと「0 件実行・終了コード 0」になることを確かめた
+test('a scenario XCUITest passes only when at least one test ran and none failed', () => {
+  const ran = (n, f) => `Test Suite 'Selected tests' passed\n\t Executed ${n} test${n === 1 ? '' : 's'}, with ${f} failure${f === 1 ? '' : 's'} (0 unexpected) in 1.0 (1.0) seconds\n** TEST EXECUTE SUCCEEDED **`
+  assert.equal(uiTestPassed(0, ran(1, 0)), true)
+  assert.equal(uiTestPassed(0, ran(0, 0)), false)
+  assert.equal(uiTestPassed(65, ran(1, 1)), false)
+  assert.equal(uiTestPassed(0, 'no summary'), false)
+})
+
+test('a scenario XCUITest that hangs is cut off and counted as not passed', () => {
+  const t = runUiTest({ cmds: { uiTest: () => 'sleep 5' }, cls: 'X', seed: null, cwd: tmpdir(), timeout: 200 })
+  assert.equal(t.ok, false)
+  assert.equal(t.timedOut, true)
+})
+
+test('the seed reaches the test runner as TEST_RUNNER_FACTORY_SEED in Base64', () => {
+  const t = runUiTest({ cmds: { uiTest: () => 'printf "%s" "$TEST_RUNNER_FACTORY_SEED"' }, cls: 'X', seed: '{"memos":["milk"]}', cwd: tmpdir() })
+  assert.equal(Buffer.from(t.log.trim(), 'base64').toString('utf8'), '{"memos":["milk"]}')
 })
