@@ -90,11 +90,24 @@ export function buildForVerify(cmds, cwd) {
   return { ok: true }
 }
 
+// XCUITest が合格したか。-only-testing の名前がターゲットにないと（XcodeGen を生成し直していないなど）、
+// 0 件だけ実行して終了コード 0 になるので、1 件以上実行して失敗が 0 のときだけ合格にする（2026-10-20 の 8 回目の試運転で確かめた）。
+export function uiTestPassed(status, log) {
+  const last = [...String(log).matchAll(/Executed (\d+) tests?, with (\d+) failures?/g)].at(-1)
+  return status === 0 && !!last && Number(last[1]) >= 1 && Number(last[2]) === 0
+}
+
+// 1 本は数十秒で終わるが、ランナーが立ち上がらずに出力のないまま止まることがある（8 回目の試運転で 16 分止まった）。
+// 待ち続けるとライン全体が止まるので、時間で打ち切り、検証役で確かめ直す。
+const UI_TEST_TIMEOUT_MS = 5 * 60 * 1000
+
 // 1 シナリオの XCUITest を流す。前提のデータは TEST_RUNNER_FACTORY_SEED で渡す（テスト側で FACTORY_SEED として読める）。
-export function runUiTest({ cmds, cls, seed, cwd }) {
+export function runUiTest({ cmds, cls, seed, cwd, timeout = UI_TEST_TIMEOUT_MS }) {
   const env = { ...process.env, ...(seed ? { TEST_RUNNER_FACTORY_SEED: Buffer.from(seed, 'utf8').toString('base64') } : {}) }
-  const r = spawnSync('/bin/sh', ['-c', cmds.uiTest(cls)], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-  return { ok: r.status === 0, log: ((r.stdout || '') + (r.stderr || '')).slice(-4000) }
+  const r = spawnSync('/bin/sh', ['-c', cmds.uiTest(cls)], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout, killSignal: 'SIGKILL' })
+  const log = (r.stdout || '') + (r.stderr || '')
+  const timedOut = r.error?.code === 'ETIMEDOUT'
+  return { ok: !timedOut && uiTestPassed(r.status, log), timedOut, log: `${timedOut ? `（${timeout / 1000} 秒で打ち切った）\n` : ''}${log.slice(-4000)}` }
 }
 
 // 前の実行の状態を持ち越さないよう、毎回アプリを消してから入れ直す。
