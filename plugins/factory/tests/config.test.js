@@ -39,9 +39,12 @@ test('loadConfig says to run init when the file is missing', () => {
   assert.throws(() => loadConfig(repo), /factory:init/)
 })
 
-test('Codex can judge but not implement, since it cannot be kept from the scenarios', () => {
-  assert.equal(mergeConfig({ type: 'ios', models: { judge: 'codex' } }).models.judge, 'codex')
-  assert.throws(() => mergeConfig({ type: 'ios', models: { implement: 'codex' } }), /models\.implement/)
+test('every role runs on Claude: a Codex model left from an older config is refused, not silently replaced', () => {
+  for (const role of ['scenario', 'implement', 'verify', 'judge', 'review', 'sabotage']) {
+    assert.throws(() => mergeConfig({ type: 'ios', models: { [role]: 'codex' } }), new RegExp(`models\\.${role}.*Codex`))
+    assert.throws(() => mergeConfig({ type: 'ios', models: { [role]: 'codex:gpt-6-astra' } }), new RegExp(`models\\.${role}`))
+  }
+  assert.equal(mergeConfig({ type: 'ios', models: { judge: 'sonnet' } }).models.judge, 'sonnet')
 })
 
 test('the new gates have defaults and are checked', () => {
@@ -51,11 +54,9 @@ test('the new gates have defaults and are checked', () => {
   assert.equal(c.quality.max_changed_lines, 800)
   assert.equal(c.quality.require_tests, true)
   assert.equal(c.ios.ui_tests, null)
-  assert.equal(c.models.review, 'codex')
+  assert.equal(c.models.review, 'opus')
   assert.deepEqual(mergeConfig({ type: 'ios', ios: { ui_tests: { target: 'FactoryUITests', dir: 'FactoryUITests' } } }).ios.ui_tests, { target: 'FactoryUITests', dir: 'FactoryUITests' })
   assert.throws(() => mergeConfig({ type: 'ios', satisfaction: { rerun: 'never' } }), /rerun/)
   assert.throws(() => mergeConfig({ type: 'ios', quality: { max_changed_lines: 0 } }), /max_changed_lines/)
   assert.throws(() => mergeConfig({ type: 'ios', ios: { ui_tests: { target: 'X' } } }), /ui_tests/)
-  // 破壊役も、実装役と同じくシナリオから隠す必要があるので Codex は使えない
-  assert.throws(() => mergeConfig({ type: 'ios', models: { sabotage: 'codex' } }), /models\.sabotage/)
 })

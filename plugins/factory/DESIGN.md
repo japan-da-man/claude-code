@@ -30,7 +30,7 @@ AI エージェントで機能を作るソフトウェアファクトリーを�
 | モデル | Claude だけ。インタビュー: Opus / シナリオ作成: Opus / 実装: Sonnet / 検証: Sonnet / 判定: Opus。いずれも別コンテキスト。Pro の枠を考えても割り当ては変えない |
 | ラインの進め方 | Node のスクリプトが工程を進め、実装・検証・判定だけを毎回新しい `claude -p` で呼ぶ（12節） |
 | デザインシステム | アプリにデザインシステム（design-system プラグイン）があれば、それに従う（17節）。画面が変わる機能では、シナリオの前に UI 案を選ぶ（18節） |
-| 別の会社のモデル | 判定役とシナリオ作成役は、設定で Codex（`"codex"` か `"codex:<モデル>"`）にできる（2026-10-19 に追加）。実装役と検証役は Claude のみ（16節） |
+| 別の会社のモデル | 使わない。2026-10-19 に判定役・シナリオ作成役・レビュー役を Codex にできるようにしたが、2026-10-25 にやめて、すべての役を Claude Code で動かす（16節） |
 | 仕様の置き場所 | リポジトリ内 `docs/factory/<機能ID>/spec.md`。実装と同じ PR に含める |
 | 隠しシナリオの置き場所 | リポジトリの外 `~/.factory/<プロジェクト>/<機能ID>/scenarios/`。実装役にはパスを渡さず、読み取りも禁止する |
 | インタビューの終わり方 | 観点リスト（7節）が全部埋まったと AI が判断したら終える。人はいつでも打ち切れる |
@@ -135,7 +135,8 @@ Node の標準機能だけで読めるように JSON にする（YAML は依存�
     "scenario": "opus",
     "implement": "sonnet",
     "verify": "sonnet",
-    "judge": "opus"
+    "judge": "opus",
+    "review": "opus"
   },
   "satisfaction": { "runs_per_scenario": 3, "threshold": 0.95, "rerun": "on_failure" },
   "max_rounds": 5,
@@ -258,10 +259,9 @@ plugins/factory/
     ui-mocker.md          UI 案の作成役（model: opus、18節）
   line/
     line.js               ラインのスクリプト
-    cli.js                スキルから呼ぶ CLI（new / submit / scenarios / mock-prepare・mock-shoot・mock-clean / status / feedback）
+    cli.js                スキルから呼ぶ CLI（new / submit / mock-prepare・mock-shoot・mock-clean / status / feedback）
     claude.js             役ごとの claude -p の呼び出し（隔離と利用上限の待機）
     config.js paths.js queue.js state.js gate.js prompts.js
-    codex.js              Codex の呼び出し（16節）
     design.js             デザインシステムの読み込みと「部品の候補」（17節）
     mock.js               UI 案の worktree と撮影（18節）
     seed.js               シナリオの前提のデータの読み取りと仕込み（19節）
@@ -384,32 +384,20 @@ plugins/factory/
 
 - **判定役も LLM**。作る側と採点する側が同じ種類の技術なので、評価が循環する。最初のうちは、判定結果と、人が実際にアプリを触った感想が一致するかを見る。→ `cli.js feedback` で人の評価を残し、`/factory:status` で一致率を見る（20節）。
 - **Pro の利用枠**。1機能でシナリオ10本なら、1周の検証と判定で30回の実行が要る。何機能を流せるかは、実際に回して測る。
-- **agent-device はまだ初期段階**の道具。不具合があれば XcodeBuildMCP（UI 操作の機能あり）に差し替える。
+- **検証の道具が agent-device 1 つ**。日本語の入力のように、道具の不具合で確かめられないことがある。差し替えるなら mobile-mcp にする（2026-10-25 に見直し）。Apache-2.0 で利用者が多く、アクセシビリティツリーで操作でき、シミュレーターと実機に対応している。差し替えるときは、検証役のプロンプト・許可する道具・事前確認とセッションの片付け（`ios.js`）を直し、利用データの送信を `MOBILEMCP_DISABLE_TELEMETRY` で止める。XcodeBuildMCP（中の AXe）は、Apple の非公開のフレームワークを使っていて Xcode を上げると壊れうる（Xcode 27 ベータで動かなくなった報告がある）ので、候補から外した。
 - **シナリオの隠し方**。同じユーザー権限で動くので、サンドボックスがなければ完全には隠せない。
 - **症状からシナリオが推測できる**。症状だけでも、繰り返すうちにシナリオの中身が伝わることはある。→ 最終関門のシナリオ（症状を返さない）で、伝わっていない基準を残す（20節）。
 - **8GB の Mac**。ラインが動いている間は、ビルドとシミュレーターで Mac の普段使いが重くなる。
 
-## 16. Codex を使う役（2026-10-19 追加）
+## 16. Codex を使う役（2026-10-19 追加、2026-10-25 に廃止）
 
-ChatGPT の Pro プランで Codex CLI（`codex exec`）が使えるので、判定役とシナリオ作成役を Codex にできるようにした。作る側（Claude）と試す側（Codex）の会社を分け、死角を重ねないためのもの。設定で役ごとに選ぶ:
+2026-10-19 に、作る側（Claude）と試す側の会社を分けて死角を重ねないために、判定役・シナリオ作成役・レビュー役を Codex CLI（`codex exec`）にできるようにした。2026-10-25 にやめて、すべての役を Claude Code で動かすことにした。
 
-```json
-{ "models": { "judge": "codex", "scenario": "codex" } }
-```
-
-| 役 | Codex | 理由 |
-| - | - | - |
-| 判定 | ○ | `codex exec --sandbox read-only -C <機能のフォルダ> --output-schema judge.schema.json` で、読むだけにして、答えの形（`{"runs": [...]}`）を CLI 側で強制する |
-| シナリオ作成 | ○ | `/factory:start` から `cli.js scenarios` で呼ぶ。`--sandbox workspace-write -C <機能のフォルダ>` で、書き込めるのは機能のフォルダ（と一時フォルダ）だけ。役の説明は `agents/scenario-writer.md` を共有する |
-| 実装 | × | Codex のサンドボックスは読み取りを制限しない（2026-10-19 に、`read-only` でもワークスペースの外のファイルを読めることを確かめた）。隠しシナリオを読めてしまうので、設定の検証で弾く |
-| 検証 | × | agent-device は手元のランナーと通信する。ネットワークを止める Codex のサンドボックスでは動かない恐れがあるので、設定の検証で弾く |
-
-確かめたこと:
-
-- `codex exec` は標準入力を閉じないと入力を待ち続ける。ラインはプロンプトを標準入力で渡して閉じ、最後の返答は `-o` のファイルから読む。
-- ChatGPT のアカウントで使えないモデルを指定すると、終了コード 1 とエラーの文章が返る。利用上限のメッセージ（`usage limit`）は、Claude と同じく待って再開する。
-- `--ephemeral` で Codex のセッションを残さない。
-- Reason Network（エージェント同士で仕事を頼み合う P2P のネットワーク）も調べたが、ラインは決まった手順で CLI を呼ぶ作りなので、`codex exec` を直接呼ぶほうが単純で、出力の形も指定できる。別の Mac に仕事を回したくなったら、改めて検討する。
+- 判定役とレビュー役はラインが `claude -p` で、シナリオ作成役は `/factory:start` がサブエージェント `factory:scenario-writer` で呼ぶ。`cli.js scenarios` と `line/codex.js` は消した。
+- レビュー役の既定は `opus`（実装役の `sonnet` とは別のモデル）。判定役は読むだけ（`Read`・`Glob`）、レビュー役は読むだけに加えて `git diff`・`git log`・`git show` だけを許し、工場の置き場所を隠す（実装役と同じ deny とサンドボックス）。
+- `.factory/config.json` の `models` に `codex` か `codex:<モデル>` が残っていると、ラインは黙って Claude に置き換えず、設定のエラーで止める。その役のモデルを `opus` か `sonnet` に直す。
+- 判定の答えは、`{"runs": [...]}` の形も配列そのものも、今までどおり読む。
+- 上の試運転の記録（4 回目から）には、Codex で判定・シナリオ作成をした回がそのまま残っている。
 
 ## 17. デザインシステムとのつなぎ方（2026-10-19 追加）
 
@@ -459,7 +447,7 @@ ChatGPT の Pro プランで Codex CLI（`codex exec`）が使えるので、判
 | 再実行は落ちたときだけ | 各シナリオをまず 1 回流し、合格ならそこで終える。落ちたときだけ `runs_per_scenario` まで流し直す（`satisfaction.rerun: "on_failure"`）。満足度はシナリオごとの割合の平均 | 決定的なアプリを毎回 3 回操作する時間 |
 | シナリオの XCUITest | シナリオ作成役が、機械で確かめられるシナリオには `<id>.swift` も書く。ラインは検証用のチェックアウトにだけそれを入れて `build-for-testing` し、`test-without-building -only-testing:<ターゲット>/<クラス>` で 1 本ずつ流す。1 件以上を実行して失敗が 0 件なら合格（検証役を呼ばない。0 件の実行でも終了コードは 0 になるため）。落ちる・5 分で打ち切り・コンパイルできない、のどれかなら、今までどおり検証役で確かめる（誤った不合格は出ない）。陰性対照では、最後まで走って落ちたものはそのまま不合格にする。前提のデータは `TEST_RUNNER_FACTORY_SEED` で渡す | LLM の検証の時間（1 本 1 分以上 → 数秒） |
 | 最終関門のシナリオ | 承認のときに 2〜3 本を `holdout: true` にする。開発用のシナリオが合格した周にだけ流し、落ちても症状は返さず、Draft PR で止める | 症状を返し続けて、シナリオの中身が実装役に伝わること（評価用データへの過学習） |
-| 品質関門 | テストのファイルが足されていなければ症状で返す（`quality.require_tests`）。`quality.lint` のコマンドが落ちたら症状で返す。変更が `quality.max_changed_lines` を超えたら、周を重ねずに Draft PR で人に回す。別のモデル（既定は Codex）のレビューを PR のレポートに載せる（マージは止めない） | 人がコードを読まないことによる、保守性の劣化 |
+| 品質関門 | テストのファイルが足されていなければ症状で返す（`quality.require_tests`）。`quality.lint` のコマンドが落ちたら症状で返す。変更が `quality.max_changed_lines` を超えたら、周を重ねずに Draft PR で人に回す。実装役とは別のモデル（既定は Opus）のレビューを PR のレポートに載せる（マージは止めない） | 人がコードを読まないことによる、保守性の劣化 |
 | xcodebuild の抜け道 | 実装役の周の差分に、ビルドの設定へのスクリプト（project.yml の pre/postBuildScripts など、pbxproj の Run Script、スキームの Pre/Post Actions、Package.swift のプラグイン）があれば、**その周のコミットを捨てて** 症状で返す。シナリオに目印（`factory-canary: <乱数>`）を埋め、実装役の出力か差分に出たら、漏れたとして止める。実装役と破壊役が動いているあいだは、シナリオと実行記録のフォルダを `chmod 000` にする | サンドボックスの外で動く xcodebuild から、シナリオを読むこと（11節） |
 | 工場の KPI | 工程ごとの時間と、役ごとの時間・費用（`total_cost_usd`）・トークン・拒否を `metrics.jsonl` に残し、レポートと `/factory:status` に出す | 「Claude の枠が +37pt（会話の分も含む）」のような、混ざった数字 |
 | 人の評価との一致 | `cli.js feedback <repo> <id> good|bad` で人の評価を残し、`/factory:status` で、判定役が合格にしたものを人も良いとした割合を出す | 判定役の甘さ・辛さに気づかないこと |
@@ -481,4 +469,6 @@ ChatGPT の Pro プランで Codex CLI（`codex exec`）が使えるので、判
 - Stripe Minions（InfoQ）: <https://infoq.com/news/2026/03/stripe-autonomous-coding-agents/>
 - OpenAI, Chain-of-thought monitoring（報酬ハッキングの例）: <https://openai.com/index/chain-of-thought-monitoring/>
 - agent-device（Callstack）: <https://www.callstack.com/blog/agent-device-ai-native-mobile-automation-for-ios-android>
+- mobile-mcp（Mobile Next、agent-device の予備）: <https://github.com/mobile-next/mobile-mcp>
+- XcodeBuildMCP の AXe が Xcode 27 ベータで動かない報告: <https://github.com/getsentry/XcodeBuildMCP/issues/446>
 - Claude Code の iOS シミュレーター（ローカルのみ）: <https://code.claude.com/docs/en/desktop-ios-simulator>

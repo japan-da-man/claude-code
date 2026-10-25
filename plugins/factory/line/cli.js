@@ -2,7 +2,6 @@
 //   <repo> は "." にすると、実行したフォルダの git リポジトリを使う
 //   node cli.js new <repo> <英語の機能名>   機能 ID を決めてフォルダを作り、置き場所を JSON で出す
 //   node cli.js submit <repo> <id>          待ち行列に入れ、ラインが止まっていれば裏で起動する
-//   node cli.js scenarios <repo> <id> <model>  シナリオ作成役を Codex で動かし、作ったシナリオの一覧を出す
 //   node cli.js mock-prepare <repo> <id>     UI 案を作るための、捨てる worktree を作り、置き場所を JSON で出す
 //   node cli.js mock-shoot <repo> <id> <page...>  案のページをビルドしてシミュレーターで撮る
 //   node cli.js mock-clean <repo> <id>       UI 案の worktree を消す
@@ -14,13 +13,11 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { factoryHome, featureDir, featureId, projectHome, projectSlug } from './paths.js'
 import { homedir } from 'node:os'
-import { runCodex } from './codex.js'
 import { cleanMock, prepareMock, shootCommand } from './mock.js'
 import { readMetrics, summarizeMetrics } from './metrics.js'
 import { enqueue, listQueue, readLock } from './queue.js'
 
 const LINE = fileURLToPath(new URL('./line.js', import.meta.url))
-const SCENARIO_WRITER = fileURLToPath(new URL('../agents/scenario-writer.md', import.meta.url))
 
 // "." か省略なら、コマンドを実行したフォルダの git リポジトリの一番上を使う。
 // スキルで "$(git rev-parse --show-toplevel)" と書くと、コマンド置換のせいで allowed-tools に合わず、毎回許可を求められるため。
@@ -75,19 +72,6 @@ export function submit({ repo, id, home = factoryHome(), spawn = spawnLine }) {
   if (scenarios.every((n) => /^holdout:\s*true\s*$/m.test(readFileSync(join(dir, 'scenarios', n), 'utf8')))) throw new Error('すべてのシナリオが最終関門（holdout）になっています。開発用のシナリオを残してください')
   enqueue(home, { repo: abs, id })
   return { queued: id, started: startLine({ home, spawn }) }
-}
-
-// シナリオ作成役を Codex にしたとき（models.scenario が codex）に使う。役の説明は agents/scenario-writer.md を共有する。
-// 作業ディレクトリを機能のフォルダにし、workspace-write で書けるのはそこ（と一時フォルダ）だけにする。
-export async function writeScenarios({ repo, id, home = factoryHome(), model, run = runCodex }) {
-  const abs = resolve(repo)
-  const dir = featureDir(projectHome(abs, home), id)
-  const spec = join(dir, 'spec.md')
-  if (!existsSync(spec)) throw new Error(`${spec} がありません`)
-  const role = readFileSync(SCENARIO_WRITER, 'utf8').replace(/^---\n[\s\S]*?\n---\n/, '')
-  const prompt = `${role}\n\n## 今回の入力\n\n- 仕様: ${spec}\n- シナリオを書き出すフォルダ: ${join(dir, 'scenarios')}\n- 対象のリポジトリ（読むだけ。変更しない）: ${abs}\n`
-  const out = await run({ cwd: dir, sandbox: 'workspace-write', model, prompt })
-  return out.result
 }
 
 // 案の画像（見比べる用）と、選んだ案の画像（仕様と一緒にブランチに入る）は別のフォルダに置く。
@@ -162,10 +146,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [cmd, repoArg, b, c] = process.argv.slice(2)
   try {
     const a = cmd === 'status' ? undefined : resolveRepo(repoArg)
-    if (cmd === 'scenarios') {
-      console.log(await writeScenarios({ repo: a, id: b, model: c }))
-      process.exit(0)
-    }
     const pages = process.argv.slice(5)
     const out =
       cmd === 'new' ? newFeature({ repo: a, name: b })
@@ -176,7 +156,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       : cmd === 'status' ? statusReport()
       : cmd === 'feedback' ? feedback({ repo: a, id: b, verdict: c, note: process.argv.slice(6).join(' ') })
       : null
-    if (!out) throw new Error('使い方: cli.js new <repo> <name> | submit <repo> <id> | scenarios <repo> <id> <model> | mock-prepare|mock-clean <repo> <id> | mock-shoot <repo> <id> <page...> | status | feedback <repo> <id> good|bad [メモ]')
+    if (!out) throw new Error('使い方: cli.js new <repo> <name> | submit <repo> <id> | mock-prepare|mock-clean <repo> <id> | mock-shoot <repo> <id> <page...> | status | feedback <repo> <id> good|bad [メモ]')
     console.log(JSON.stringify(out, null, 2))
   } catch (e) {
     console.error(e.message)

@@ -10,7 +10,7 @@ export function render(name, vars) {
 }
 
 // 判定役の答えの最後の JSON 配列を読み、runs 件の { run, satisfied, symptom } になっているか確かめる。
-// 形は配列そのものか、{ "runs": [...] }（Codex の --output-schema で強制する形）のどちらでもよい。
+// 形は配列そのものか、{ "runs": [...] }（判定のプロンプトが求める形）のどちらでもよい。
 export function parseJudgement(text, runs) {
   const fenced = [...text.matchAll(/```json\s*([\s\S]*?)```/g)].pop()?.[1]
   let list

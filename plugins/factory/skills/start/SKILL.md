@@ -83,21 +83,13 @@ node ${CLAUDE_PLUGIN_ROOT}/line/cli.js new . <英語名>
 
 ## 3. シナリオを作る
 
-`.factory/config.json` の `models.scenario` を見て、作成役を選ぶ（書かれていなければ Claude）。
+サブエージェント `factory:scenario-writer` に、次を渡して任せる。
 
-- **`codex` か `codex:<モデル>` のとき**：Codex に書かせる。実装役（Claude）とは別の会社のモデルにして、死角を重ねないためのもの。数分かかるので、Bash のタイムアウトを長め（10 分）にする。
+- 仕様のパス（出力の `spec`）
+- シナリオを書き出すフォルダ（出力の `scenarios`）
+- リポジトリのパス
 
-  ```bash
-  node ${CLAUDE_PLUGIN_ROOT}/line/cli.js scenarios . <id> <models.scenario の値>
-  ```
-
-  Codex は機能のフォルダの中でだけ書き込める（`workspace-write`）。出力の最後が、シナリオの一覧と仕様の曖昧な点。
-- **それ以外のとき**：サブエージェント `factory:scenario-writer` に、次を渡して任せる。
-  - 仕様のパス（出力の `spec`）
-  - シナリオを書き出すフォルダ（出力の `scenarios`）
-  - リポジトリのパス
-
-どちらの場合も、書かれたシナリオのファイルを読んで、次の承認に使う。
+書かれたシナリオのファイルを読んで、次の承認に使う。
 
 **シナリオの中身を、このあと実装に関わるところへ書き写さない**（リポジトリ、コミット、PR には書かない）。
 

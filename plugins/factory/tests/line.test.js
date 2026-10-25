@@ -66,7 +66,7 @@ function setup({ protectedPaths = ['**/*.entitlements'], workflows = false, mode
 // judge: 周（陰性対照は 0）と判定役のプロンプトから、満足かどうかを返す関数。
 // tests: 実装役が足すテストのファイル（null なら足さない）。denials: 周ごとに、実装役が拒否された操作。
 function fakeDeps(s, { judge = (round) => round >= 1, testsPass = () => true, touch = 'Share.swift', content = null, tests = 'AppTests/ShareTests.swift', ciPasses = true, blocked = () => false, violate = () => false, report = 'implemented', commit = true, write = true, denials = () => [], uiTest = () => ({ ok: true, log: '' }), buildForVerify = () => ({ ok: true }), preflight = () => [] } = {}) {
-  const calls = { claude: [], codex: [], gh: [], notify: [], round: 0, closed: [], verifies: 0, verifyBuilds: [], uiTests: [], preflights: 0 }
+  const calls = { claude: [], gh: [], notify: [], round: 0, closed: [], verifies: 0, verifyBuilds: [], uiTests: [], preflights: 0 }
   const judgeRuns = (role) => {
     const runs = (role.prompt.match(/^- .*runs\//gm) || []).length
     const ok = judge(calls.round, role.prompt)
@@ -118,11 +118,6 @@ function fakeDeps(s, { judge = (round) => round >= 1, testsPass = () => true, to
       }
       if (role.prompt.includes('レビューする担当')) return { result: '- 中・Share.swift:1・名前が短い' }
       return { result: '```json\n' + JSON.stringify(judgeRuns(role)) + '\n```' }
-    },
-    codex: async (role) => {
-      calls.codex.push(role)
-      if (role.prompt.includes('レビューする担当')) return { result: '指摘なし' }
-      return { result: JSON.stringify({ runs: judgeRuns(role) }) }
     },
     adapter: {
       udid: () => 'UDID',
@@ -297,21 +292,6 @@ test('a merge that already went through on GitHub counts as merged when the step
   await runLine({ home: s.home, deps })
   assert.equal(loadState(s.fdir, {}).status, 'merged')
   assert.ok(calls.gh.some((a) => a.startsWith('pr view')))
-})
-
-test('with models.judge set to codex, judging goes to Codex read-only with the schema', async () => {
-  const s = setup({ models: { judge: 'codex' } })
-  const { deps, calls } = fakeDeps(s, { judge: (round) => round >= 2 })
-  await runLine({ home: s.home, deps })
-  assert.equal(calls.claude.filter((r) => r.prompt.includes('採点する担当')).length, 0)
-  // 1 周目は 2 シナリオ × 3 回（落ちたので流し直す）、2 周目は 2 シナリオ × 1 回。判定は 1 回ごと
-  assert.equal(calls.codex.length, 8)
-  assert.equal(calls.codex[0].sandbox, 'read-only')
-  assert.equal(calls.codex[0].cwd, s.fdir)
-  assert.match(calls.codex[0].schema, /judge\.schema\.json$/)
-  // Codex の判定で見つかった症状も、次の周の実装役に渡る
-  assert.match(calls.claude.filter((r) => r.prompt.includes('機能を実装する担当'))[1].prompt, /保存されない/)
-  assert.equal(loadState(s.fdir, {}).status, 'merged')
 })
 
 test('with a design system, the implementer is told to follow it and cannot touch it', async () => {
@@ -680,9 +660,11 @@ test('a review from another model goes into the report and does not block the me
   const { deps, calls } = fakeDeps(s)
   await runLine({ home: s.home, deps })
   assert.equal(loadState(s.fdir, {}).status, 'merged')
-  const review = calls.codex.find((r) => r.prompt.includes('レビューする担当'))
-  assert.equal(review.sandbox, 'read-only')
-  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /コードのレビュー[\s\S]*指摘なし/)
+  const review = calls.claude.find((r) => r.prompt.includes('レビューする担当'))
+  assert.equal(review.model, 'opus')
+  assert.ok(!review.allowedTools.some((t) => /^(Edit|Write)/.test(t)))
+  assert.equal(review.hide, s.home)
+  assert.match(readFileSync(join(s.fdir, 'report.md'), 'utf8'), /コードのレビュー[\s\S]*名前が短い/)
 })
 
 test('steps and calls are recorded as factory metrics and summarized in the report', async () => {

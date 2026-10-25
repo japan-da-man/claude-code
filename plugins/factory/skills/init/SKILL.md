@@ -95,7 +95,7 @@ AskUserQuestion（multiSelect）で候補を見せ、選ばれたものを `prot
 
 既定値:
 
-- モデル: インタビュー・シナリオ・判定が `opus`、実装・検証・破壊役が `sonnet`、レビューが `codex`（Codex がなければ `sonnet` にする）
+- モデル: インタビュー・シナリオ・判定・レビューが `opus`、実装・検証・破壊役が `sonnet`。すべて Claude Code で動かす（すでにある設定の `models` に `codex` が残っていたら、ラインが設定のエラーで止まるので、その役を既定のモデルに戻す）
 - 満足度: 95% 以上。各シナリオはまず 1 回流し、落ちたときだけ 3 回まで流し直す（`satisfaction.rerun: "on_failure"`）
 - 周回の上限: 5
 - 陰性対照: 実装の前に今のアプリでシナリオを流す（`control.base: true`）。壊したアプリを流す破壊役は無効（`control.mutant: false`）

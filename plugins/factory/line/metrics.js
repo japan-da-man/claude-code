@@ -16,7 +16,7 @@ export function readMetrics(fdir) {
     .map((l) => JSON.parse(l))
 }
 
-// claude -p --output-format json の結果から、費用・トークン・拒否された操作を取り出す。Codex の結果にはないので 0 になる。
+// claude -p --output-format json の結果から、費用・トークン・拒否された操作を取り出す。
 export function callUsage(json) {
   const u = json?.usage ?? {}
   return {

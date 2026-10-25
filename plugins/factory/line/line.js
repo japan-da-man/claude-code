@@ -9,7 +9,6 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as ios from './adapters/ios.js'
 import { runClaude, withUsageWait } from './claude.js'
-import { isCodex, runCodex } from './codex.js'
 import { loadConfig } from './config.js'
 import { loadDesignSystem, parseComponentCandidates } from './design.js'
 import { originBase } from './git.js'
@@ -31,7 +30,6 @@ const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash(git diff *)', 'Bash(git log 
 const UNSANDBOXED = ['xcodebuild *', 'xcodegen *']
 // 設定に関係なく、実装役に変えさせないもの: 工場の設定と、前提のデータを仕込む口（init で足すもの）
 const ALWAYS_PROTECTED = ['.factory/**', '**/FactorySeed.swift']
-const JUDGE_SCHEMA = fileURLToPath(new URL('./prompts/judge.schema.json', import.meta.url))
 const CANARY = /factory-canary: ([0-9a-f]+)/
 
 function sh(cmd, args, cwd) {
@@ -68,7 +66,6 @@ export function defaultDeps() {
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     log: (msg) => console.log(`[${new Date().toISOString()}] ${msg}`),
     claude: (role) => runClaude(role),
-    codex: (role) => runCodex(role),
     adapter: {
       udid: (config) => ios.resolveDevice(ios.listDevices(), config.ios.device),
       preflight: ios.preflight,
@@ -209,10 +206,10 @@ export async function runFeature({ entry, home, deps }) {
   const roundEntry = () => state.rounds.find((x) => x.round === state.round)
   const setRound = (entry) => [...state.rounds.filter((r) => r.round !== entry.round), entry].sort((a, b) => a.round - b.round)
 
-  // 役を呼ぶ。設定のモデル名が codex で始まる役は Codex に、それ以外は Claude に回す。時間・費用・拒否を記録する。
+  // 役を呼ぶ。時間・費用・拒否を記録する。
   const call = async (name, role) => {
     const started = deps.now()
-    const res = await withUsageWait(() => (isCodex(role.model) ? deps.codex(role) : deps.claude(role)), {
+    const res = await withUsageWait(() => deps.claude(role), {
       now: deps.now,
       sleep: deps.sleep,
       onPause: (until) => {
@@ -293,10 +290,7 @@ export async function runFeature({ entry, home, deps }) {
 
   const judge = async (sc, dirs) => {
     const prompt = render('judge', { scenario: sc.path, runs: list(dirs) })
-    const model = config.models.judge
-    // Codex は読むだけのサンドボックスで動かし、答えの形をスキーマで強制する。
-    const role = isCodex(model) ? { cwd: fdir, model, sandbox: 'read-only', schema: JUDGE_SCHEMA, prompt } : { cwd: fdir, model, allowedTools: ['Read', 'Glob'], prompt }
-    const { res } = await call('judge', role)
+    const { res } = await call('judge', { cwd: fdir, model: config.models.judge, allowedTools: ['Read', 'Glob'], prompt })
     // 症状は実装役に渡るので、万一シナリオの目印が混ざっていたら消しておく（漏れの誤検知を防ぐ）
     return parseJudgement(res.result, dirs.length).map((j) => ({ ...j, symptom: j.symptom?.replaceAll(state.canary, '') ?? null }))
   }
@@ -527,10 +521,9 @@ export async function runFeature({ entry, home, deps }) {
       const r = roundEntry()
       // 人がコードを読まないので、別のモデルのレビューを PR のレポートに載せる（マージは止めない）
       if (config.quality.review && state.review === undefined && codeChanges().length) {
-        const model = config.models.review
         const prompt = render('review', { base, sha: git(wt, 'rev-parse', 'HEAD'), spec: specRel })
         try {
-          const { res } = await call('review', isCodex(model) ? { cwd: wt, model, sandbox: 'read-only', prompt } : { cwd: wt, model, allowedTools: REVIEW_TOOLS, hide: home, prompt })
+          const { res } = await call('review', { cwd: wt, model: config.models.review, allowedTools: REVIEW_TOOLS, hide: home, prompt })
           state = { ...state, review: String(res.result ?? '').trim() || '指摘なし' }
         } catch (e) {
           state = { ...state, review: `（レビューできなかった: ${String(e.message).slice(0, 200)}）` }
