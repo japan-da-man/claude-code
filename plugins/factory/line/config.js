@@ -9,7 +9,7 @@ export const DEFAULTS = {
   // ui_tests: シナリオの XCUITest を流す UI テストのターゲット（{ target, dir }）。/factory:init で足す。なければ使わない
   ios: { project: null, scheme: null, bundle_id: null, device: 'iPhone 17', prebuild: null, ui_tests: null },
   autonomy: 5,
-  models: { interview: 'opus', scenario: 'opus', implement: 'sonnet', verify: 'sonnet', judge: 'opus', review: 'codex', sabotage: 'sonnet' },
+  models: { interview: 'opus', scenario: 'opus', implement: 'sonnet', verify: 'sonnet', judge: 'opus', review: 'opus', sabotage: 'sonnet' },
   // runs_per_scenario: 1 シナリオを流す回数の上限。rerun が on_failure なら、落ちたときだけ上限まで流し直す（always なら毎回上限まで）
   satisfaction: { runs_per_scenario: 3, threshold: 0.95, rerun: 'on_failure' },
   max_rounds: 5,
@@ -53,9 +53,8 @@ export function mergeConfig(project) {
   check(c.quality.lint === null || typeof c.quality.lint === 'string', 'quality.lint', 'コマンドの文字列か null')
   const ui = c.ios.ui_tests
   check(ui === null || (typeof ui?.target === 'string' && typeof ui?.dir === 'string'), 'ios.ui_tests', '{ "target": "...", "dir": "..." } か null')
-  // Codex のサンドボックスは読み取りを制限できず、隠しシナリオを読めてしまう。
-  // 検証役は agent-device が手元のランナーと通信するので、ネットワークを止める Codex では動かない恐れがある。
-  for (const role of ['implement', 'verify', 'sabotage']) check(!/^codex(:|$)/.test(c.models[role]), `models.${role}`, 'Codex は使えない（Claude のモデルにする）')
+  // 役はすべて Claude Code で動かす。前の版の設定に残った Codex は、黙って Claude に回さずに知らせる
+  for (const [role, model] of Object.entries(c.models)) check(!/^codex(:|$)/.test(model), `models.${role}`, 'Codex は使えなくなった（opus や sonnet など Claude のモデルにする）')
   return c
 }
 

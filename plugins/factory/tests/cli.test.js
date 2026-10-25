@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
-import { feedback, mockPaths, mockShoot, newFeature, resolveRepo, startLine, statusReport, submit, writeScenarios } from '../line/cli.js'
+import { feedback, mockPaths, mockShoot, newFeature, resolveRepo, startLine, statusReport, submit } from '../line/cli.js'
 import { featureDir, projectHome } from '../line/paths.js'
 import { acquireLock, listQueue } from '../line/queue.js'
 import { saveState } from '../line/state.js'
@@ -62,30 +62,6 @@ test('status lists the line, the queue and every feature', () => {
   assert.deepEqual(r.queue, [])
   assert.deepEqual(r.features, [{ repo: '/r/memo', id: '20261018-share', status: 'running', round: 2, step: 'verify', lastScore: 0.8, pr: null, minutes: 0, cost_usd: 0, feedback: null }])
   assert.deepEqual(r.agreement, { rated: 0, good: 0, rate: null })
-})
-
-test('scenarios with Codex: writes only in the feature folder and passes the role, spec and repo', async () => {
-  const h = home()
-  const f = newFeature({ repo: '/r/memo', name: 'share', home: h })
-  writeFileSync(f.spec, '# s\n')
-  const calls = []
-  const out = await writeScenarios({ repo: '/r/memo', id: f.id, home: h, model: 'codex', run: async (role) => (calls.push(role), { result: '| id | title | required |' }) })
-  assert.equal(out, '| id | title | required |')
-  const [role] = calls
-  assert.equal(role.cwd, f.dir)
-  assert.equal(role.sandbox, 'workspace-write')
-  assert.equal(role.model, 'codex')
-  assert.match(role.prompt, /シナリオ作成担当|受け入れシナリオ/)
-  assert.ok(role.prompt.includes(f.spec))
-  assert.ok(role.prompt.includes(f.scenarios))
-  assert.ok(role.prompt.includes('/r/memo'))
-  assert.doesNotMatch(role.prompt, /^---\nname:/)
-})
-
-test('scenarios refuses to run before the spec is written', async () => {
-  const h = home()
-  const f = newFeature({ repo: '/r/memo', name: 'share', home: h })
-  await assert.rejects(writeScenarios({ repo: '/r/memo', id: f.id, home: h, model: 'codex', run: async () => ({ result: '' }) }), /spec\.md/)
 })
 
 test('mock-shoot waits for no one: it refuses while the line holds the simulator', () => {
