@@ -1,0 +1,7 @@
+{
+  "name": "feature-master-scripts",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

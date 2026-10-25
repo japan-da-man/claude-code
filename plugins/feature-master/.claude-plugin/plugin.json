@@ -1,0 +1,6 @@
+{
+  "name": "feature-master",
+  "description": "[skills] Keep a feature master in the repo: the intent behind each feature (summary, actors, usage scenes, what it protects, assumptions, what it deliberately does not do, related features), one Markdown file per use case under docs/features/. init drafts it from the code and confirms the intent one question at a time; check validates the files and regenerates the index",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}
