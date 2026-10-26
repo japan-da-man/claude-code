@@ -6,7 +6,7 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs check *) Bash(nod
 
 # feature-master:check: 機能マスタを調べる
 
-**調べるだけで、機能ファイルと actors.md は自分からは変えない**（直すのは、ユーザーに頼まれたときだけ）。変えてよいのは、確かめたうえでの一覧（`docs/features/README.md`）の作り直しだけ。
+**調べるだけで、機能ファイルと actors.md・product.md は自分からは変えない**（直すのは、ユーザーに頼まれたときだけ）。変えてよいのは、確かめたうえでの一覧（`docs/features/README.md`）の作り直しだけ。
 
 対象のリポジトリ（`git rev-parse --show-toplevel`。`docs/features/` がなければ、パスを尋ねるか `/feature-master:init` を勧める）で、次を実行する。
 
@@ -27,9 +27,11 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs check <repo>
    | `id` | `id` がない、ファイル名と違う、小文字の kebab-case でない |
    | `name`・`status`・`draft` | 機能名がない、状態が `提供中`・`開発中`・`廃止予定` のどれでもない、`draft` が true / false でない |
    | `actors` | Actor がない、`actors.md` にない Actor を指している、`actors.md` の表の誤り。使われていない Actor は警告 |
+   | `product` | `product.md`（全体の前提）がない |
    | `related` | 関連機能の機能ファイルがない、自分自身を指している。`note` がない・重複は警告 |
    | `section` | `## 概要` か `## 利用シーン` がない・空。知らない見出し・重複は警告 |
    | `scene` | 利用シーンが「- 状況 → したいこと」の箇条書きになっていない（警告） |
+   | `premise` | 機能ファイルの前提が、`product.md` の全体の前提を繰り返している（警告。機能ファイルから消す） |
    | `key` | frontmatter の知らない項目（警告） |
 
 3. `drafts`（`draft: true` の機能）があれば並べる。意図をまだ確かめていない機能で、ファイルを直して `draft: true` を消せば下書きでなくなる。

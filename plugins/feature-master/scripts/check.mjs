@@ -5,6 +5,7 @@
 // 調べること:
 //   - 機能ファイル（docs/features/<id>.md）の frontmatter と見出しが決まった形か
 //   - actors と related が、actors.md の Actor と、ほかの機能ファイルを指しているか
+//   - 機能ファイルの前提が、product.md の全体の前提を繰り返していないか
 //   - README.md の一覧が、機能ファイルから作ったものと同じか（古くても失敗にはしない）
 // エラーがあれば終了コード 1。
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
@@ -14,6 +15,7 @@ import { pathToFileURL } from 'node:url'
 export const FEATURES_DIR = 'docs/features'
 export const INDEX = 'README.md'
 export const ACTORS = 'actors.md'
+export const PRODUCT = 'product.md'
 export const STATUSES = ['提供中', '開発中', '廃止予定']
 export const SECTIONS = ['概要', '利用シーン', '大事にしていること', '前提', '想定していないこと']
 export const REQUIRED_SECTIONS = ['概要', '利用シーン']
@@ -126,7 +128,7 @@ function readFeature(repo, name) {
 
 export function loadFeatures(repo) {
   return readdirSync(join(repo, FEATURES_DIR))
-    .filter((n) => n.endsWith('.md') && n !== INDEX && n !== ACTORS)
+    .filter((n) => n.endsWith('.md') && ![INDEX, ACTORS, PRODUCT].includes(n))
     .sort()
     .map((n) => readFeature(repo, n))
 }
@@ -136,6 +138,24 @@ export function loadActors(repo) {
   return existsSync(file) ? parseActors(readFileSync(file, 'utf8')) : null
 }
 
+// product.md の「## 前提」の箇条書き
+export function loadPremises(repo) {
+  const file = join(repo, FEATURES_DIR, PRODUCT)
+  if (!existsSync(file)) return null
+  const s = parseSections(readFileSync(file, 'utf8').split(/\r?\n/)).find((x) => x.title === '前提')
+  return s ? items(s).map((l) => l.item) : []
+}
+
+function items(section) {
+  return section.lines.flatMap((l) => {
+    const m = /^\s*[-*]\s+(.*)$/.exec(l.text)
+    return m ? [{ ...l, item: m[1].trim() }] : []
+  })
+}
+
+// 補足の括弧と文末の「。」を除いて比べる
+const premiseKey = (s) => s.replace(/[（(][^）)]*[）)]/g, '').replace(/[。.\s]+$/, '').trim()
+
 const cell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\s*\n\s*/g, ' ')
 
 function summary(feature) {
@@ -143,7 +163,7 @@ function summary(feature) {
   return s ? content(s).split('\n')[0] : ''
 }
 
-export function renderIndex(features, actors) {
+export function renderIndex(features, actors, premises = []) {
   const names = new Map(actors.map((a) => [a.id, a.name || a.id]))
   const uses = (id) => features.filter((f) => f.data.actors?.includes(id)).length
   const out = [
@@ -152,6 +172,10 @@ export function renderIndex(features, actors) {
     '<!-- feature-master が機能ファイルから作る一覧。手で直さない（/feature-master:check で古くなっていないか確かめ、作り直す） -->',
     '',
     'このプロダクトの機能と、それぞれがどんな利用シーンを想定して作られているか。機能を付け足すときや新しい機能を考えるときは、関係する機能のファイルの「利用シーン」「大事にしていること」「前提」「想定していないこと」を先に読む。',
+    '',
+    '## 全体の前提',
+    '',
+    ...(premises.length ? premises.map((p) => `- ${p}`) : ['（なし）']),
     '',
     '## Actor',
     '',
@@ -193,6 +217,11 @@ export function runCheck(repo) {
     if (!a.name) err(actorsFile, a.line, 'actors', `Actor「${a.id}」の名前がありません`)
     actorIds.add(a.id)
   }
+
+  const productFile = `${FEATURES_DIR}/${PRODUCT}`
+  const premises = loadPremises(repo)
+  if (premises === null) err(productFile, 1, 'product', 'product.md（全体の前提）がありません')
+  const premiseKeys = new Set((premises ?? []).map(premiseKey))
 
   const features = loadFeatures(repo)
   const slugs = new Set(features.map((f) => f.slug))
@@ -244,9 +273,12 @@ export function runCheck(repo) {
     }
     const scenes = f.sections.find((x) => x.title === '利用シーン')
     if (scenes && content(scenes)) {
-      const items = scenes.lines.filter((l) => /^\s*[-*]\s+/.test(l.text))
-      if (!items.length) warn(file, scenes.line, 'scene', '利用シーンは「- 状況 → したいこと」の箇条書きにする')
-      for (const l of items) if (!l.text.includes('→')) warn(file, l.line, 'scene', '利用シーンは「状況 → したいこと」の形にする')
+      const list = items(scenes)
+      if (!list.length) warn(file, scenes.line, 'scene', '利用シーンは「- 状況 → したいこと」の箇条書きにする')
+      for (const l of list) if (!l.item.includes('→')) warn(file, l.line, 'scene', '利用シーンは「状況 → したいこと」の形にする')
+    }
+    for (const s of f.sections.filter((x) => x.title === '前提')) {
+      for (const l of items(s)) if (premiseKeys.has(premiseKey(l.item))) warn(file, l.line, 'premise', '全体の前提（product.md）と同じなので、機能ファイルには書かない')
     }
   }
 
@@ -258,7 +290,7 @@ export function runCheck(repo) {
   if (!errors.length) {
     const indexFile = join(repo, FEATURES_DIR, INDEX)
     const current = existsSync(indexFile) ? readFileSync(indexFile, 'utf8') : null
-    if (current !== renderIndex(features, actors)) stale.push(`${FEATURES_DIR}/${INDEX} の一覧が機能ファイルと合っていません（作り直す）`)
+    if (current !== renderIndex(features, actors, premises)) stale.push(`${FEATURES_DIR}/${INDEX} の一覧が機能ファイルと合っていません（作り直す）`)
   }
   return { ok: errors.length === 0, errors, warnings, stale, drafts, features: features.length, actors: actors.length }
 }

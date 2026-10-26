@@ -13,14 +13,14 @@ const TEMPLATES = fileURLToPath(new URL('../templates', import.meta.url))
 const ACTORS = '| ID | 名前 | 説明 |\n| :- | :- | :- |\n| user | 利用者 | 使う人 |\n'
 const FEATURE = '---\nid: task-create\nname: タスクを追加する\nstatus: 提供中\nactors: [user]\n---\n\n## 概要\n\n登録する。\n\n## 利用シーン\n\n- 思いついた → 残したい\n'
 
-test('install creates docs/features with the actors template and never overwrites it', () => {
+test('install creates docs/features with the actors and product templates and never overwrites them', () => {
   const repo = mkdtempSync(join(tmpdir(), 'fm-cli-'))
   const r = install(repo)
-  assert.deepEqual(r.copied, ['docs/features/actors.md'])
+  assert.deepEqual(r.copied, ['docs/features/actors.md', 'docs/features/product.md'])
   assert.equal(r.template, join(TEMPLATES, 'feature.md'))
   assert.equal(readFileSync(join(repo, 'docs', 'features', 'actors.md'), 'utf8'), readFileSync(join(TEMPLATES, 'actors.md'), 'utf8'))
   writeFileSync(join(repo, 'docs', 'features', 'actors.md'), ACTORS)
-  assert.deepEqual(install(repo).skipped, ['docs/features/actors.md'])
+  assert.deepEqual(install(repo).skipped, ['docs/features/actors.md', 'docs/features/product.md'])
   assert.equal(readFileSync(join(repo, 'docs', 'features', 'actors.md'), 'utf8'), ACTORS)
 })
 

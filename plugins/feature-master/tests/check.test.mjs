@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadActors, loadFeatures, parseActors, parseFrontmatter, parseSections, renderIndex, runCheck } from '../scripts/check.mjs'
+import { loadActors, loadFeatures, loadPremises, parseActors, parseFrontmatter, parseSections, renderIndex, runCheck } from '../scripts/check.mjs'
 
 const CHECK = fileURLToPath(new URL('../scripts/check.mjs', import.meta.url))
 
@@ -15,6 +15,14 @@ const ACTORS = `# Actor
 | :- | :- | :- |
 | user | 利用者 | 自分のタスクを管理する人 |
 | system | システム | 時刻になると通知を出す |
+`
+
+const PRODUCT = `# プロダクト
+
+## 前提
+
+- iPhone アプリとしてだけ使う（iOS 16.4 以上）
+- 1 人で使う
 `
 
 const feature = ({ id, name = 'タスクを追加する', status = '提供中', actors = '[user]', related = '', extra = '', body } = {}) => `---
@@ -39,12 +47,12 @@ ${
 function makeRepo(files = {}) {
   const repo = mkdtempSync(join(tmpdir(), 'fm-check-'))
   mkdirSync(join(repo, 'docs', 'features'), { recursive: true })
-  const all = { 'actors.md': ACTORS, ...files }
+  const all = { 'actors.md': ACTORS, 'product.md': PRODUCT, ...files }
   for (const [name, text] of Object.entries(all)) if (text !== null) writeFileSync(join(repo, 'docs', 'features', name), text)
   return repo
 }
 
-const writeIndex = (repo) => writeFileSync(join(repo, 'docs', 'features', 'README.md'), renderIndex(loadFeatures(repo), loadActors(repo)))
+const writeIndex = (repo) => writeFileSync(join(repo, 'docs', 'features', 'README.md'), renderIndex(loadFeatures(repo), loadActors(repo), loadPremises(repo)))
 const rules = (list) => list.map((e) => `${e.file.split('/').pop()}:${e.rule}`)
 // actors.md の「使っている機能がない」警告を除いた、機能ファイルの警告
 const featureWarnings = (r) => r.warnings.filter((w) => !w.file.endsWith('/actors.md'))
@@ -123,6 +131,26 @@ test('a well-formed master has no errors, and the generated index makes it up to
   assert.match(index, /\| \[期日の前に知らせる\]\(reminder\.md\) \| 提供中（下書き） \| 利用者、システム \| タイトルを入れて、新しいタスクを登録する。 \| {2}\|/)
   assert.match(index, /\| \[タスクを追加する\]\(task-create\.md\) \| 提供中 \| 利用者 \| .+ \| \[reminder\]\(reminder\.md\) \|/)
   assert.match(index, /\| user \| 利用者 \| 自分のタスクを管理する人 \| 2 \|/)
+  assert.match(index, /## 全体の前提\n\n- iPhone アプリとしてだけ使う（iOS 16\.4 以上）\n- 1 人で使う\n/)
+})
+
+test('product.md is required, and the index shows （なし） when it has no premises', () => {
+  assert.deepEqual(rules(runCheck(makeRepo({ 'product.md': null, 'a.md': feature({ id: 'a' }) })).errors), ['product.md:product'])
+  const repo = makeRepo({ 'product.md': '# プロダクト\n\n## 前提\n\n', 'a.md': feature({ id: 'a' }) })
+  assert.deepEqual(runCheck(repo).errors, [])
+  writeIndex(repo)
+  assert.match(readFileSync(join(repo, 'docs', 'features', 'README.md'), 'utf8'), /## 全体の前提\n\n（なし）\n/)
+  assert.equal(loadFeatures(repo).length, 1)
+})
+
+test('a feature premise that repeats a product premise is a warning', () => {
+  const body = '## 概要\n\n登録する。\n\n## 利用シーン\n\n- 思いついた → 残したい\n\n## 前提\n\n- iPhone アプリとしてだけ使う。\n- 1 人で使う（家族とは共有しない）\n- タスクは数十件まで\n'
+  const r = runCheck(makeRepo({ 'a.md': feature({ id: 'a', body }) }))
+  assert.deepEqual(rules(featureWarnings(r)), ['a.md:premise', 'a.md:premise'])
+  assert.deepEqual(
+    featureWarnings(r).map((w) => w.line),
+    [18, 19],
+  )
 })
 
 test('the index goes stale when a feature file changes', () => {

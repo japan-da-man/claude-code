@@ -1,27 +1,35 @@
 // スキルから呼ぶ CLI。結果は JSON で出す。
-//   node cli.mjs install <repo>   docs/features/ を作り、ないものだけひな形（actors.md）を置く
+//   node cli.mjs install <repo>   docs/features/ を作り、ないものだけひな形（actors.md・product.md）を置く
 //   node cli.mjs index <repo>     機能ファイルから docs/features/README.md の一覧を作り直す（エラーがあれば作らない）
 //   node cli.mjs check <repo>     機能マスタを調べる（check.mjs と同じ結果）
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { ACTORS, FEATURES_DIR, INDEX, loadActors, loadFeatures, renderIndex, runCheck } from './check.mjs'
+import { ACTORS, FEATURES_DIR, INDEX, PRODUCT, loadActors, loadFeatures, loadPremises, renderIndex, runCheck } from './check.mjs'
 
 const TEMPLATES = fileURLToPath(new URL('../templates', import.meta.url))
 
 export function install(repo) {
   mkdirSync(join(repo, FEATURES_DIR), { recursive: true })
-  const actors = `${FEATURES_DIR}/${ACTORS}`
-  const exists = existsSync(join(repo, actors))
-  if (!exists) copyFileSync(join(TEMPLATES, ACTORS), join(repo, actors))
-  return { dir: FEATURES_DIR, copied: exists ? [] : [actors], skipped: exists ? [actors] : [], template: join(TEMPLATES, 'feature.md') }
+  const copied = []
+  const skipped = []
+  for (const name of [ACTORS, PRODUCT]) {
+    const to = `${FEATURES_DIR}/${name}`
+    if (existsSync(join(repo, to))) {
+      skipped.push(to)
+      continue
+    }
+    copyFileSync(join(TEMPLATES, name), join(repo, to))
+    copied.push(to)
+  }
+  return { dir: FEATURES_DIR, copied, skipped, template: join(TEMPLATES, 'feature.md') }
 }
 
 export function writeIndex(repo) {
   const r = runCheck(repo)
   if (!r.ok) return { written: null, errors: r.errors }
   const file = `${FEATURES_DIR}/${INDEX}`
-  writeFileSync(join(repo, file), renderIndex(loadFeatures(repo), loadActors(repo)))
+  writeFileSync(join(repo, file), renderIndex(loadFeatures(repo), loadActors(repo), loadPremises(repo)))
   return { written: file, features: r.features, errors: [] }
 }
 
