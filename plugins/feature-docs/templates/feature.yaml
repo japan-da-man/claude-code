@@ -1,0 +1,53 @@
+# 機能マスタ: 利用者から見た「今提供している事実」だけを書く。システムの裏側（API・データ・フラグ・イベント・画面のルート）は設計書へ。
+# 実装の最後の PR で作り、変えるたびに更新する。ヘルプ AI はここだけを読む。
+id: F-000
+name: <機能名（利用者に見える名前）>
+status: ga                     # beta（一部の利用者に提供中）/ ga（全員）/ deprecated（提供終了）
+platforms: [ios, android]
+plans: []                      # 使える料金プラン（区別がなければ []）
+since_version: "1.0.0"         # バージョンは引用符で囲む
+design_doc: docs/design/F-000-<name>.md
+requirements: []               # この機能を作った・変えた要件定義書（導入前からある機能なら代わりに legacy: true）
+
+actors:
+  primary: A-xxx               # actors.yaml の id
+  secondary: []
+
+jobs:
+  - <〜なとき、〜したい。そうすれば〜できる>
+
+scenes:
+  - when: <いつ・どこで>
+    situation: <どんな状態で（片手、通信が不安定、など）>
+    frequency: <どのくらいの頻度で>
+
+user_flows:
+  - id: UF-000-1
+    goal: <利用者の目的>
+    trigger: <始めるきっかけ>
+    preconditions: []
+    steps:
+      - <利用者がすること・見ること>
+    when_things_differ:
+      - condition: <条件>
+        user_sees: <利用者に見えること>
+    result: <終わったあと利用者に見えること>
+
+limits: []                     # 利用者に見える上限や条件（件数、文字数、プラン）
+
+help:
+  summary: <利用者向けの 1〜2 文>
+  how_to:
+    - <手順>
+  limitations: []              # できないこと（聞かれたら必ず答える）
+  faq: []                      # - q: … / a: …
+  troubleshooting: []          # - symptom: … / cause: … / fix: …
+  synonyms: []                 # ユーザーが使いそうな呼び方
+  visibility: public           # public（ヘルプ AI に渡す）/ internal
+  escalation: <解決しないときの問い合わせ先>
+
+changelog:
+  - version: "1.0.0"
+    date: YYYY-MM-DD
+    change: <利用者向けの変更内容>
+last_reviewed: YYYY-MM-DD

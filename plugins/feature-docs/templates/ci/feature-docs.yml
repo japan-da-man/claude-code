@@ -1,0 +1,34 @@
+name: feature-docs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # リポジトリの package.json に yaml が入っていれば、npm ci のあとはそれで読む（なくても動く）
+      - run: node feature-docs/check.mjs
+
+  help:
+    # main にマージされたら、機能マスタからヘルプ AI 用のナレッジを書き出す
+    if: github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node feature-docs/check.mjs export-help --out help-knowledge
+      # ここからヘルプ AI の取り込み（ベクトルストアへの登録など）につなぐ
+      - uses: actions/upload-artifact@v4
+        with:
+          name: help-knowledge
+          path: help-knowledge

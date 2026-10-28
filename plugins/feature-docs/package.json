@@ -1,0 +1,7 @@
+{
+  "name": "feature-docs-scripts",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

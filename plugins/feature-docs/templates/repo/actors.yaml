@@ -1,0 +1,7 @@
+# アクター（登場人物）。要件定義書・機能マスタはこの id で参照する。
+# kind: human（人）/ system（通知、決済、外部サービスなど）
+actors:
+  - id: A-member
+    name: 会員
+    kind: human
+    description: <どんな人か。目的や使う場面>

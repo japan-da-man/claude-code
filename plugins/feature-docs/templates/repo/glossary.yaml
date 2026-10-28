@@ -1,0 +1,9 @@
+# 用語。社内の言い方と、利用者に見える言い方、ユーザーが使いそうな言い方をここで 1 か所に決める。
+# public: true の用語だけが、ヘルプ AI 用に書き出される。
+terms:
+  - term: <社内の用語>
+    user_facing: <利用者に見える言い方>
+    synonyms: []
+    description: <意味>
+    not_to_confuse: null      # 取り違えやすい別の用語（例: 「いいね」と「お気に入り」は別）
+    public: false
