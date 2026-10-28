@@ -14,6 +14,8 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feat
 
 機能マスタは **今提供している事実** の記録で、ヘルプ AI のソースになる。実装した結果を見て書く（要件定義書や設計書を写すのではない）。
 
+GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not available` で失敗したら、`${CLAUDE_PLUGIN_ROOT}/GITHUB.md` の REST の書き方に切り替える。
+
 ## 1. 準備
 
 - 対象のリポジトリは `git rev-parse --show-toplevel`。統合ブランチ `feature/REQ-xxxx` に switch し、`git fetch -q origin` のあと `git merge origin/main` で最新にする。

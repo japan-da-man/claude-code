@@ -13,6 +13,8 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feat
 
 質問は必ず **AskUserQuestion** で出す。1 回に出すのは、答えが前の答えに依存しない質問だけ（最大 4 問）。選択肢をつけ、おすすめは先頭にして「(Recommended)」を付ける。**調べれば分かることは質問せず、自分で調べる。**
 
+GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not available` で失敗したら、`${CLAUDE_PLUGIN_ROOT}/GITHUB.md` の REST の書き方に切り替える。
+
 ## 0. 準備
 
 - 対象のリポジトリは `git rev-parse --show-toplevel`。以降のコマンドはすべてそのパスで実行する。

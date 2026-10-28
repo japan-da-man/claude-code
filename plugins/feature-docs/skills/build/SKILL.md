@@ -13,6 +13,8 @@ model: opus
 
 **ここは人の確認がない区間。** 人が見るのは最後の PR（統合ブランチ → main）だけなので、途中で承認を求めて止まらない。ただし、取り消せない操作（main への直接の push、データの削除、本番への反映）はしない。設計どおりに作れない・要件を満たせないと分かったら、勝手に要件を変えず、設計書の「実装メモ」に書いて先に進むか、進めないなら止めて伝える。
 
+GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not available` で失敗したら、`${CLAUDE_PLUGIN_ROOT}/GITHUB.md` の REST の書き方に切り替える。
+
 ## 1. 準備
 
 - 対象のリポジトリは `git rev-parse --show-toplevel`。引数がなければ `node feature-docs/check.mjs status` で `designed` のものを探す（複数なら AskUserQuestion で選ぶ）。
