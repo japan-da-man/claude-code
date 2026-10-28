@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { exportHelp, nextId, parseMarkdown, parseYamlSubset, runCheck, status } from '../scripts/check.mjs'
@@ -275,4 +276,59 @@ test('設定で置き場所を変えられる', () => {
   const result = runCheck(repo)
   assert.equal(result.counts.features, 1)
   assert.equal(result.ok, true)
+})
+
+test('YAML: - | の項目、引用符の中の 2 つの引用符と #、True、BOM を読む', () => {
+  assert.deepEqual(parseYamlSubset('steps:\n  - |\n    一行目\n    二行目\n  - >-\n    あ\n    い\n  - x\n'), { steps: ['一行目\n二行目\n', 'あ い', 'x'] })
+  assert.deepEqual(parseYamlSubset("title: 'Today''s #1 picks'  # コメント\ntags: ['it''s', b]"), { title: "Today's #1 picks", tags: ["it's", 'b'] })
+  assert.deepEqual(parseYamlSubset('a: True\nb: FALSE\nc: Null'), { a: true, b: false, c: null })
+  assert.equal(parseMarkdown('﻿---\nid: REQ-0001\n---\n\n## 見出し\n').data.id, 'REQ-0001')
+})
+
+test('YAML: 値の中の「: 」は、ほかの YAML の読み込みと同じく弾く', () => {
+  assert.throws(() => parseYamlSubset('summary: 投稿を保存できます。注意: 上限あり'), /引用符/)
+  assert.throws(() => parseYamlSubset('a: b:'), /引用符/)
+  assert.deepEqual(parseYamlSubset('summary: "注意: 上限あり"\nurl: https://example.com\ntime: 10:30'), { summary: '注意: 上限あり', url: 'https://example.com', time: '10:30' })
+})
+
+test('approved 以降は actors が 1 つ以上いる', () => {
+  const repo = makeRepo({ 'actors.yaml': ACTORS, 'docs/requirements/REQ-0001-fav.md': req({ actors: [] }) })
+  assert.ok(hasError(runCheck(repo), 'docs/requirements/REQ-0001-fav.md', 'actors'))
+})
+
+test('機能マスタの requirements は、その機能を features に挙げた要件定義書でないといけない', () => {
+  const repo = makeRepo({
+    'actors.yaml': ACTORS,
+    'docs/requirements/REQ-0001-fav.md': req({ status: 'implemented' }),
+    'docs/design/F-001-fav.md': design(),
+    'docs/design/F-002-other.md': design({ feature: 'F-002' }),
+    'features/F-001-fav.yaml': feature(),
+    'features/F-002-other.yaml': feature({ id: 'F-002' }),
+  })
+  const result = runCheck(repo)
+  assert.ok(hasError(result, 'features/F-002-other.yaml', 'requirements'))
+  assert.ok(!hasError(result, 'features/F-001-fav.yaml', 'requirements'))
+})
+
+test('next-id: 読めないファイルと、ほかのブランチの番号も避ける', () => {
+  const repo = makeRepo({
+    'docs/requirements/REQ-0001-a.md': req(),
+    'docs/requirements/REQ-0002-b.md': '---\nid: REQ-0002\nfeatures: { new: [F-002] }\n---\n',
+  })
+  assert.ok(hasError(runCheck(repo), 'docs/requirements/REQ-0002-b.md', 'parse'))
+  assert.equal(nextId(repo, 'req'), 'REQ-0003')
+  assert.equal(nextId(repo, 'feature'), 'F-003')
+
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' })
+  git('init', '-q', '-b', 'main')
+  git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init')
+  git('switch', '-q', '-c', 'req/REQ-0007-x')
+  writeFiles(repo, { 'docs/requirements/REQ-0007-x.md': req({ id: 'REQ-0007', newF: ['F-009'] }) })
+  git('add', '-A')
+  git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'req')
+  git('switch', '-q', 'main')
+  rmSync(join(repo, 'docs/requirements/REQ-0007-x.md'), { force: true })
+  assert.equal(existsSync(join(repo, 'docs/requirements/REQ-0007-x.md')), false)
+  assert.equal(nextId(repo, 'req'), 'REQ-0008')
+  assert.equal(nextId(repo, 'feature'), 'F-010')
 })

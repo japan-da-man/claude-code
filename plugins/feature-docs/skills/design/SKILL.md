@@ -3,7 +3,7 @@ name: design
 description: マージ済み（approved）の要件定義書から、影響する機能の設計書（docs/design/F-xxx-*.md）・UI 案（docs/ui/REQ-xxxx/）・トラッキングプランを作り、設計の PR を出す。設計書には pending を付け、要件定義書を designed にする。PR のマージが設計と UI 案の承認。「REQ-xxxx を設計して」「UI 案を作って」「/feature-docs:design REQ-xxxx」と言われたとき、要件の PR がマージされたあとに使う。アプリのコードは書かない。
 argument-hint: "<REQ-xxxx>"
 model: opus
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feature-docs/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git switch *) Bash(git show *) Bash(git add *) Bash(git commit *) Bash(git diff*) Bash(git log *) Bash(date *)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feature-docs/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git switch *) Bash(git show *) Bash(git add *) Bash(git commit *) Bash(git diff*) Bash(git log *) Bash(git pull *) Bash(date *) Bash(git remote get-url *) Bash(git push *) Bash(gh pr *) Bash(gh api *)
 ---
 
 # feature-docs:design: 要件から設計と UI 案へ
@@ -21,7 +21,7 @@ GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not av
 - 対象のリポジトリは `git rev-parse --show-toplevel`。`feature-docs/config.json` がなければ `/feature-docs:init` を案内して終える。
 - 引数がなければ `node feature-docs/check.mjs status` で `approved` の要件定義書を探す。1 つならそれ、複数なら AskUserQuestion で選んでもらう。
 - `git fetch -q origin` のあと、**origin/main にある** 要件定義書が `status: approved` であることを `git show origin/main:<path>` で確かめる。まだマージされていなければ、要件の PR のマージを待つよう伝えて終える（マージが承認なので、先に進まない）。
-- `git switch -c design/REQ-xxxx-<name> origin/main` を作る。
+- ブランチ `design/REQ-xxxx-*` がすでにあれば（レビューの指摘を直すとき）、`git switch` して `git pull` し、PR のレビューのコメントを読んでから、直すところだけ直して push する。なければ `git switch -c design/REQ-xxxx-<name> origin/main` を作る。
 
 ## 2. 調べる
 
@@ -49,8 +49,10 @@ GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not av
 
 作業場は Claude Design、正本はリポジトリ。
 
-1. **Claude Design を使えるとき**（claude.ai/design。デザインシステムは Claude Code の `/design-sync` でコードから取り込む）：要件定義書の「画面と状態」から、画面ごとに 2〜3 案を作ってもらう。案のリンクを AskUserQuestion の選択肢にして、どれで進めるかを決めてもらう。確定した案を **スタンドアロン HTML** で書き出し、`docs/ui/REQ-xxxx/` に置く。
-2. **使えないとき**：自分で HTML のモックを書く。1 ファイル（`docs/ui/REQ-xxxx/index.html`）に、画面ごと・状態ごと（あり・空・読み込み中・エラー・オフライン）の見た目を並べ、案が複数あればタブで切り替える。スマホの幅（390px 程度）で描く。このセッションに Artifact ツールがあれば公開して URL を残す。決めた案以外は消すか、`alternatives/` に分ける。
+Claude Design（claude.ai/design）は、このスキルからは操作できない（人が操作する）。まず AskUserQuestion で「Claude Design で作る（あなたが操作）(Recommended) / こちらで HTML のモックを作る」を聞く。
+
+1. **Claude Design で作るとき**：Claude Design に貼るプロンプトを書いて渡す（要件定義書の「画面と状態」から、画面ごと・状態ごとに 2〜3 案。デザインシステムを `/design-sync` でコードから取り込んであれば、それを使うよう書く）。人が案を選び、**スタンドアロン HTML** で書き出して `docs/ui/REQ-xxxx/` に置く（か、チャットに添付する）まで待つ。リンクを作り話で埋めない。
+2. **自分で作るとき**：自分で HTML のモックを書く。1 ファイル（`docs/ui/REQ-xxxx/index.html`）に、画面ごと・状態ごと（あり・空・読み込み中・エラー・オフライン）の見た目を並べ、案が複数あればタブで切り替える。スマホの幅（390px 程度）で描く。このセッションに Artifact ツールがあれば公開して URL を残す。決めた案以外は消すか、`alternatives/` に分ける。
 3. `docs/ui/REQ-xxxx/README.md` に、採用した案と理由、Claude Design（または Artifact）の URL、設計書のどの画面に当たるかを書く。
 4. 設計書のフロントマター `ui` と「画面」の表に、UI 案のパスを書く。
 

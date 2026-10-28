@@ -2,7 +2,7 @@
 name: init
 description: アプリのリポジトリで feature-docs を使えるようにする初期設定。要件定義書・設計書・機能マスタの置き場所と設定、整合のチェッカー（feature-docs/check.mjs）、プロダクト要件・アクター・用語のひな形、CI と PR テンプレートを置く。「feature-docs を入れて」「要件と機能マスタを管理できるようにして」「/feature-docs:init」と言われたとき、ほかの feature-docs のスキルで設定がないと言われたときに使う。リポジトリごとに 1 回。
 argument-hint: "[--no-pr]"
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feature-docs/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git switch *) Bash(git add *) Bash(git commit *) Bash(git diff*) Bash(gh auth status*)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feature-docs/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git switch *) Bash(git add *) Bash(git commit *) Bash(git diff*) Bash(gh auth status*) Bash(git remote get-url *) Bash(git push *) Bash(gh pr *) Bash(gh api *)
 ---
 
 # feature-docs:init: 初期設定

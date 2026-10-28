@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // feature-docs のチェッカー。アプリのリポジトリの feature-docs/check.mjs に写して使う（プラグインがなくても CI で動く）。
-// 依存なし（Node 20 以上）。リポジトリに yaml パッケージが入っていればそれで読み、なければ下の小さな YAML の読み込みを使う。
+// 依存なし（Node 20 以上）。YAML は下の小さな読み込みで読む（手元と CI で結果が変わらないように、yaml パッケージは使わない）。
 //
 //   node feature-docs/check.mjs [repo] [--json]                    要件定義書・設計書・機能マスタの整合を調べる（誤りがあれば終了コード 1）
 //   node feature-docs/check.mjs status [repo]                      要件定義書ごとの段階と、次にやることを JSON で出す
 //   node feature-docs/check.mjs next-id req|feature [repo]         次の REQ / F の番号を出す
 //   node feature-docs/check.mjs export-help [repo] [--out <dir>] [--force]
 //                                                                  機能マスタから、ヘルプ AI 用のナレッジ（Markdown と index.json）を書き出す
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -65,6 +65,7 @@ function stripComment(text) {
     const c = text[i]
     if (quote) {
       if (c === '\\' && quote === '"') i++
+      else if (c === "'" && quote === "'" && text[i + 1] === "'") i++
       else if (c === quote) quote = null
     } else if (c === '"' || c === "'") {
       if (i === 0 || /[\s\[,:-]/.test(text[i - 1])) quote = c
@@ -85,6 +86,7 @@ function splitFlow(inner, line) {
     if (quote) {
       cur += c
       if (c === '\\' && quote === '"') cur += inner[++i] ?? ''
+      else if (c === "'" && quote === "'" && inner[i + 1] === "'") cur += inner[++i]
       else if (c === quote) quote = null
       continue
     }
@@ -104,7 +106,7 @@ function splitFlow(inner, line) {
 
 function parseScalar(raw, line) {
   const s = raw.trim()
-  if (s === '' || s === '~' || s === 'null') return null
+  if (s === '' || s === '~' || /^(null|Null|NULL)$/.test(s)) return null
   if (s[0] === '&' || s[0] === '*' || s[0] === '!') throw new YamlError('アンカー・エイリアス・タグには対応していません', line)
   if (s[0] === '"') {
     if (s.length < 2 || s[s.length - 1] !== '"') throw new YamlError('" が閉じていません', line)
@@ -126,9 +128,11 @@ function parseScalar(raw, line) {
   }
   if (s === '{}') return {}
   if (s[0] === '{') throw new YamlError('{ } の書き方（フローのマップ）には対応していません', line)
-  if (s === 'true') return true
-  if (s === 'false') return false
+  if (/^(true|True|TRUE)$/.test(s)) return true
+  if (/^(false|False|FALSE)$/.test(s)) return false
   if (/^-?\d+(\.\d+)?$/.test(s) && !/^-?0\d/.test(s)) return Number(s)
+  // 「注意: 上限あり」のような値は、YAML ではマップの入れ子になって読めない。ほかの YAML の読み込みと結果を変えないために弾く
+  if (/:(\s|$)/.test(s)) throw new YamlError(`値に「: 」があります。値を引用符で囲んでください: ${s}`, line)
   return s
 }
 
@@ -211,6 +215,9 @@ export function parseYamlSubset(text) {
         pos++
         if (pos < lines.length && lines[pos].indent > indent) out.push(parseNode(lines[pos].indent))
         else out.push(null)
+      } else if (/^[|>][+-]?$/.test(c)) {
+        // 「- |」の項目は、続く行をブロックとして読む
+        out.push(blockScalar(c, indent, l))
       } else if (isSeq({ text: c }) || KEY_LINE.test(c)) {
         // 「- key: value」や「- - a」は、項目の中身を 1 段深い行として読み直す
         lines[pos] = { ...l, indent: indent + offset, text: c }
@@ -256,33 +263,16 @@ export function parseYamlSubset(text) {
   return result
 }
 
-const yamlLibs = new Map()
-function yamlLib(repo) {
-  if (!yamlLibs.has(repo)) {
-    let lib = null
-    try {
-      lib = createRequire(join(repo, 'package.json'))('yaml')
-    } catch {}
-    yamlLibs.set(repo, lib)
-  }
-  return yamlLibs.get(repo)
-}
+// 先頭の BOM（Windows のエディタが付ける）は読み飛ばす
+const stripBom = (text) => (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text)
 
-export function parseYaml(text, repo) {
-  const lib = repo ? yamlLib(repo) : null
-  if (lib) {
-    try {
-      return lib.parse(text)
-    } catch (e) {
-      throw new YamlError(e.message.split('\n')[0], e.linePos?.[0]?.line)
-    }
-  }
-  return parseYamlSubset(text)
+export function parseYaml(text) {
+  return parseYamlSubset(stripBom(text))
 }
 
 // Markdown の先頭の --- で囲んだ部分（フロントマター）と、## の見出しを読む
-export function parseMarkdown(text, repo) {
-  const t = text.replace(/\r\n?/g, '\n')
+export function parseMarkdown(text) {
+  const t = stripBom(text).replace(/\r\n?/g, '\n')
   let data = {}
   let body = t
   if (t.startsWith('---\n')) {
@@ -290,7 +280,7 @@ export function parseMarkdown(text, repo) {
     if (end === -1) throw new YamlError('フロントマターの終わりの --- がありません', 1)
     const fm = t.slice(4, end)
     try {
-      data = parseYaml(fm, repo) ?? {}
+      data = parseYaml(fm) ?? {}
     } catch (e) {
       throw new YamlError(`フロントマター: ${e.message}`)
     }
@@ -344,7 +334,7 @@ export function loadAll(repo) {
 
   const readYamlFile = (rel) => {
     try {
-      return parseYaml(readFileSync(join(repo, rel), 'utf8'), repo)
+      return parseYaml(readFileSync(join(repo, rel), 'utf8'))
     } catch (e) {
       add('error', rel, 'parse', e.message)
       return undefined
@@ -352,7 +342,7 @@ export function loadAll(repo) {
   }
   const readMdFile = (rel) => {
     try {
-      return parseMarkdown(readFileSync(join(repo, rel), 'utf8'), repo)
+      return parseMarkdown(readFileSync(join(repo, rel), 'utf8'))
     } catch (e) {
       add('error', rel, 'parse', e.message)
       return undefined
@@ -524,6 +514,7 @@ export function runCheck(repo) {
     for (const id of fs.changed) {
       if (!featureById.has(id)) add('error', r.file, 'features', `変更する機能 ${id} が ${p.features} にありません（新しい機能なら features.new に）`)
     }
+    if (!isList(d.actors)) add('error', r.file, 'actors', 'actors（対象のアクター）を 1 つ以上書いてください')
     for (const id of asArray(d.actors)) {
       if (newActorIds.has(id) && status !== 'implemented') continue
       checkActor(r.file, id, 'actors')
@@ -627,6 +618,10 @@ export function runCheck(repo) {
         const r = reqById.get(reqId)
         if (!r) add('error', f.file, 'requirements', `requirements の ${reqId} がありません`)
         else if (r.data.status !== 'implemented') add('error', f.file, 'requirements', `requirements の ${reqId} が implemented ではありません（今は ${r.data.status}）`)
+        else {
+          const fs = reqFeatures(r)
+          if (![...fs.new, ...fs.changed].includes(f.fileId)) add('error', f.file, 'requirements', `${reqId} の features（new / changed）に ${f.fileId} がありません`)
+        }
       }
       if (!designsById.has(f.fileId)) add('error', f.file, 'design', `設計書が ${p.design} にありません`)
     }
@@ -689,19 +684,42 @@ export function status(repo) {
   }
 }
 
+// 読めないファイルや、まだマージされていないブランチの番号ともぶつからないように、
+// ファイル名と本文の ID を、作業ツリーと git のすべてのブランチ（origin も含む）から集める
+function usedIds(repo, pattern) {
+  const p = loadConfig(repo).paths
+  const dirs = [p.requirements, p.design, p.features]
+  const found = new Set()
+  const scan = (text) => {
+    for (const m of text.matchAll(pattern)) found.add(m[0])
+  }
+  for (const dir of dirs) {
+    for (const f of listFiles(join(repo, dir))) {
+      scan(f)
+      if (dir === p.requirements) scan(readFileSync(join(repo, dir, f), 'utf8'))
+    }
+  }
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 })
+  try {
+    const refs = git('for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes').split('\n').filter((r) => r && !r.endsWith('/HEAD'))
+    for (const ref of refs) {
+      scan(ref)
+      scan(git('ls-tree', '-r', '--name-only', ref, '--', ...dirs))
+      try {
+        scan(git('grep', '-h', '-o', '-E', 'REQ-[0-9]{4,}|F-[0-9]{3,}', ref, '--', p.requirements))
+      } catch {} // 一致なし
+    }
+  } catch {} // git のリポジトリでないとき
+  return [...found]
+}
+
 export function nextId(repo, kind) {
-  const { requirements, features, designs } = loadAll(repo)
   if (kind === 'req') {
-    const n = Math.max(0, ...requirements.map((r) => Number(r.fileId.slice(4))))
+    const n = Math.max(0, ...usedIds(repo, /REQ-\d{4,}/g).map((id) => Number(id.slice(4))))
     return `REQ-${String(n + 1).padStart(4, '0')}`
   }
   if (kind === 'feature') {
-    const ids = [
-      ...features.map((f) => f.fileId),
-      ...designs.map((d) => d.fileId),
-      ...requirements.flatMap((r) => asArray(r.data.features?.new).map(String)),
-    ].filter((id) => F_ID.test(id))
-    const n = Math.max(0, ...ids.map((id) => Number(id.slice(2))))
+    const n = Math.max(0, ...usedIds(repo, /F-\d{3,}/g).map((id) => Number(id.slice(2))))
     return `F-${String(n + 1).padStart(3, '0')}`
   }
   throw new Error('next-id には req か feature を渡してください')
@@ -873,7 +891,15 @@ export function main(argv) {
   return result.ok ? 0 : 1
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const isMain = () => {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+
+if (isMain()) {
   try {
     process.exitCode = main(process.argv.slice(2))
   } catch (e) {

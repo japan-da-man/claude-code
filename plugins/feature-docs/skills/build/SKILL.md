@@ -3,6 +3,7 @@ name: build
 description: 設計済み（designed）の要件定義書を実装する。統合ブランチ feature/REQ-xxxx を切り、設計書の未実装の節を小さなタスクに分け、タスクごとにテストを書いて実装し、テストの通った小さな PR を統合ブランチに自動でマージしていく。人を待たずに最後まで進め、終わったら /feature-docs:finalize に引き継ぐ。「REQ-xxxx を実装して」「/feature-docs:build REQ-xxxx」と言われたとき、設計の PR がマージされたあとに使う。
 argument-hint: "<REQ-xxxx>"
 model: opus
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feature-docs/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git remote get-url *) Bash(git switch *) Bash(git show *) Bash(git merge *) Bash(git pull *) Bash(git push *) Bash(git add *) Bash(git commit *) Bash(git diff*) Bash(git log *) Bash(gh pr *) Bash(gh api *) Bash(npm *) Bash(npx *) Bash(pnpm *) Bash(yarn *) Bash(bun *) Bash(maestro *) Bash(date *) Bash(sleep *) Bash(mkdir -p *)
 ---
 
 # feature-docs:build: 設計から実装へ
@@ -21,7 +22,7 @@ GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not av
 - `git fetch -q origin`。origin/main の要件定義書が `status: designed` で、設計書に `pending: [REQ-xxxx]` があることを確かめる。なければ設計の PR のマージを待つよう伝えて終える。
 - 統合ブランチ `feature/REQ-xxxx`（`feature-docs/config.json` の `integration_branch_prefix` に従う）がなければ origin/main から作って push する。あれば switch して、origin/main を取り込む（`git merge origin/main`）。
 - このリポジトリの確かめ方を調べる：`package.json` の scripts（`typecheck`・`lint`・`test` など）、モノレポなら各パッケージの scripts、`.maestro/`、EAS Workflows（`.eas/workflows/`）、`.github/workflows/`。CLAUDE.md に書いてあればそれに従う。
-- 統合ブランチの守り：GitHub で、統合ブランチに「チェックが通ること」を必須にしたブランチ保護（かルールセット）と、リポジトリの「Allow auto-merge」があると、小さな PR がチェックの合格後に自動でマージされる。設定されていなければ、そのことを一度だけ伝え、この回は「チェックの合格を待ってから自分でマージする」で進める。
+- 統合ブランチの守り：統合ブランチには、チェックを必須にするブランチ保護をかけない（main の取り込みや仕上げのコミットを直接 push するため）。チェックの合格は、このスキルが PR ごとに待って確かめる（3 の 5）。もし統合ブランチへの push が保護やルールセットで拒否されたら、そのコミットを短いブランチ（`feature/REQ-xxxx--sync-<n>` など）に載せて統合ブランチへの PR にし、チェックの合格を待ってマージする。
 
 ## 2. タスクに分ける
 
@@ -40,8 +41,9 @@ GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not av
 2. テストを先に書き、落ちることを確かめてから実装する（dev-flow プラグインがあれば `dev-flow:tdd` の進め方に従う）。UI は `docs/ui/REQ-xxxx/` の UI 案を「見た目と意図」として読み、design-system があればその部品とトークンで作る。
 3. このリポジトリの確かめ方（型・lint・テスト）と `node feature-docs/check.mjs` をすべて通す。
 4. コミットして push し、`gh pr create --base feature/REQ-xxxx --title "REQ-xxxx: <タスク>"`。本文に、満たす受け入れ条件と確かめた結果を書く。
-5. 自動マージが使えるなら `gh pr merge --auto --squash`。使えなければ `gh pr checks --watch` で合格を待ってから `gh pr merge --squash`。落ちたら直して push する（3 回直しても通らなければ、原因を実装メモに書いて止め、伝える）。
-6. 統合ブランチを pull してから次のタスクへ。3 タスクごとに origin/main を統合ブランチに取り込む（コンフリクトを最後まで溜めない）。
+5. チェックの合格を待ってから `gh pr merge <番号> --squash` でマージする（自動マージの予約は使わない。予約はすぐに戻ってくるので、マージ前に次のタスクを切ってしまう）。待ち方は `${CLAUDE_PLUGIN_ROOT}/GITHUB.md` の「チェックの合格を待つ」。落ちたら直して push する（3 回直しても通らなければ、原因を実装メモに書いて止め、伝える）。
+6. PR が **マージされたこと**（`merged` が true）を確かめ、統合ブランチを pull してから次のタスクへ。
+7. 3 タスクごとに、統合ブランチで `git merge origin/main` して **push する**（コンフリクトを最後まで溜めない。push しないと、次のタスクの PR に main の差分が混ざる）。
 
 このあいだ、**要件定義書・機能マスタは変えない**。設計書は、設計から変えたことを「実装メモ」に書くときだけ変える。
 

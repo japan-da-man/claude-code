@@ -13,7 +13,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # リポジトリの package.json に yaml が入っていれば、npm ci のあとはそれで読む（なくても動く）
+      # 依存なしで動く（npm ci はいらない）
       - run: node feature-docs/check.mjs
 
   help:

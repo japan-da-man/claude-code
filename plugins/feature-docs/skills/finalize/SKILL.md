@@ -3,7 +3,7 @@ name: finalize
 description: 実装が終わった統合ブランチ（feature/REQ-xxxx）で、要件定義書の差分を機能マスタに反映し、ヘルプの項目と changelog を書き、新しいアクターと用語を足し、設計書の pending と未実装の印を外し、要件定義書を implemented にして、レビューガイドつきの最後の PR（統合ブランチ → main）を出す。PR のマージが最終レビュー。/feature-docs:build のあと、または「REQ-xxxx を仕上げて」「/feature-docs:finalize REQ-xxxx」と言われたときに使う。
 argument-hint: "<REQ-xxxx>"
 model: opus
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feature-docs/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git switch *) Bash(git merge origin/*) Bash(git add *) Bash(git commit *) Bash(git diff*) Bash(git log *) Bash(gh pr list *) Bash(gh pr view *) Bash(date *) Bash(mkdir -p *)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feature-docs/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git remote get-url *) Bash(git switch *) Bash(git merge *) Bash(git pull *) Bash(git push *) Bash(git add *) Bash(git commit *) Bash(git diff*) Bash(git log *) Bash(gh pr *) Bash(gh api *) Bash(npm *) Bash(npx *) Bash(pnpm *) Bash(yarn *) Bash(bun *) Bash(maestro *) Bash(date *) Bash(mkdir -p *)
 ---
 
 # feature-docs:finalize: 機能マスタを更新して最後の PR へ
@@ -14,14 +14,16 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feat
 
 機能マスタは **今提供している事実** の記録で、ヘルプ AI のソースになる。実装した結果を見て書く（要件定義書や設計書を写すのではない）。
 
+`/feature-docs:build` から続けて実行しているとき（人が見ていないとき）は、AskUserQuestion で止まらない。分からないことは次の既定で進め、最後の PR の「見てほしいところ」に、既定で決めたこととして書く：バージョンは今の `expo.version`（なければ `package.json` の version）、`status` は `beta`。
+
 GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not available` で失敗したら、`${CLAUDE_PLUGIN_ROOT}/GITHUB.md` の REST の書き方に切り替える。
 
 ## 1. 準備
 
-- 対象のリポジトリは `git rev-parse --show-toplevel`。統合ブランチ `feature/REQ-xxxx` に switch し、`git fetch -q origin` のあと `git merge origin/main` で最新にする。
+- 対象のリポジトリは `git rev-parse --show-toplevel`。統合ブランチ `feature/REQ-xxxx` に switch し、`git fetch -q origin` のあと `git pull` と `git merge origin/main` で最新にして push する。統合ブランチへの push が保護やルールセットで拒否されたら、ここから先のコミットは短いブランチ `feature/REQ-xxxx--finalize` に積み、最後の PR はそのブランチから main に出す。
 - `gh pr list --base feature/REQ-xxxx --state open` で、統合ブランチに向いた PR が残っていないことを確かめる。残っていれば、マージするか閉じるまで待つ。
 - このリポジトリの確かめ方（型・lint・テスト、あれば Maestro）が統合ブランチで通ることを確かめる。
-- バージョンを決める：アプリのバージョン（Expo なら `app.json` / `app.config.*` の `expo.version`、なければ `package.json`）。この機能が出るバージョンが分からなければ AskUserQuestion で聞く。
+- バージョンを決める：アプリのバージョン（Expo なら `app.json` / `app.config.*` の `expo.version`、なければ `package.json`）。この機能が出るバージョンが分からなければ AskUserQuestion で聞く（build から続けているときは上の既定）。
 - 日付は `date +%Y-%m-%d` で取る。
 
 ## 2. 機能マスタ
@@ -33,7 +35,7 @@ GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not av
 - どちらも：
   - `requirements` に REQ-xxxx を足す。`design_doc` に設計書のパス。
   - `actors`・`jobs`・`scenes`・`user_flows`・`limits` は、**実装した結果** で書く。利用者に見えることだけ（「サーバーに保存」「409 を返す」は書かない。「上限のメッセージが出る」と書く）。
-  - `status`：フィーチャーフラグで一部の利用者にだけ出すなら `beta`、全員なら `ga`。分からなければ聞く。
+  - `status`：フィーチャーフラグで一部の利用者にだけ出すなら `beta`、全員なら `ga`。分からなければ聞く（build から続けているときは `beta`）。
   - `since_version`（新しい機能のとき）、`changelog` に `{version, date, change}` を足す（change は利用者向けの言葉で）、`last_reviewed` に今日。
   - `help`：`summary`（1〜2 文）、`how_to`（手順）、`limitations`（できないこと。ないなら []）、`faq`、`troubleshooting`、`synonyms`（ユーザーの呼び方。`glossary.yaml` の synonyms も見る）、`visibility`（ふつうは public）、`escalation`。ヘルプ AI はここしか読まないので、聞かれそうなことに答えられるように書く。
 - 裏側の項目（api・data・feature_flag・events・screens など）は機能マスタに書かない（チェッカーが落とす）。

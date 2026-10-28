@@ -3,7 +3,7 @@ name: requirements
 description: 企画（やりたいこと、Issue）を、AI との一問一答で要件定義書（docs/requirements/REQ-xxxx-*.md）にまとめ、要件の PR を作る。既存の機能マスタ・アクター・用語を読んでから聞き、既存の機能への変更は差分で書く。PR のマージが要件の承認。「〇〇できるようにしたい」「この企画を要件定義して」「/feature-docs:requirements <企画>」と言われたとき、進行中の要件定義を続けるときに使う。設計とコードは書かない。
 argument-hint: "<やりたいこと> | <Issue 番号か URL> | <REQ-xxxx>"
 model: opus
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feature-docs/check.mjs*) Bash(git fetch *) Bash(git pull --ff-only*) Bash(git status*) Bash(git rev-parse *) Bash(git switch *) Bash(git add *) Bash(git commit *) Bash(git diff*) Bash(git log *) Bash(gh issue view *) Bash(date *)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node feature-docs/check.mjs*) Bash(git fetch *) Bash(git pull --ff-only*) Bash(git status*) Bash(git rev-parse *) Bash(git switch *) Bash(git add *) Bash(git commit *) Bash(git diff*) Bash(git log *) Bash(gh issue view *) Bash(date *) Bash(git remote get-url *) Bash(git push *) Bash(gh pr *) Bash(gh api *)
 ---
 
 # feature-docs:requirements: 企画から要件定義書へ
@@ -21,10 +21,10 @@ GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not av
 - 対象のリポジトリは `git rev-parse --show-toplevel`。`feature-docs/config.json` がなければ、先に `/feature-docs:init` を案内して終える。
 - `git fetch -q origin`。手元の main が遅れていれば、pull してよいか尋ねて `git pull --ff-only`。
 - 引数で分ける：
-  - **`REQ-xxxx`**：その要件定義書を再開する。`status` が `draft` でなければ、承認済みの要件は書き換えないことを伝える（変えたいなら、新しい要件定義書を起こして `supersedes` で参照する）。ブランチ `req/REQ-xxxx-*` があれば `git switch` する。
+  - **`REQ-xxxx`**：その要件定義書を再開する（レビューの指摘を直すときも）。ブランチ `req/REQ-xxxx-*` があれば `git switch` して `git pull` する。承認済みかどうかは **origin/main の版** で決める（`git show origin/main:<path>` が `approved` 以降なら承認済み）。承認済みなら書き換えないことを伝える（変えたいなら、新しい要件定義書を起こして `supersedes` で参照する）。PR の中で `approved` にしてあるだけ（まだマージされていない）なら、同じブランチで直して push する。PR が開いていれば、レビューのコメントを読んでから直す。
   - **Issue の番号か URL**：`gh issue view <番号> --json number,title,body,author,comments` で読み、企画として使う。
   - **それ以外**：その文を企画の原文として使う。空なら、何をしたいかを尋ねる。
-- 新しく始めるときは、`node feature-docs/check.mjs next-id req` で番号を取り、英語 2〜4 語の名前（kebab-case）を決めて、`git switch -c req/REQ-xxxx-<name> origin/main` を作る。
+- 新しく始めるときは、`git fetch -q origin` のあとに `node feature-docs/check.mjs next-id req` で番号を取り（作業ツリーと、git のすべてのブランチ（origin のものも）の番号を避ける）、英語 2〜4 語の名前（kebab-case）を決めて、`git switch -c req/REQ-xxxx-<name> origin/main` を作る。
 
 ## 2. 前提を読む
 
@@ -56,7 +56,7 @@ GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not av
 | 8 | 画面と状態 | 画面の一覧と状態（あり・空・読み込み中・エラー・オフライン）。**見た目は決めない**（設計の段階で UI 案を作る） |
 | 9 | 制約 | 期限、対象のプラン、規約・法務 |
 
-新しい機能には、ここで番号を振る：`node feature-docs/check.mjs next-id feature`（要件定義書の `features.new` にある番号も数えるので、ほかの企画とぶつからない）。
+新しい機能には、ここで番号を振る：`node feature-docs/check.mjs next-id feature`（機能マスタ・設計書と、要件定義書の本文にある番号を、すべてのブランチから数える。まだ push していないほかの人の企画とはぶつかることがあるが、そのときは後からマージする PR の CI が重複で落ちるので、番号を振り直す）。
 
 ## 4. 書く
 

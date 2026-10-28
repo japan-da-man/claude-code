@@ -5,7 +5,7 @@
 //   node cli.mjs next-id <repo> req|feature              次の番号
 //   node cli.mjs export-help <repo> [--out <dir>] [--force]
 //   node cli.mjs template <name>                         テンプレートのパス（requirements / design / feature / tracking / adr）
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CONFIG_PATH, DEFAULT_CONFIG, exportHelp, loadConfig, nextId, runCheck, status as stages } from './check.mjs'
@@ -155,7 +155,15 @@ function main(argv) {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const isMain = () => {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+
+if (isMain()) {
   try {
     process.exitCode = main(process.argv.slice(2))
   } catch (e) {

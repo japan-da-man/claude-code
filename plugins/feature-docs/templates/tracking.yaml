@@ -3,7 +3,7 @@
 feature: F-000
 events:
   - name: <object_action>
-    trigger: <いつ送るか（例: 保存がサーバーで成功したとき）>
+    trigger: <いつ送るか（例：保存がサーバーで成功したとき）>
     properties:
       - name: <property>
         type: string             # string / number / boolean

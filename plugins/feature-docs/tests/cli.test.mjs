@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { install, status, templatePath, VENDORED } from '../scripts/cli.mjs'
@@ -78,4 +78,37 @@ test('テンプレートはチェッカーで読める', () => {
   assert.ok(des.headings.includes('要件（EARS）'))
   assert.ok(des.headings.includes('受け入れ条件'))
   assert.deepEqual(des.data.pending, [])
+})
+
+test('シンボリックリンク越しに起動しても、チェックを実行する（CI が黙って通らない）', () => {
+  const repo = makeRepo()
+  install(repo)
+  writeFiles(repo, { 'features/F-001-x.yaml': 'id: F-001\nstatus: planned\n' })
+  const link = join(makeRepo(), 'link')
+  symlinkSync(repo, link)
+  const r = spawnSync(process.execPath, [join(link, VENDORED), link], { encoding: 'utf8' })
+  assert.equal(r.status, 1, r.stdout + r.stderr)
+  assert.match(r.stdout, /誤り/)
+})
+
+test('テンプレートを埋めると、各段階のチェックを通る', () => {
+  const fill = (text) => text.replace(/<[^<>\n]*>/g, 'x')
+  const repo = makeRepo()
+  install(repo)
+  const reqText = fill(readFileSync(join(TEMPLATES, 'requirements.md'), 'utf8'))
+    .replace(/^id: .*$/m, 'id: REQ-0001')
+    .replace(/^  new: .*$/m, '  new: [F-001]')
+    .replace(/^  changed: .*$/m, '  changed: []')
+    .replace(/^actors: .*$/m, 'actors: [A-member]')
+    .replace(/^ui: .*$/m, 'ui: none')
+  const desText = fill(readFileSync(join(TEMPLATES, 'design.md'), 'utf8')).replace(/^feature: .*$/m, 'feature: F-001')
+  for (const st of ['draft', 'approved']) {
+    writeFiles(repo, { 'docs/requirements/REQ-0001-fav.md': reqText.replace(/^status: .*$/m, `status: ${st}`) })
+    assert.deepEqual(runCheck(repo).findings.filter((f) => f.level === 'error'), [], st)
+  }
+  writeFiles(repo, {
+    'docs/requirements/REQ-0001-fav.md': reqText.replace(/^status: .*$/m, 'status: designed'),
+    'docs/design/F-001-fav.md': desText.replace(/^pending: .*$/m, 'pending: [REQ-0001]').replace(/^tracking: .*$/m, 'tracking: null').replace(/^ui: .*$/m, 'ui: []'),
+  })
+  assert.deepEqual(runCheck(repo).findings.filter((f) => f.level === 'error'), [], 'designed')
 })
