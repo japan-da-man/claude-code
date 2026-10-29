@@ -110,6 +110,9 @@ check が読む形は、ファイルの種類ごとに 1 つだけにする。
 
 `update` で上の段を変えるとき、変えるものから下へたどって、影響を受けるものを一覧にする（`cli.mjs trace --from P1` で、P1 → D → トークン・部品・パターン・文言 → 出力のファイル）。部品から出力のファイルへは、部品の名前から決まりでたどる（SwiftUI は `<code>/Components/<outputs.swiftui の名前>.swift`、Expo は `<code>/components/<outputs.expo の名前>.tsx`、HTML は `design-system/html/components/<name>.html`）。人はこの一覧を見て、どこまで直すかを決める。
 
+- 合成型の値（typography・shadow など）の中の別名もたどる（基本の書体を変えると、文字のトークンがすべて出る）。深さは、いちばん短い段数。
+- 1 段階目では、部品の仕様が意味の段のトークンを名前で指していないので、トークンから部品へはたどれない。トークンを起点にした一覧には、そのことを `note` で添え、update のスキルは部品への影響を `$description` と部品の仕様から拾う。部品の仕様にトークンの一覧を持たせるかは、出力を作る段階で決める。
+
 ## 6. 全体の流れ
 
 ```text
@@ -144,7 +147,7 @@ check が読む形は、ファイルの種類ごとに 1 つだけにする。
   古くなったもの（生成したコード、写した check.mjs と shoot.mjs、Design System）を一覧にする。直さない
 ```
 
-段ごとの進み具合は `design-system.json` の `stages` に書く（`pending`・`approved`）。init はこれを見て続きから始める。上の段を承認し直したら、その下の段は `pending` に戻し、影響の一覧（5節）を見ながら順に承認し直す。
+段ごとの進み具合は `design-system.json` の `stages` に書く（`pending`・`approved`）。init はこれを見て続きから始める。上の段を承認し直したら、その下の段は `pending` に戻し、影響の一覧（5節）を見ながら順に承認し直す。update は、人の承認をもらってから段を記録する（記録の前に直しに戻っても、段の状態が崩れないように）。`status` の `next` は、この版で進められる ① から ④ の中で、まだ承認されていない最初の段（`outputs` は数えない）。
 
 ## 7. 置き場所
 
@@ -218,7 +221,7 @@ design-system/
 ```
 
 - **2 段**: 基本の段は最上位の `primitive` グループの下に、生の値で置く。意味の段（役割の名前）は、それ以外の最上位のグループ（`color`・`font`・`space`・`radius`・`shadow`・`duration`・`easing`）に置く。段はこの置き場所だけで見分ける。部品の段は、部品ごとに色を変える必要が出たら足す。アプリのコードとチェックが許すのは意味の段だけ。
-- **基本の段の値**: shadcn/ui のときは Tailwind のスケールに合わせる（色は 50〜950 の段）。HIG のときは、色は HIG のシステムの色の値と、独自の色（ブランドの色など）を、ライトとダークの組で持つ。余白はどちらも 4px 刻みで、`space.N` は N × 4px（Tailwind と同じ。HIG には余白の刻みがない）。
+- **基本の段の値**: 色は、役割ごとにライトとダークの組で持つ（`primitive.color.<役割>.light`・`.dark`。意味の段の役割は、その組を別名で指す）。shadcn/ui のときの値は、shadcn/ui の初期値（neutral。Tailwind の 50〜950 の段の値から来ている）を sRGB にしたもので、基準に届かないものだけ濃くした（`muted-foreground` と、フォーカスの輪の `ring`）。HIG のときは、HIG のシステムの色の値と、独自の色（ブランドの色など）。余白はどちらも 4px 刻みで、`space.N` は N × 4px（Tailwind と同じ。HIG には余白の刻みがない）。
 - **意味の段の必ずある役割**（ひな形の部品が使う）:
 
   | | HIG | shadcn/ui ＋ Tailwind |
@@ -445,6 +448,8 @@ plugins/product-design/
   tests/                       node --test
 ```
 
+- `install` は、`design-system.json` を新しく作るときだけひな形を置く。2 回目からは `check.mjs` を写し直すだけで、アプリにないひな形は `available` に並べ、`--add` で名前を挙げたものだけ置く（アプリで消した部品の仕様や文書を、黙って戻さないため）。
+
 ## 16. 今の design-system からの移行
 
 ### プラグイン
@@ -452,7 +457,7 @@ plugins/product-design/
 - `plugins/product-design/` を新しく作る。`plugins/design-system/` は、v1 からの移行（3 段階目）と、使う側の対応が済むまで残し、そのあとで消す。それまでのあいだ、init 済みのアプリは今のプラグインで update できる。
 - 直す登録:
   - `.claude-plugin/marketplace.json`: `product-design` を足す。`design-system` は消すときに外す。
-  - `plugins/japan-da-man-mods/.claude-plugin/plugin.json`: `dependencies` の `design-system` を `product-design` に替える。
+  - `plugins/japan-da-man-mods/.claude-plugin/plugin.json`: `dependencies` に `product-design` を足し、説明の一覧にも足す（2026-10-30 に済み）。`design-system` は、古いプラグインを消すときに外す。
   - `README.md`: プラグインの一覧。
 - **古いプラグインに、v2 のアプリを書き換えさせない**。古いプラグインの `cli.mjs install` は、設定の版を見ずに `check.mjs`・`shoot.mjs` を v1 のもので上書きし、ない部品のひな形も置き直す（`plugins/design-system/scripts/cli.mjs:56`）。v2 に移したアプリでこれが動くと、v1 の check は DTCG の `tokens.json` を読めずに終了コード 1 を返し、check を実行するゲートがすべての機能で落ちる。使う側は、古いプラグインを残すあいだも `/design-system:update` を案内しうる。そこで、product-design の 1 段階目と一緒に、古いプラグインの版を 1 つ出す。
   - `cli.mjs` は、`design-system.json` の `version` が 2 以上なら、`install`・`tokens`・`status`・`screenshot`・`artifact-*` を断り、`/product-design:*` を案内して終了コード 2 で終わる。
@@ -523,7 +528,7 @@ plugins/product-design/
 
 - **shadcn/ui を土台にするときの文字の段**（2026-10-30 に決定）。shadcn/ui には文字の段がないので、HIG の Dynamic Type の名前に揃えた。Android も同じくらい大事なアプリで Material 3 の段が要るようになったら、足すかどうかを決め直す。
 - **shadcn/ui の名前と HIG の値の出どころ**。shadcn/ui の名前は 2026-10-30 に公式の資料と突き合わせた（8節）。HIG のひな形のシステムの色の値（背景・区切り・塗り・薄い文字）は記憶に基づく値で、iOS の版で変わっていることもありうる。3 段階目で HIG の値の表を作るときに、シミュレーターで書き出した値と比べ直す。
-- **DTCG のテーマ**。DTCG 2025.10 の Format の仕様はテーマの切り替えを持たない。テーマを扱う Resolver の仕様が、2025.10 と一緒に安定版として出ているかもしれない（要確認）。最初の版は、作りが簡単な `$extensions` の `modes` で始める。1 段階目に Resolver の状態と道具の対応を確かめ、使えるなら移す。`modes` のままだと、ほかの DTCG の道具はダークの値を読まない。
+- **DTCG のテーマ**。DTCG 2025.10 の Format の仕様はテーマの切り替えを持たない。テーマを扱う Resolver の仕様が、2025.10 と一緒に安定版として出ているかもしれない（要確認）。最初の版は、作りが簡単な `$extensions` の `modes` で始める。1 段階目では確かめきれなかったので、2 段階目（Claude の Design System に写すとき）に、Resolver の状態と道具の対応を確かめ、使えるなら移す。`modes` のままだと、ほかの DTCG の道具はダークの値を読まない。
 - **NativeWind と色の書き方**。今の shadcn/ui は Tailwind v4 と OKLCH を使うが、NativeWind v4 は Tailwind v3 系で、React Native が `oklch()` を解釈できるかもわからない。だからトークンは sRGB で持ち、出力ごとに書き方を変える（10節）。NativeWind の版は 4 段階目に決める。
 - **Design System のトークンの形**。v2 で DTCG に変えたので、写すときに変換が要る。Design System が受け付ける形は、2 段階目に確かめる。
 - **HIG の値の写し**。HTML の出力で iOS をまねるとき、システムの色の値は HIG に載っている値を書き写すので、OS の版で値が変わるとずれる。SwiftUI の出力はシステムの色をそのまま使うので、ずれは HTML の側にだけ出る。

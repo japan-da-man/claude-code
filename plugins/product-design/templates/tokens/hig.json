@@ -118,6 +118,10 @@
         {
           "fg": "on-tint",
           "bg": "tint"
+        },
+        {
+          "fg": "on-tint",
+          "bg": "destructive"
         }
       ]
     }

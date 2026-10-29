@@ -17,7 +17,7 @@ outputs: { swiftui: DSButton, expo: Button, html: button }
 
 ## 種類
 
-shadcn/ui のボタンの種類に合わせる。`default`（画面でいちばん主な操作。1 画面に 1 つまで）・`secondary`（それ以外の操作）・`destructive`（削除など取り消せない操作。押したら確認で確かめる）・`outline`（枠だけ）・`ghost`（目立たせない操作）・`link`（文の中の操作）。
+shadcn/ui のボタンの種類に合わせる。`default`（画面でいちばん主な操作。1 画面に 1 つまで）・`secondary`（それ以外の操作）・`destructive`（削除など取り消せない操作。押したら確認で確かめる。文字は `primary-foreground`）・`outline`（枠だけ）・`ghost`（目立たせない操作）・`link`（文の中の操作）。
 
 ## 状態
 
