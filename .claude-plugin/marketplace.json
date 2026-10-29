@@ -66,6 +66,11 @@
       "description": "[skills] Build and grow an app's design system that people decide: read the current look from the code, settle tokens, components, copy rules and screen patterns one question at a time, generate SwiftUI parts and a catalog screen, check the code mechanically and mirror it to a Design System artifact"
     },
     {
+      "name": "product-design",
+      "source": "./plugins/product-design",
+      "description": "[skills] Build an app's design system from its product principles down, keeping every rule traceable: product principles, design principles, foundations and DTCG tokens, platform-neutral component specs, patterns and copy, decided one question at a time and checked mechanically (outputs for HTML, SwiftUI and Expo come in later stages)"
+    },
+    {
       "name": "feature-docs",
       "source": "./plugins/feature-docs",
       "description": "[skills] Keep requirements, design docs and a feature master as separate sources of truth in the repo, approved by merging PRs: interview a request into a requirements doc, design it with UI mockups, build it on an integration branch, then update the feature master and help fields in one final PR. A bundled checker keeps them consistent in CI and exports help-AI knowledge from the feature master only"

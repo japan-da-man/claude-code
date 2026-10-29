@@ -2,7 +2,7 @@
 
 プロダクトの原則からデザインシステムまでを、根拠をたどれる形で一気通貫に作り、育てるための Claude Code プラグイン `product-design` の設計。
 
-- 状態: 設計（2026-10-28 に一問一答で方針を合意。2026-10-29 にレビューの指摘を反映。まだ実装していない）
+- 状態: 1 段階目（17節）を実装（2026-10-30）。2 段階目からは設計のまま（2026-10-28 に一問一答で方針を合意。2026-10-29 にレビューの指摘を反映）
 - 今の [design-system](../design-system/DESIGN.md) を作り直したもの。トークン・部品・チェック・カタログ・Artifact への写しは使い回し、段と根拠のつながりを足し、特定の使う側（factory など）への言及をなくす
 - 出力: Claude Design 用の HTML はいつも作る。アプリ用は SwiftUI か Expo（React Native）を、実行のときに選ぶ
 
@@ -75,8 +75,8 @@ check が読む形は、ファイルの種類ごとに 1 つだけにする。
 | ファイル | 書き方 |
 | :- | :- |
 | `docs/product/principles.md` | `### P1 …` の見出しに ID |
-| `design-system/principles.md` | `### D1 …` の見出しに ID。見出しの直後の行に `根拠: P1, P2` |
-| `foundations.md`・`patterns.md`・`copy.md` | 決まりごとの `##` の見出しの直後の行に `根拠: D1, D2`（文書の頭には書かない） |
+| `design-system/principles.md` | `### D1 …` の見出しに ID。見出しの直後の行（空行は飛ばす）に `根拠: P1, P2` |
+| `foundations.md`・`patterns.md`・`copy.md` | 決まりごとの `##` の見出しの直後の行（空行は飛ばす）に `根拠: D1, D2`（文書の頭には書かない） |
 | `components/*.md` | ファイルの先頭のメタデータに `from: [D1, D3]` |
 | `tokens.json` | 意味の段のトークンの `$extensions` に `from`。グループに書けば、中のトークンが受け継ぐ（8節） |
 
@@ -114,12 +114,12 @@ check が読む形は、ファイルの種類ごとに 1 つだけにする。
 
 ```text
 /product-design:init        アプリごとに 1 回（途中で止めて、あとから続けられる）
-  0. 準備: 対象のリポジトリ。design-system.json があれば、続きから始めるか update を勧める。
-     なければ design-system.json を作り、stages をすべて pending にする
+  0. 準備: 対象のリポジトリ。design-system.json があれば、続きから始めるか update を勧める
   1. アプリを調べる: 出すプラットフォームと出力（10節）、今のコード、今の文書（README、docs/）
-  2. ① プロダクトの原則: あれば読む。なければ一問一答で作る → 承認
-  3. ② デザインの原則: ① から下書きを作り、一問一答で決める → 承認
-  4. 土台を選ぶ（4節）
+  2. 土台を選び（4節）、ひな形を置く（design-system.json を作り、stages をすべて pending にする。
+     ひな形が土台で変わるので、原則より先に選ぶ。土台は出すプラットフォームでほぼ決まる）
+  3. ① プロダクトの原則: あれば読む。なければ一問一答で作る → 承認
+  4. ② デザインの原則: ① から下書きを作り、一問一答で決める → 承認
   5. ③ 基礎とトークン: 今のコードと土台から下書き → 一問一答 → 承認
   6. ④ 部品・パターン・文言: ひな形と今のコードから下書き → 一問一答 → 承認。
      README.md・CHANGELOG.md もここで作る
@@ -218,18 +218,18 @@ design-system/
 ```
 
 - **2 段**: 基本の段は最上位の `primitive` グループの下に、生の値で置く。意味の段（役割の名前）は、それ以外の最上位のグループ（`color`・`font`・`space`・`radius`・`shadow`・`duration`・`easing`）に置く。段はこの置き場所だけで見分ける。部品の段は、部品ごとに色を変える必要が出たら足す。アプリのコードとチェックが許すのは意味の段だけ。
-- **基本の段の値**: shadcn/ui のときは Tailwind のスケールに合わせる（色は 50〜950 の段）。HIG のときは、色は HIG のシステムの色の値と、独自の色（ブランドの色など）を、ライトとダークの組で持つ。余白はどちらも 4px 刻み（HIG には余白の刻みがない）。
+- **基本の段の値**: shadcn/ui のときは Tailwind のスケールに合わせる（色は 50〜950 の段）。HIG のときは、色は HIG のシステムの色の値と、独自の色（ブランドの色など）を、ライトとダークの組で持つ。余白はどちらも 4px 刻みで、`space.N` は N × 4px（Tailwind と同じ。HIG には余白の刻みがない）。
 - **意味の段の必ずある役割**（ひな形の部品が使う）:
 
   | | HIG | shadcn/ui ＋ Tailwind |
   | :- | :- | :- |
   | 色（土台の名前） | `tint`・`label`・`secondary-label`・`tertiary-label`・`placeholder-text`・`separator`・`fill`・`secondary-fill`・`system-background`・`secondary-system-background`・`system-grouped-background`・`secondary-system-grouped-background` | `background`/`foreground`・`card`/`card-foreground`・`popover`/`popover-foreground`・`primary`/`primary-foreground`・`secondary`/`secondary-foreground`・`muted`/`muted-foreground`・`accent`/`accent-foreground`・`destructive`・`border`・`input`・`ring` |
   | 色（独自に足すもの） | `on-tint`（塗りの上の文字）・`destructive`・`warning`・`success`・`info` | `success`/…・`warning`/…・`info`/… |
-  | 文字 | Dynamic Type の 11 段（`large-title`・`title-1`・`title-2`・`title-3`・`headline`・`body`・`callout`・`subheadline`・`footnote`・`caption-1`・`caption-2`） | 18節の未解決の点 |
+  | 文字 | Dynamic Type の 11 段（`large-title`・`title-1`・`title-2`・`title-3`・`headline`・`body`・`callout`・`subheadline`・`footnote`・`caption-1`・`caption-2`） | 同じ（2026-10-30 に決定。iOS と名前が揃い、iOS の出力で OS の文字の大きさの設定についていきやすい） |
   | 余白・角丸 | `space.1`〜`space.8`、`radius.sm`・`radius.md`・`radius.lg` | 同じ（角丸は shadcn/ui の `radius` から作る） |
   | 影・動き | `shadow.sm`・`shadow.md`、`duration.fast`・`duration.normal`、`easing.standard` | 同じ |
 
-  shadcn/ui の `destructive-foreground` は、Tailwind v4 版の shadcn/ui の初期の CSS から外れているはずなので入れない。1 段階目に、今の shadcn/ui の名前と突き合わせる（18節）。
+  shadcn/ui の名前は、2026-10-30 に公式の Theming のページ（Tailwind v4、neutral）の `:root` の色の変数と突き合わせた。`destructive-foreground` は今の初期の CSS にないので入れない。`chart-*`・`sidebar-*` は必ずある役割にしない（使うアプリが足す）。角丸は `--radius`（0.625rem）から sm・md・lg を 6・8・10px で作る。
 - **文字のトークン**: DTCG の `typography` の合成型に、`$extensions` の `textStyle`（Dynamic Type の段の名前）を必ず付ける。SwiftUI は、独自のフォントや大きさでも `relativeTo:` でこの段に合わせ、OS の文字の大きさの設定についていく（v1 の `textStyle` と同じ役目）。shadcn/ui の土台でも、iOS の出力のために付ける。
 - **ダークモード**: ダークの値は `$extensions` の `modes` に書く。中の別名も、下の値の検証（参照先が実在する、循環しない）の対象にする。DTCG の一般の道具は `$extensions` の中の別名を解決しないので、ほかの道具に渡すとダークの値は失われる（18節）。
 - **SwiftUI のシステムの色**: `$extensions` の `swiftui.system` に名前を書くと、`Tokens.swift` はシステムの色をそのまま使い、OS の切り替えを活かす。書ける名前は UIKit の意味の色の名前（`label`・`secondaryLabel`・`separator`・`systemFill`・`systemBackground`…。`Color(uiColor:)` で包む）と `accentColor` だけ。
@@ -366,7 +366,7 @@ UI の案をつくる（Claude Design、仕様づくりの案出しなど）
 - **変更履歴**: update のたびに `CHANGELOG.md` に、版、日付、変えたこと、根拠（どの ID）、影響を受けたファイルを書く。
 - **廃止**:
   - トークンは DTCG の `$deprecated`（理由と置き換え先の文字列）、部品は `status: deprecated` と置き換え先、原則は `## 廃止`（5節）。
-  - check は、廃止されたものを使うコードや決まりを `deprecated` と `warnings` に出す（警告。違反にはしない）。
+  - check は、廃止されたものを使うコードや決まりを `deprecated` に出す（`warnings` とは分ける。どちらも違反にはしない）。
   - 次のメジャー版で消す。
 
 ## 14. 設定 `design-system/design-system.json`（v2）
@@ -411,8 +411,9 @@ UI の案をつくる（Claude Design、仕様づくりの案出しなど）
 - `check.command`: 使う側が実行するコマンド。
   - **終了コード 1 になるのは、アプリのコード（各出力の `sources`）の違反だけ**。機能を作る人が直せるものに限る。
   - デザインシステムの中の不備（トークンの検証、`trace-*` の違反）・古くなったもの・未決の候補は、`--json` の欄に出すだけで、終了コードには効かせない。
-  - `--strict` を付けると、デザインシステムの中の不備でも 1 になる（init と update の確かめに使う）。
-  - `--json` の形: `{ ok, violations, ds_errors, warnings, stale, deprecated, candidates, allowed }`。
+  - `--strict` を付けると、デザインシステムの中の不備（`ds_errors`）でも 1 になる（init と update の確かめに使う）。警告・廃止・古くなったもの・未決の候補は、`--strict` でも数えない。
+  - 設定がない、`version` が 2 でない、`tokens.json` が読めないなど、チェックが成り立たないときは 2。
+  - `--json` の形: `{ ok, violations, ds_errors, warnings, stale, deprecated, candidates, allowed, files }`。`ok` は終了コード 0 と同じ意味。`candidates` は `open` の候補の `{ file, screens }` の一覧。
 - `check.exclude`: v1 と同じく、チェックから外すファイル。
 - 許可のコメントの書き方 `// design-system: allow <決まり>` は v1 から変えない（今のアプリのコメントが効き続けるように）。
 - `platform` と `ios`: v1 を読む道具のために残す。`outputs.swiftui` があるあいだ、update は `outputs.swiftui` を書き換えるたびに、同じ値で `ios` を書き直す（正は `outputs.swiftui`）。
@@ -430,7 +431,7 @@ plugins/product-design/
     check/SKILL.md             /product-design:check
   scripts/
     check.mjs                  トークンの検証、根拠のチェック、各出力のコードのチェック（1 ファイルで完結。アプリに写す）
-    cli.mjs                    スキルから呼ぶ CLI（install / tokens / trace / status / screenshot / migrate / artifact-stage / artifact-done）
+    cli.mjs                    スキルから呼ぶ CLI（1 段階目は install / stage / trace / status。tokens / screenshot / migrate / artifact-stage / artifact-done は出力とともに足す）
     shoot.mjs                  スクリーンショット（アプリに写す）
     outputs/                   出力ごとの生成（html.mjs / swiftui.mjs / expo.mjs）
   templates/
@@ -438,8 +439,9 @@ plugins/product-design/
     docs/                      ②〜④ の文書のひな形
     tokens/hig.json            土台ごとの最初のトークン（コントラストを調べる組を含む）
     tokens/shadcn.json
-    components/                部品の仕様のひな形
-    html/ swiftui/ expo/       出力ごとの部品とカタログのひな形
+    components/                部品の仕様のひな形（<名前>.<土台>.md があれば、その土台ではそれを <名前>.md として使う）
+    candidates/README.md       docs/design-candidates/ の書き方
+    html/ swiftui/ expo/       出力ごとの部品とカタログのひな形（2 段階目から）
   tests/                       node --test
 ```
 
@@ -510,7 +512,7 @@ plugins/product-design/
 
 ## 17. 作る順番
 
-1. **土台**: `plugins/product-design/` を作る（古いプラグインは残し、v2 のアプリを断る版を同時に出す。16節）。①〜④ の段（ひな形と一問一答）、DTCG のトークンと検証、根拠のチェックと影響の一覧（5節）、候補のファイル、版と CHANGELOG。プラットフォームに依らない部分。shadcn/ui の名前の突き合わせと、文字の段の決定（18節）もここで行う。
+1. **土台**（2026-10-30 に実装）: `plugins/product-design/` を作る（古いプラグインは残し、v2 のアプリを断る版を同時に出す。16節）。①〜④ の段（ひな形と一問一答）、DTCG のトークンと検証、根拠のチェックと影響の一覧（5節）、候補のファイル、版と CHANGELOG。プラットフォームに依らない部分。shadcn/ui の名前の突き合わせと、文字の段の決定（8節）もここで行った。`swiftui.system` の値を HIG の値の表と比べる処理は、HIG の値の表が要るので 3 段階目に回した（1 段階目は書ける名前だけを調べる）。
 2. **HTML の出力**と、Claude の Design System への写し（いつも要るので先に作る）。Design System が受け付けるトークンの形を確かめる。
 3. **SwiftUI の出力**を今のものから作り直し、v1 からの移行を作る。使う側（16節の表）の対応が済んだら、古いプラグインを消す。
 4. **Expo の出力**（`tokens.ts`・`global.css`・`tailwind.config.js`・React Native Reusables を土台にした部品・カタログ・TSX のチェック）。NativeWind の版とカタログの開き方を決め、react-native-web で部品を HTML の見本に使えるかを確かめる。
@@ -519,8 +521,8 @@ plugins/product-design/
 
 ## 18. リスクと未解決の点
 
-- **shadcn/ui を土台にするときの文字の段**。shadcn/ui には文字の段がない。HIG の Dynamic Type の名前（iOS が中心のアプリ）と、Material 3 の文字の段（Android も同じくらい大事なアプリ）のどちらにするかを、1 段階目で決める。
-- **shadcn/ui の今の名前**。`destructive-foreground` が Tailwind v4 版で外れたことなど、8節の表は記憶に基づく。1 段階目に、今の shadcn/ui の CSS と突き合わせる。
+- **shadcn/ui を土台にするときの文字の段**（2026-10-30 に決定）。shadcn/ui には文字の段がないので、HIG の Dynamic Type の名前に揃えた。Android も同じくらい大事なアプリで Material 3 の段が要るようになったら、足すかどうかを決め直す。
+- **shadcn/ui の名前と HIG の値の出どころ**。shadcn/ui の名前は 2026-10-30 に公式の資料と突き合わせた（8節）。HIG のひな形のシステムの色の値（背景・区切り・塗り・薄い文字）は記憶に基づく値で、iOS の版で変わっていることもありうる。3 段階目で HIG の値の表を作るときに、シミュレーターで書き出した値と比べ直す。
 - **DTCG のテーマ**。DTCG 2025.10 の Format の仕様はテーマの切り替えを持たない。テーマを扱う Resolver の仕様が、2025.10 と一緒に安定版として出ているかもしれない（要確認）。最初の版は、作りが簡単な `$extensions` の `modes` で始める。1 段階目に Resolver の状態と道具の対応を確かめ、使えるなら移す。`modes` のままだと、ほかの DTCG の道具はダークの値を読まない。
 - **NativeWind と色の書き方**。今の shadcn/ui は Tailwind v4 と OKLCH を使うが、NativeWind v4 は Tailwind v3 系で、React Native が `oklch()` を解釈できるかもわからない。だからトークンは sRGB で持ち、出力ごとに書き方を変える（10節）。NativeWind の版は 4 段階目に決める。
 - **Design System のトークンの形**。v2 で DTCG に変えたので、写すときに変換が要る。Design System が受け付ける形は、2 段階目に確かめる。
