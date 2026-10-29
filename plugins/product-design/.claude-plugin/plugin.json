@@ -1,0 +1,6 @@
+{
+  "name": "product-design",
+  "description": "[skills] Build an app's design system from its product principles down, keeping every rule traceable: product principles, design principles, foundations and DTCG tokens, platform-neutral component specs, patterns and copy, decided one question at a time and checked mechanically (outputs for HTML, SwiftUI and Expo come in later stages)",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}
