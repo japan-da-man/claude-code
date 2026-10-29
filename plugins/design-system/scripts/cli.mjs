@@ -118,9 +118,25 @@ function option(args, name) {
 
 const USAGE = 'node cli.mjs install|tokens|status|screenshot|artifact-stage|artifact-done <repo> …'
 
+// v2 の design-system.json は product-design のもの。このプラグインで触ると check.mjs が v1 に戻るので、何もせずに断る。
+export class NewerConfigError extends Error {}
+
+function refuseNewerConfig(repo) {
+  const file = join(repo, CONFIG_PATH)
+  if (!existsSync(file)) return
+  let version
+  try {
+    version = JSON.parse(readFileSync(file, 'utf8')).version
+  } catch {
+    return
+  }
+  if (version >= 2) throw new NewerConfigError(`${file} は v${version}（product-design のデザインシステム）です。このプラグインでは変えません。/product-design:init・/product-design:update・/product-design:check を使ってください`)
+}
+
 export function main(argv) {
   const [command, repoArg, third] = argv
   const repo = repoArg && resolve(repoArg)
+  if (repo) refuseNewerConfig(repo)
   switch (command) {
     case 'install':
       return install(repo)
@@ -151,6 +167,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     if (r?.errors?.length || r?.ok === false) process.exitCode = 1
   } catch (e) {
     console.error(e.message)
-    process.exitCode = 1
+    process.exitCode = e instanceof NewerConfigError ? 2 : 1
   }
 }

@@ -20,7 +20,7 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node desi
 
 - 引数に `--local` があれば外し、9 の Artifact への写しをしない。
 - 対象のアプリのリポジトリを決める（`git rev-parse --show-toplevel`。アプリでなければ AskUserQuestion でパスを尋ね、以降は `cd <repo> && …` で実行する）。
-- `design-system/design-system.json` がなければ、先に `/design-system:init` を実行するよう伝えて終える。
+- `design-system/design-system.json` がなければ、先に `/design-system:init` を実行するよう伝えて終える。`version` が 2 以上なら product-design のデザインシステムなので、何も変えずに `/product-design:update` を勧めて終える（このプラグインで触ると、`check.mjs` が古い版に戻る）。
 - 変えたいことが空なら、何を変えたいか尋ねる。
 - `git fetch -q origin` のあと `git status -sb` を見て、遅れていれば pull してよいか尋ねる。
 

@@ -8,7 +8,7 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs status *) Bash(gi
 
 **このスキルではファイルを変えない。**
 
-対象のアプリのリポジトリ（`git rev-parse --show-toplevel`。`design-system/design-system.json` がなければ、パスを尋ねるか `/design-system:init` を勧める）で、次を実行する。
+対象のアプリのリポジトリ（`git rev-parse --show-toplevel`。`design-system/design-system.json` がなければ、パスを尋ねるか `/design-system:init` を勧める。`version` が 2 以上なら、`/product-design:check` を勧めて終える）で、次を実行する。
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs status <repo>
