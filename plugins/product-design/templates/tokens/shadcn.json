@@ -1,0 +1,1412 @@
+{
+  "$description": "product-design のひな形のトークン（DTCG 2025.10）。primitive は基本の段、それ以外は意味の段。",
+  "$extensions": {
+    "com.github.japan-da-man.product-design": {
+      "contrast": [
+        {
+          "fg": "foreground",
+          "bg": "background"
+        },
+        {
+          "fg": "card-foreground",
+          "bg": "card"
+        },
+        {
+          "fg": "popover-foreground",
+          "bg": "popover"
+        },
+        {
+          "fg": "primary-foreground",
+          "bg": "primary"
+        },
+        {
+          "fg": "secondary-foreground",
+          "bg": "secondary"
+        },
+        {
+          "fg": "muted-foreground",
+          "bg": "muted"
+        },
+        {
+          "fg": "muted-foreground",
+          "bg": "background"
+        },
+        {
+          "fg": "accent-foreground",
+          "bg": "accent"
+        },
+        {
+          "fg": "destructive",
+          "bg": "background"
+        },
+        {
+          "fg": "destructive",
+          "bg": "card"
+        },
+        {
+          "fg": "success-foreground",
+          "bg": "success"
+        },
+        {
+          "fg": "warning-foreground",
+          "bg": "warning"
+        },
+        {
+          "fg": "info-foreground",
+          "bg": "info"
+        }
+      ]
+    }
+  },
+  "primitive": {
+    "color": {
+      "$type": "color",
+      "background": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              1,
+              1
+            ],
+            "hex": "#ffffff"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0392,
+              0.0392,
+              0.0392
+            ],
+            "hex": "#0a0a0a"
+          }
+        }
+      },
+      "foreground": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0392,
+              0.0392,
+              0.0392
+            ],
+            "hex": "#0a0a0a"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.9804,
+              0.9804,
+              0.9804
+            ],
+            "hex": "#fafafa"
+          }
+        }
+      },
+      "card": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              1,
+              1
+            ],
+            "hex": "#ffffff"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0902,
+              0.0902,
+              0.0902
+            ],
+            "hex": "#171717"
+          }
+        }
+      },
+      "card-foreground": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0392,
+              0.0392,
+              0.0392
+            ],
+            "hex": "#0a0a0a"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.9804,
+              0.9804,
+              0.9804
+            ],
+            "hex": "#fafafa"
+          }
+        }
+      },
+      "popover": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              1,
+              1
+            ],
+            "hex": "#ffffff"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0902,
+              0.0902,
+              0.0902
+            ],
+            "hex": "#171717"
+          }
+        }
+      },
+      "popover-foreground": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0392,
+              0.0392,
+              0.0392
+            ],
+            "hex": "#0a0a0a"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.9804,
+              0.9804,
+              0.9804
+            ],
+            "hex": "#fafafa"
+          }
+        }
+      },
+      "primary": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0902,
+              0.0902,
+              0.0902
+            ],
+            "hex": "#171717"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.898,
+              0.898,
+              0.898
+            ],
+            "hex": "#e5e5e5"
+          }
+        }
+      },
+      "primary-foreground": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.9804,
+              0.9804,
+              0.9804
+            ],
+            "hex": "#fafafa"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0902,
+              0.0902,
+              0.0902
+            ],
+            "hex": "#171717"
+          }
+        }
+      },
+      "secondary": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.9608,
+              0.9608,
+              0.9608
+            ],
+            "hex": "#f5f5f5"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.149,
+              0.149,
+              0.149
+            ],
+            "hex": "#262626"
+          }
+        }
+      },
+      "secondary-foreground": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0902,
+              0.0902,
+              0.0902
+            ],
+            "hex": "#171717"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.9804,
+              0.9804,
+              0.9804
+            ],
+            "hex": "#fafafa"
+          }
+        }
+      },
+      "muted": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.9608,
+              0.9608,
+              0.9608
+            ],
+            "hex": "#f5f5f5"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.149,
+              0.149,
+              0.149
+            ],
+            "hex": "#262626"
+          }
+        }
+      },
+      "muted-foreground": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.4,
+              0.4,
+              0.4
+            ],
+            "hex": "#666666"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.6314,
+              0.6314,
+              0.6314
+            ],
+            "hex": "#a1a1a1"
+          }
+        }
+      },
+      "accent": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.9608,
+              0.9608,
+              0.9608
+            ],
+            "hex": "#f5f5f5"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.149,
+              0.149,
+              0.149
+            ],
+            "hex": "#262626"
+          }
+        }
+      },
+      "accent-foreground": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0902,
+              0.0902,
+              0.0902
+            ],
+            "hex": "#171717"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.9804,
+              0.9804,
+              0.9804
+            ],
+            "hex": "#fafafa"
+          }
+        }
+      },
+      "destructive": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.8431,
+              0,
+              0.0824
+            ],
+            "hex": "#d70015"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              0.3922,
+              0.4039
+            ],
+            "hex": "#ff6467"
+          }
+        }
+      },
+      "border": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.898,
+              0.898,
+              0.898
+            ],
+            "hex": "#e5e5e5"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              1,
+              1
+            ],
+            "alpha": 0.1,
+            "hex": "#ffffff"
+          }
+        }
+      },
+      "input": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.898,
+              0.898,
+              0.898
+            ],
+            "hex": "#e5e5e5"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              1,
+              1
+            ],
+            "alpha": 0.15,
+            "hex": "#ffffff"
+          }
+        }
+      },
+      "ring": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.6314,
+              0.6314,
+              0.6314
+            ],
+            "hex": "#a1a1a1"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.451,
+              0.451,
+              0.451
+            ],
+            "hex": "#737373"
+          }
+        }
+      },
+      "success": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0824,
+              0.502,
+              0.2392
+            ],
+            "hex": "#15803d"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.2902,
+              0.8706,
+              0.502
+            ],
+            "hex": "#4ade80"
+          }
+        }
+      },
+      "success-foreground": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              1,
+              1
+            ],
+            "hex": "#ffffff"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0196,
+              0.1804,
+              0.0863
+            ],
+            "hex": "#052e16"
+          }
+        }
+      },
+      "warning": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.7059,
+              0.3255,
+              0.0353
+            ],
+            "hex": "#b45309"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.9843,
+              0.749,
+              0.1412
+            ],
+            "hex": "#fbbf24"
+          }
+        }
+      },
+      "warning-foreground": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              1,
+              1
+            ],
+            "hex": "#ffffff"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.2706,
+              0.102,
+              0.0118
+            ],
+            "hex": "#451a03"
+          }
+        }
+      },
+      "info": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.1137,
+              0.3059,
+              0.8471
+            ],
+            "hex": "#1d4ed8"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.3765,
+              0.6471,
+              0.9804
+            ],
+            "hex": "#60a5fa"
+          }
+        }
+      },
+      "info-foreground": {
+        "light": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              1,
+              1
+            ],
+            "hex": "#ffffff"
+          }
+        },
+        "dark": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0902,
+              0.1451,
+              0.3294
+            ],
+            "hex": "#172554"
+          }
+        }
+      }
+    },
+    "space": {
+      "1": {
+        "$value": {
+          "value": 4,
+          "unit": "px"
+        }
+      },
+      "2": {
+        "$value": {
+          "value": 8,
+          "unit": "px"
+        }
+      },
+      "3": {
+        "$value": {
+          "value": 12,
+          "unit": "px"
+        }
+      },
+      "4": {
+        "$value": {
+          "value": 16,
+          "unit": "px"
+        }
+      },
+      "5": {
+        "$value": {
+          "value": 20,
+          "unit": "px"
+        }
+      },
+      "6": {
+        "$value": {
+          "value": 24,
+          "unit": "px"
+        }
+      },
+      "7": {
+        "$value": {
+          "value": 28,
+          "unit": "px"
+        }
+      },
+      "8": {
+        "$value": {
+          "value": 32,
+          "unit": "px"
+        }
+      },
+      "$type": "dimension"
+    },
+    "font-family": {
+      "$type": "fontFamily",
+      "system": {
+        "$value": [
+          "system-ui",
+          "-apple-system",
+          "sans-serif"
+        ]
+      }
+    }
+  },
+  "color": {
+    "$type": "color",
+    "$description": "色の役割。",
+    "$extensions": {
+      "com.github.japan-da-man.product-design": {
+        "from": [
+          "D1",
+          "D2"
+        ]
+      }
+    },
+    "background": {
+      "$value": "{primitive.color.background.light}",
+      "$description": "画面の背景",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.background.dark}"
+          }
+        }
+      }
+    },
+    "foreground": {
+      "$value": "{primitive.color.foreground.light}",
+      "$description": "本文と見出しの文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.foreground.dark}"
+          }
+        }
+      }
+    },
+    "card": {
+      "$value": "{primitive.color.card.light}",
+      "$description": "カードの面",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.card.dark}"
+          }
+        }
+      }
+    },
+    "card-foreground": {
+      "$value": "{primitive.color.card-foreground.light}",
+      "$description": "カードの上の文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.card-foreground.dark}"
+          }
+        }
+      }
+    },
+    "popover": {
+      "$value": "{primitive.color.popover.light}",
+      "$description": "メニュー・選択の面",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.popover.dark}"
+          }
+        }
+      }
+    },
+    "popover-foreground": {
+      "$value": "{primitive.color.popover-foreground.light}",
+      "$description": "メニュー・選択の上の文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.popover-foreground.dark}"
+          }
+        }
+      }
+    },
+    "primary": {
+      "$value": "{primitive.color.primary.light}",
+      "$description": "主なボタン",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.primary.dark}"
+          }
+        }
+      }
+    },
+    "primary-foreground": {
+      "$value": "{primitive.color.primary-foreground.light}",
+      "$description": "主なボタンの文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.primary-foreground.dark}"
+          }
+        }
+      }
+    },
+    "secondary": {
+      "$value": "{primitive.color.secondary.light}",
+      "$description": "それ以外のボタン",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.secondary.dark}"
+          }
+        }
+      }
+    },
+    "secondary-foreground": {
+      "$value": "{primitive.color.secondary-foreground.light}",
+      "$description": "それ以外のボタンの文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.secondary-foreground.dark}"
+          }
+        }
+      }
+    },
+    "muted": {
+      "$value": "{primitive.color.muted.light}",
+      "$description": "目立たせない面",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.muted.dark}"
+          }
+        }
+      }
+    },
+    "muted-foreground": {
+      "$value": "{primitive.color.muted-foreground.light}",
+      "$description": "補足の文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.muted-foreground.dark}"
+          }
+        }
+      }
+    },
+    "accent": {
+      "$value": "{primitive.color.accent.light}",
+      "$description": "選んでいる・指している面",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.accent.dark}"
+          }
+        }
+      }
+    },
+    "accent-foreground": {
+      "$value": "{primitive.color.accent-foreground.light}",
+      "$description": "accent の上の文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.accent-foreground.dark}"
+          }
+        }
+      }
+    },
+    "destructive": {
+      "$value": "{primitive.color.destructive.light}",
+      "$description": "エラー、削除などの破壊的な操作",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.destructive.dark}"
+          }
+        }
+      }
+    },
+    "border": {
+      "$value": "{primitive.color.border.light}",
+      "$description": "枠、区切り線",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.border.dark}"
+          }
+        }
+      }
+    },
+    "input": {
+      "$value": "{primitive.color.input.light}",
+      "$description": "入力欄の枠",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.input.dark}"
+          }
+        }
+      }
+    },
+    "ring": {
+      "$value": "{primitive.color.ring.light}",
+      "$description": "フォーカスの輪",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.ring.dark}"
+          }
+        }
+      }
+    },
+    "success": {
+      "$value": "{primitive.color.success.light}",
+      "$description": "成功の面",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.success.dark}"
+          }
+        }
+      }
+    },
+    "success-foreground": {
+      "$value": "{primitive.color.success-foreground.light}",
+      "$description": "成功の面の上の文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.success-foreground.dark}"
+          }
+        }
+      }
+    },
+    "warning": {
+      "$value": "{primitive.color.warning.light}",
+      "$description": "注意の面",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.warning.dark}"
+          }
+        }
+      }
+    },
+    "warning-foreground": {
+      "$value": "{primitive.color.warning-foreground.light}",
+      "$description": "注意の面の上の文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.warning-foreground.dark}"
+          }
+        }
+      }
+    },
+    "info": {
+      "$value": "{primitive.color.info.light}",
+      "$description": "お知らせの面",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.info.dark}"
+          }
+        }
+      }
+    },
+    "info-foreground": {
+      "$value": "{primitive.color.info-foreground.light}",
+      "$description": "お知らせの面の上の文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "modes": {
+            "dark": "{primitive.color.info-foreground.dark}"
+          }
+        }
+      }
+    }
+  },
+  "font": {
+    "$type": "typography",
+    "$description": "文字の段。名前は Dynamic Type に合わせる。",
+    "$extensions": {
+      "com.github.japan-da-man.product-design": {
+        "from": [
+          "D1"
+        ]
+      }
+    },
+    "large-title": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 34,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.206,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "いちばん大きい見出し（画面の最初の見出し）",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "large-title"
+        }
+      }
+    },
+    "title-1": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 28,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.214,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "画面の見出し",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "title-1"
+        }
+      }
+    },
+    "title-2": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 22,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.273,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "まとまりの見出し",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "title-2"
+        }
+      }
+    },
+    "title-3": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 20,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.25,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "小さなまとまりの見出し",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "title-3"
+        }
+      }
+    },
+    "headline": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 17,
+          "unit": "px"
+        },
+        "fontWeight": 600,
+        "lineHeight": 1.294,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "行の見出し、ボタンの文字",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "headline"
+        }
+      }
+    },
+    "body": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 17,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.294,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "本文、入力欄",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "body"
+        }
+      }
+    },
+    "callout": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 16,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.313,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "補足の説明、バナー",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "callout"
+        }
+      }
+    },
+    "subheadline": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 15,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.333,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "行の補足",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "subheadline"
+        }
+      }
+    },
+    "footnote": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 13,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.385,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "注記",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "footnote"
+        }
+      }
+    },
+    "caption-1": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 12,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.333,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "入力欄の下のメッセージ、一覧の見出し、印",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "caption-1"
+        }
+      }
+    },
+    "caption-2": {
+      "$value": {
+        "fontFamily": "{primitive.font-family.system}",
+        "fontSize": {
+          "value": 11,
+          "unit": "px"
+        },
+        "fontWeight": 400,
+        "lineHeight": 1.182,
+        "letterSpacing": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "いちばん小さい注記",
+      "$extensions": {
+        "com.github.japan-da-man.product-design": {
+          "textStyle": "caption-2"
+        }
+      }
+    }
+  },
+  "space": {
+    "1": {
+      "$value": "{primitive.space.1}",
+      "$description": "文字とアイコンの間"
+    },
+    "2": {
+      "$value": "{primitive.space.2}",
+      "$description": "部品の中の要素の間"
+    },
+    "3": {
+      "$value": "{primitive.space.3}",
+      "$description": "ボタンの上下、行の上下"
+    },
+    "4": {
+      "$value": "{primitive.space.4}",
+      "$description": "画面の左右、カードの内側"
+    },
+    "5": {
+      "$value": "{primitive.space.5}",
+      "$description": "要素のまとまりの間"
+    },
+    "6": {
+      "$value": "{primitive.space.6}",
+      "$description": "まとまりとまとまりの間"
+    },
+    "7": {
+      "$value": "{primitive.space.7}",
+      "$description": "空の状態の上下"
+    },
+    "8": {
+      "$value": "{primitive.space.8}",
+      "$description": "画面の上下の大きな余白"
+    },
+    "$type": "dimension",
+    "$description": "余白。4px 刻み（space.N は N × 4px）。",
+    "$extensions": {
+      "com.github.japan-da-man.product-design": {
+        "from": [
+          "D3"
+        ]
+      }
+    }
+  },
+  "radius": {
+    "$type": "dimension",
+    "$extensions": {
+      "com.github.japan-da-man.product-design": {
+        "from": [
+          "D2"
+        ]
+      }
+    },
+    "sm": {
+      "$value": {
+        "value": 6,
+        "unit": "px"
+      },
+      "$description": "印、小さなボタン"
+    },
+    "md": {
+      "$value": {
+        "value": 8,
+        "unit": "px"
+      },
+      "$description": "ボタン、入力欄"
+    },
+    "lg": {
+      "$value": {
+        "value": 10,
+        "unit": "px"
+      },
+      "$description": "カード、バナー"
+    }
+  },
+  "shadow": {
+    "$type": "shadow",
+    "$extensions": {
+      "com.github.japan-da-man.product-design": {
+        "from": [
+          "D2"
+        ]
+      }
+    },
+    "sm": {
+      "$value": {
+        "color": {
+          "colorSpace": "srgb",
+          "components": [
+            0,
+            0,
+            0
+          ],
+          "alpha": 0.05,
+          "hex": "#000000"
+        },
+        "offsetX": {
+          "value": 0,
+          "unit": "px"
+        },
+        "offsetY": {
+          "value": 1,
+          "unit": "px"
+        },
+        "blur": {
+          "value": 2,
+          "unit": "px"
+        },
+        "spread": {
+          "value": 0,
+          "unit": "px"
+        }
+      },
+      "$description": "少し浮いた面（カード）"
+    },
+    "md": {
+      "$value": {
+        "color": {
+          "colorSpace": "srgb",
+          "components": [
+            0,
+            0,
+            0
+          ],
+          "alpha": 0.1,
+          "hex": "#000000"
+        },
+        "offsetX": {
+          "value": 0,
+          "unit": "px"
+        },
+        "offsetY": {
+          "value": 4,
+          "unit": "px"
+        },
+        "blur": {
+          "value": 6,
+          "unit": "px"
+        },
+        "spread": {
+          "value": -1,
+          "unit": "px"
+        }
+      },
+      "$description": "浮いた面（メニュー、トースト）"
+    }
+  },
+  "duration": {
+    "$type": "duration",
+    "$extensions": {
+      "com.github.japan-da-man.product-design": {
+        "from": [
+          "D2"
+        ]
+      }
+    },
+    "fast": {
+      "$value": {
+        "value": 150,
+        "unit": "ms"
+      },
+      "$description": "小さな変化（押した、切り替えた）"
+    },
+    "normal": {
+      "$value": {
+        "value": 250,
+        "unit": "ms"
+      },
+      "$description": "出る・消える"
+    }
+  },
+  "easing": {
+    "$type": "cubicBezier",
+    "$extensions": {
+      "com.github.japan-da-man.product-design": {
+        "from": [
+          "D2"
+        ]
+      }
+    },
+    "standard": {
+      "$value": [
+        0.2,
+        0,
+        0,
+        1
+      ],
+      "$description": "ふつうの動き"
+    }
+  }
+}
