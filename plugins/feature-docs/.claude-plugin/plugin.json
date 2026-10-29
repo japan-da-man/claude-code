@@ -1,0 +1,6 @@
+{
+  "name": "feature-docs",
+  "description": "[skills] Keep requirements, design docs and a feature master as separate sources of truth in the repo, approved by merging PRs: interview a request into a requirements doc, design it with UI mockups, build it on an integration branch, then update the feature master and help fields in one final PR. A bundled checker keeps them consistent in CI and exports help-AI knowledge from the feature master only",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}

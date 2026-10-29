@@ -1,0 +1,11 @@
+# トラッキングプラン（設計層。ヘルプ AI には渡さない）
+# イベント名は「対象_動作」（snake_case、過去形）。プロパティは 1 イベント 20 個まで。名前はコードに固定の文字列で書く。
+feature: F-000
+events:
+  - name: <object_action>
+    trigger: <いつ送るか（例：保存がサーバーで成功したとき）>
+    properties:
+      - name: <property>
+        type: string             # string / number / boolean
+        description: <>
+    kpi: <要件定義書の KPI の名前>
