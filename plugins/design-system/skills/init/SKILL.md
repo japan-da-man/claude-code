@@ -20,7 +20,7 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node desi
 
 - 引数に `--local` があれば、9 の Artifact への写しをしない。
 - 対象のアプリのリポジトリを決める。`git rev-parse --show-toplevel` がアプリのリポジトリ（`*.xcodeproj` か `project.yml` がある）でなければ、AskUserQuestion でパスを尋ね、以降のコマンドはすべてそのパスで実行する（`cd <repo> && …`）。
-- `design-system/design-system.json` がすでにあれば、作り直さずに `/design-system:update` を勧めて終える。
+- `design-system/design-system.json` がすでにあれば、作り直さずに `/design-system:update` を勧めて終える。その `version` が 2 以上なら product-design のデザインシステムなので、何も変えずに `/product-design:update` を勧めて終える。
 - `git fetch -q origin` のあと `git status -sb` を見る。origin より遅れていたら pull してよいか尋ねる。まだコミットしていない変更があれば、それを伝えて続けてよいか尋ねる（あとで書き換えた分と混ざるため）。
 
 ## 1. アプリを調べる

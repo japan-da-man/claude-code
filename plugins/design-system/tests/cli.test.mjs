@@ -119,3 +119,18 @@ test('the CLI prints JSON and exits 1 on a bad command', () => {
   assert.equal(bad.status, 1)
   assert.match(bad.stderr, /install/)
 })
+
+test('a v2 config (product-design) is refused with exit code 2 and nothing is written', () => {
+  const repo = makeRepo()
+  const file = join(repo, 'design-system', 'design-system.json')
+  const v2 = JSON.stringify({ version: 2, base: 'hig', tokens: 'design-system/tokens.json' })
+  writeFileSync(file, v2)
+  for (const command of ['install', 'tokens', 'status', 'screenshot', 'artifact-stage', 'artifact-done']) {
+    const r = spawnSync(process.execPath, [CLI, command, repo, join(repo, 'out')], { encoding: 'utf8' })
+    assert.equal(r.status, 2, command)
+    assert.match(r.stderr, /product-design/)
+  }
+  assert.equal(existsSync(join(repo, 'design-system', 'check.mjs')), false)
+  assert.equal(existsSync(join(repo, 'design-system', 'tokens.json')), false)
+  assert.equal(readFileSync(file, 'utf8'), v2)
+})
