@@ -1,0 +1,7 @@
+{
+  "name": "product-design-scripts",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}
