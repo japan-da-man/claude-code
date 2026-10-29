@@ -47,7 +47,7 @@ status は PR の中で次の値にする。main にあるものはすべて承�
 
 ## UI 案
 
-作業場は Claude Design（デザインシステムは `/design-sync` でコードから取り込む）、正本はリポジトリ。確定した案をスタンドアロン HTML で `docs/ui/REQ-xxxx/` に置き、URL を README に残す。Claude Design を使えない環境では、スキルが HTML のモックを書く。出力は HTML なので、React Native などでは「見た目と意図」として読む。
+作業場は Claude Design（デザインシステムは `/design-sync` でコードから取り込む）、正本はリポジトリ。案は `design` スキルが Claude Design で作り（Claude Code では `/design` と Claude Design の MCP、claude.ai のセッションでは Design の型）、人は AskUserQuestion で選ぶだけ。確定した案をスタンドアロン HTML で `docs/ui/REQ-xxxx/` に置き、URL を README に残す（URL は消えることがあるので、正本は HTML）。Claude Design を使えない環境では、スキルが HTML のモックを書く。出力は HTML なので、React Native などでは「見た目と意図」として読む。
 
 ## ほかのプラグインとの関係
 

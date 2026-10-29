@@ -47,14 +47,20 @@ GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not av
 
 ## 5. UI 案（要件定義書が `ui: none` でなければ）
 
-作業場は Claude Design、正本はリポジトリ。
+作業場は Claude Design、正本はリポジトリ。**案はこのスキル（AI）が作り、人は選ぶだけ。**
 
-Claude Design（claude.ai/design）は、このスキルからは操作できない（人が操作する）。まず AskUserQuestion で「Claude Design で作る（あなたが操作）(Recommended) / こちらで HTML のモックを作る」を聞く。
-
-1. **Claude Design で作るとき**：Claude Design に貼るプロンプトを書いて渡す（要件定義書の「画面と状態」から、画面ごと・状態ごとに 2〜3 案。デザインシステムを `/design-sync` でコードから取り込んであれば、それを使うよう書く）。人が案を選び、**スタンドアロン HTML** で書き出して `docs/ui/REQ-xxxx/` に置く（か、チャットに添付する）まで待つ。リンクを作り話で埋めない。
-2. **自分で作るとき**：自分で HTML のモックを書く。1 ファイル（`docs/ui/REQ-xxxx/index.html`）に、画面ごと・状態ごと（あり・空・読み込み中・エラー・オフライン）の見た目を並べ、案が複数あればタブで切り替える。スマホの幅（390px 程度）で描く。このセッションに Artifact ツールがあれば公開して URL を残す。決めた案以外は消すか、`alternatives/` に分ける。
-3. `docs/ui/REQ-xxxx/README.md` に、採用した案と理由、Claude Design（または Artifact）の URL、設計書のどの画面に当たるかを書く。
-4. 設計書のフロントマター `ui` と「画面」の表に、UI 案のパスを書く。
+1. **使える手段を調べる**（上から順に、最初に使えるもの）。調べるだけで、人には聞かない。
+   - **Claude Design（Claude Code から）**：Claude Design の MCP サーバーがつながっていて、`/design` か Claude Design のツールが使える。
+   - **Claude Design（claude.ai のセッションから）**：Artifact ツールがあり、型の一覧（`action: "list"`、`scope: "types"`）に Design がある。
+   - **どちらもない**：HTML のモックを自分で書く（3）。Claude Code で Claude Design がつながっていないときは、つなぎ方（`claude mcp add --scope user --transport http claude-design https://api.anthropic.com/v1/design/mcp`）を一度だけ伝え、この回は止まらずにモックで進める。
+2. **Claude Design で作る**：
+   - デザインシステムを `/design-sync` で取り込んであれば、それを使う（部品・トークン・文言の決まりに合わせる）。
+   - 要件定義書の「画面と状態」から、画面ごとに 2〜3 案を作る。各案に、状態（あり・空・読み込み中・エラー・オフライン）の見た目を含める。スマホの幅で作る。
+   - 案ごとのリンク（あれば画面の画像も）を見せ、AskUserQuestion で選んでもらう（選択肢は案の名前と違いを一言。おすすめを先頭に「(Recommended)」。直したいことは Other で）。直しの指示があれば直して、もう一度聞く。
+   - 確定した案を **スタンドアロン HTML** で書き出して `docs/ui/REQ-xxxx/` に置く。その手段で書き出せないときは、確定した案と同じ見た目の HTML を自分で書いて置き、README にそう書く。
+3. **HTML のモックを書く**（Claude Design を使えないとき）：1 ファイル（`docs/ui/REQ-xxxx/index.html`）に、画面ごと・状態ごと（あり・空・読み込み中・エラー・オフライン）の見た目を並べ、案はタブで切り替える。スマホの幅（390px 程度）で描く。Artifact ツールがあれば公開して URL を残す。AskUserQuestion で案を選んでもらい、選ばなかった案は消すか `alternatives/` に分ける。
+4. `docs/ui/REQ-xxxx/README.md` に、採用した案と理由、作った手段と URL、設計書のどの画面に当たるかを書く。URL は消えたり変わったりすることがあるので、**正本はこのフォルダの HTML** と書いておく。
+5. 設計書のフロントマター `ui` と「画面」の表に、UI 案のパスを書く。
 
 出力は HTML なので、React Native ではそのままコードにならない。実装では「見た目と意図」として読む、と README に書いておく。
 
