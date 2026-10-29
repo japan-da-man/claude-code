@@ -185,9 +185,9 @@ design-system/
   "primitive": {
     "color": {
       "$type": "color",
-      "blue": {
-        "light": { "$value": { "colorSpace": "srgb", "components": [0, 0.478, 1], "hex": "#007aff" } },
-        "dark": { "$value": { "colorSpace": "srgb", "components": [0.039, 0.518, 1], "hex": "#0a84ff" } }
+      "brand": {
+        "light": { "$value": { "colorSpace": "srgb", "components": [0, 0.392, 0.824], "hex": "#0064d2" } },
+        "dark": { "$value": { "colorSpace": "srgb", "components": [0.251, 0.612, 1], "hex": "#409cff" } }
       }
     },
     "space": {
@@ -198,12 +198,12 @@ design-system/
   "color": {
     "$type": "color",
     "tint": {
-      "$value": "{primitive.color.blue.light}",
+      "$value": "{primitive.color.brand.light}",
       "$description": "主なボタン、選ばれている状態、リンク",
       "$extensions": {
         "com.github.japan-da-man.product-design": {
           "from": ["D1"],
-          "modes": { "dark": "{primitive.color.blue.dark}" },
+          "modes": { "dark": "{primitive.color.brand.dark}" },
           "swiftui": { "system": "accentColor" }
         }
       }
@@ -218,7 +218,7 @@ design-system/
 ```
 
 - **2 段**: 基本の段は最上位の `primitive` グループの下に、生の値で置く。意味の段（役割の名前）は、それ以外の最上位のグループ（`color`・`font`・`space`・`radius`・`shadow`・`duration`・`easing`）に置く。段はこの置き場所だけで見分ける。部品の段は、部品ごとに色を変える必要が出たら足す。アプリのコードとチェックが許すのは意味の段だけ。
-- **基本の段の値**: shadcn/ui のときは Tailwind のスケールに合わせる（色は 50〜950 の段）。HIG のときは、色は HIG のシステムの色のライトとダークの値の組にする。余白はどちらも 4px 刻み（HIG には余白の刻みがない）。
+- **基本の段の値**: shadcn/ui のときは Tailwind のスケールに合わせる（色は 50〜950 の段）。HIG のときは、色は HIG のシステムの色の値と、独自の色（ブランドの色など）を、ライトとダークの組で持つ。余白はどちらも 4px 刻み（HIG には余白の刻みがない）。
 - **意味の段の必ずある役割**（ひな形の部品が使う）:
 
   | | HIG | shadcn/ui ＋ Tailwind |
@@ -234,6 +234,17 @@ design-system/
 - **ダークモード**: ダークの値は `$extensions` の `modes` に書く。中の別名も、下の値の検証（参照先が実在する、循環しない）の対象にする。DTCG の一般の道具は `$extensions` の中の別名を解決しないので、ほかの道具に渡すとダークの値は失われる（18節）。
 - **SwiftUI のシステムの色**: `$extensions` の `swiftui.system` に名前を書くと、`Tokens.swift` はシステムの色をそのまま使い、OS の切り替えを活かす。書ける名前は UIKit の意味の色の名前（`label`・`secondaryLabel`・`separator`・`systemFill`・`systemBackground`…。`Color(uiColor:)` で包む）と `accentColor` だけ。
   - `accentColor` 以外を書いたら、`$value` と `modes.dark` は HIG のその色の値の写しでなければならない（check が HIG の値の表と比べる）。HTML と Expo はこの値を使うので、プラットフォームの間で色がずれない。
+  - そのため、`accentColor` 以外を付けた役割は濃くできず、下のコントラストの検証の組には入れられない（HIG の値では、白の上の `secondaryLabel` が約 3.4:1、白の文字を systemBlue に載せると 4.02:1 で、4.5:1 に届かない）。文字に使い、組で調べる役割には付けず、独自の値を持たせる。HIG のひな形の役割ごとの扱いは次の表のとおり。
+
+    | 役割 | `swiftui.system` | コントラストの組 |
+    | :- | :- | :- |
+    | `label` | `label` | `system-background`・`secondary-system-grouped-background` の上で 4.5:1 |
+    | `secondary-label` | 付けない。独自の値（v1 と同じく HIG より濃い。ライト `#6c6c70`・ダーク `#aeaeb2`） | 同じ |
+    | `tertiary-label`・`placeholder-text` | 付ける | 入れない。本文に使わないことを `foundations.md` に書く |
+    | `tint` | `accentColor`（値は自由。ひな形は白の上で 5.59:1 の `#0064d2`、ダークは黒の上で 7.42:1 の `#409cff`） | 背景の上で 4.5:1（リンク）、`on-tint` を載せて 4.5:1 |
+    | `on-tint` | 付けない（ライトは白、ダークは黒） | `tint` の上で 4.5:1 |
+    | `destructive`・`warning`・`success`・`info` | 付けない。独自の値 | 背景の上で 4.5:1。v1 の `success`（`#248a3d`）は白の上で 4.40:1 なので濃くする |
+    | `separator`・`fill`・`secondary-fill`・背景の 4 つ | 付ける | 背景の側としてだけ使う。前景の組には入れない |
   - `accentColor` は、`$value` と `modes.dark` からアセットの AccentColor を作り、`Color.accentColor` で使う。
   - 書かなければ値から作る。
 - 役割は足してよい（名前は小文字の kebab-case）。足したものも各出力に生成される。
@@ -243,7 +254,8 @@ design-system/
   - コントラスト比。調べる組（前景 → 背景）は、ひな形のトークンの最上位の `$extensions` に `contrast` として持たせる（例: `foreground`→`background`、`muted-foreground`→`muted`、`muted-foreground`→`background`、`label`→`system-background`）。
   - 透明度のある色は、背景に合成してから計算する。
   - 文字は 4.5:1 未満が違反（大きい文字に使う組は 3:1）。文字でない UI（`ring`・`input` の枠、1.4.11）は 3:1 未満を警告にする。
-  - ひな形の値がこの検証を通ることをテストにする。たとえば shadcn/ui の初期の `muted-foreground` は、`muted` の上で 4.5:1 に届かないので濃くする。HIG の `tertiary-label`・`placeholder-text` は OS が決める値なので、組から外し、本文に使わないことを `foundations.md` に書く。
+  - ひな形の値がこの検証を通ることをテストにする。たとえば shadcn/ui の初期の `muted-foreground` は、`muted` の上で 4.5:1 に届かないので濃くする。HIG のひな形で組に入れる役割は、上の表のとおり。
+  - check は、`swiftui.system`（`accentColor` 以外）を付けた役割が前景として組に入っていたら、それも違反にする（直す手段がない組を作らせない）。
 
 ## 9. 部品の仕様 `components/*.md`
 
@@ -440,6 +452,10 @@ plugins/product-design/
   - `.claude-plugin/marketplace.json`: `product-design` を足す。`design-system` は消すときに外す。
   - `plugins/japan-da-man-mods/.claude-plugin/plugin.json`: `dependencies` の `design-system` を `product-design` に替える。
   - `README.md`: プラグインの一覧。
+- **古いプラグインに、v2 のアプリを書き換えさせない**。古いプラグインの `cli.mjs install` は、設定の版を見ずに `check.mjs`・`shoot.mjs` を v1 のもので上書きし、ない部品のひな形も置き直す（`plugins/design-system/scripts/cli.mjs:56`）。v2 に移したアプリでこれが動くと、v1 の check は DTCG の `tokens.json` を読めずに終了コード 1 を返し、check を実行するゲートがすべての機能で落ちる。使う側は、古いプラグインを残すあいだも `/design-system:update` を案内しうる。そこで、product-design の 1 段階目と一緒に、古いプラグインの版を 1 つ出す。
+  - `cli.mjs` は、`design-system.json` の `version` が 2 以上なら、`install`・`tokens`・`status`・`screenshot`・`artifact-*` を断り、`/product-design:*` を案内して終了コード 2 で終わる。
+  - `skills/init`・`skills/update`・`skills/check` も、最初の手順で同じことを確かめて止まる。
+  - テストに「v2 の設定では何も書き換えない」を足す。
 - 古いほうを消す前に、`design-system` の説明を「`product-design` に移った」に変えた版を 1 つ出す（すでに入れている人が、何に替えればよいかわかるように）。
 
 ### 特定の使う側への言及をなくす
@@ -481,18 +497,20 @@ plugins/product-design/
   | `textSecondary` | `secondary-label` |
   | `textOnAccent` | `on-tint` |
   | `danger` | `destructive` |
-  | `background` | `system-background` |
-  | `surface` | `secondary-system-background` |
-  | `border` | `separator` |
+  | `background`（`#f2f2f7`/`#000000`） | `system-grouped-background` |
+  | `surface`（`#ffffff`/`#1c1c1e`） | `secondary-system-grouped-background` |
+  | `border`（`#c6c6c8`/`#38383a`、不透明） | `separator` |
   | `success`・`warning`・`info` | 同じ |
   | `DS.Font.*`（`title`・`headline`・`body`・`callout`・`caption`） | v1 の `textStyle` が指す Dynamic Type の段 |
   | `space-1`〜`space-6`、`radius-sm`・`radius-md`・`radius-lg` | `space.1`〜、`radius.sm`〜（Swift の名前は `DS.Space.space1`・`DS.Radius.radiusMd` のまま。10節） |
 
+  - 移す先は名前ではなく値で決める。v1 の `background`・`surface` の値は HIG の grouped の背景の組なので、`system-background`・`secondary-system-background` には移さない（移すと、あとで HIG の値に揃えたときに、ライトで背景とカードの明暗が逆になる）。
+  - 値は v1 のまま持ち越し、`swiftui.system` は付けない（見た目を変えない）。HIG の値に揃えるかは、update で役割ごとに聞く。`border` は不透明の値なので、揃えるなら `separator`（半透明）ではなく `opaqueSeparator` を書く。
 - 部品の種類の名前も同じ扱いにする。たとえば `DSButton.Kind` の `primary`・`secondary` は、HIG のスタイルの名前（`filled`・`tinted` など）の、廃止の別名として残す。
 
 ## 17. 作る順番
 
-1. **土台**: `plugins/product-design/` を作る（古いプラグインは残す。16節）。①〜④ の段（ひな形と一問一答）、DTCG のトークンと検証、根拠のチェックと影響の一覧（5節）、候補のファイル、版と CHANGELOG。プラットフォームに依らない部分。shadcn/ui の名前の突き合わせと、文字の段の決定（18節）もここで行う。
+1. **土台**: `plugins/product-design/` を作る（古いプラグインは残し、v2 のアプリを断る版を同時に出す。16節）。①〜④ の段（ひな形と一問一答）、DTCG のトークンと検証、根拠のチェックと影響の一覧（5節）、候補のファイル、版と CHANGELOG。プラットフォームに依らない部分。shadcn/ui の名前の突き合わせと、文字の段の決定（18節）もここで行う。
 2. **HTML の出力**と、Claude の Design System への写し（いつも要るので先に作る）。Design System が受け付けるトークンの形を確かめる。
 3. **SwiftUI の出力**を今のものから作り直し、v1 からの移行を作る。使う側（16節の表）の対応が済んだら、古いプラグインを消す。
 4. **Expo の出力**（`tokens.ts`・`global.css`・`tailwind.config.js`・React Native Reusables を土台にした部品・カタログ・TSX のチェック）。NativeWind の版とカタログの開き方を決め、react-native-web で部品を HTML の見本に使えるかを確かめる。
