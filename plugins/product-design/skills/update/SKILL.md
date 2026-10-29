@@ -3,7 +3,7 @@ name: update
 description: デザインシステムを変える（原則を変える、色・文字・余白などのトークン、部品の仕様、画面の型、文言の決まりを足す・変える、docs/design-candidates/ の候補や Claude Design の案の「部品の候補」を決める）。変えるものから下の段への影響を一覧にし、人が一問一答で決め、その段と影響を受ける下の段を直し、版を上げて CHANGELOG を書く。「デザインシステムに〇〇を足して」「原則を変えたい」「この候補を決めて」「/product-design:update <変えたいこと>」と言われたときに使う。
 argument-hint: "<変えたいこと | 候補のファイル | Claude Design の案の URL>"
 model: opus
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node design-system/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git diff*) Bash(git add *) Bash(git commit *)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node *design-system/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git diff*) Bash(git add *) Bash(git commit *)
 ---
 
 # product-design:update: デザインシステムを変える
@@ -12,7 +12,7 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node desi
 
 デザインシステムは人が決めるもの。ここで一問一答で決めてから変える。上の段を変えたら、影響を受ける下の段まで直す。設計は `${CLAUDE_PLUGIN_ROOT}/DESIGN.md`。
 
-0. 準備 → 1. 今のデザインシステムを読む → 2. どの段の変更かを決める → 3. 影響の一覧 → 4. 一問一答で決める → 5. 書き換える → 6. 確かめる → 7. 版と CHANGELOG → 8. コミット、の順に進める。
+0. 準備 → 1. 今のデザインシステムを読む → 2. どの段の変更かを決める → 3. 影響の一覧 → 4. 一問一答で決める → 5. 書き換える → 6. 確かめて段ごとに承認 → 7. 版と CHANGELOG → 8. コミット、の順に進める。
 
 質問は必ず **AskUserQuestion** で出す。本文に質問を並べない。1 回に出すのは、答えが前の答えに依存しない質問だけ（最大 4 問）。選択肢をつけ、おすすめは先頭にして「(Recommended)」を付ける。調べれば分かることは質問しない。
 
@@ -20,7 +20,7 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node desi
 
 - 対象のアプリのリポジトリを決める（`git rev-parse --show-toplevel`。アプリでなければ AskUserQuestion でパスを尋ね、以降は `cd <repo> && …` で実行する）。
 - `design-system/design-system.json` がなければ、先に `/product-design:init` を実行するよう伝えて終える。`version` が 2 でない（v1）なら、v1 からの移行はまだこの版にないことを伝え、今は `/design-system:update` を使うよう勧めて終える。
-- ① から ④ の `stages` に `pending` が残っていれば、先に `/product-design:init` で続きを終えるよう勧める（途中の段を update で変えると、承認の順が崩れるため）。
+- ① から ④ の `stages` に `pending` が残っていれば、どちらの途中かを見分ける。`design-system/CHANGELOG.md` に版（`## 1.0.0` など）がまだなければ init の途中なので、`/product-design:init` で続きを終えるよう勧めて終える。版があれば前の update の途中で止まったので、変えたいことに入る前に、残った段の承認（6 の 3）から続ける。
 - 変えたいことが空なら、何を変えたいか尋ねる（`docs/design-candidates/` に `open` の候補があれば、それも選択肢に出す）。
 - `git fetch -q origin` のあと `git status -sb` を見て、遅れていれば pull してよいか尋ねる。
 
@@ -64,6 +64,9 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs trace <repo> --from <P1 | D2 | color.
 
 `affected` を表にして見せ（深さ・場所・部品なら出力の名前）、AskUserQuestion で、どこまで直すかを決める。
 
+- 原則（`P`・`D`）からは、トークン・基礎・部品・パターン・文言までたどれる。
+- **トークンからは、そのトークンを別名で使うトークンまでしかたどれない**（結果に `note` が付く）。部品の仕様はトークンを名前で指していないので、部品への影響は、変えるトークンの `$description`（使いどころ）と部品の仕様を読んで自分で拾い、一覧に足す。`affected` が空でも「影響なし」とは言わない。
+
 ## 4. 一問一答で決める
 
 変えたいことを、決めるべき点に分けて聞く。
@@ -78,25 +81,30 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs trace <repo> --from <P1 | D2 | color.
 
 ## 5. 書き換える
 
-- まず、プラグインの新しい版を取り込む（`check.mjs` を写し直し、ないひな形だけ足す。今の文書とトークンは上書きしない）:
+- まず、プラグインの新しい版の `check.mjs` を写し直す（今の文書・トークン・部品の仕様は上書きせず、消したひな形も戻さない）:
 
   ```bash
   node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs install <repo>
   ```
 
+  結果の `available` は、アプリにないひな形（プラグインの新しい版で増えたものか、アプリで消したもの）。消したものかどうかを git の履歴（`git log --diff-filter=D -- <道のり>`）で確かめ、新しく増えたものだけ、足すかを尋ねる。足すなら `install <repo> --add <道のり,…>`。
 - 変える段を直し、影響を受ける下の段を順に直す。書き方は `/product-design:init` と同じ（ID と `根拠:` の行、トークンの `from`・`modes.dark`・`contrast`、部品の先頭のメタデータ）。
 - **廃止**: 原則は消さずに、文書の最後の `## 廃止` の下に `### D4 …（廃止: 理由。置き換え: D6）` の形で移す。トークンは `$deprecated` に理由と置き換え先、部品は `status: deprecated` と置き換え先を書く。使っているところは、置き換え先に直すか、次のメジャー版まで残すかを決める。
-- 段を承認したら、その段を記録する（その下の承認済みの段は `pending` に戻るので、下の段も順に承認し直す）:
+- この時点では、まだ `stage` を記録しない（承認は 6 でもらう）。
 
-  ```bash
-  node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs stage <repo> <product|design|foundations|components> approved
-  ```
+## 6. 確かめて、段ごとに承認をもらう
 
-## 6. 確かめる
-
-1. `node design-system/check.mjs --strict` が終了コード 0 で終わる。
+1. `node <repo>/design-system/check.mjs --strict` が終了コード 0 で終わる。
 2. `warnings` と `deprecated` を見て、変更で増えたものがあれば、それでよいかを確かめる。
-3. 変えたものの前後（差分）を見せ、AskUserQuestion で「この変更で承認する / 直したいところがある」を確かめる。直すなら 4 に戻る。
+3. **変えた段から下へ、1 段ずつ**承認をもらう。各段で、その段の前後の差分を見せ、AskUserQuestion で「この段を承認する / 直したいところがある」を確かめる。下の段に変更がなければ、「影響の一覧で、この段に直すものはない」と見せて承認をもらう。
+   - 直すなら、4 に戻る（まだ `stage` は記録していないので、段の状態は崩れない）。
+   - 承認されたら、その段を記録する:
+
+     ```bash
+     node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs stage <repo> <product|design|foundations|components> approved
+     ```
+
+     その下の承認済みの段は `pending` に戻るので、続けて下の段の承認をもらい、記録する。④（`components`）まで記録し終えるまで、7 に進まない。途中で止まって ① から ④ に `pending` が残ったら、次の update の前に、残った段の承認から続ける。
 
 ## 7. 版と CHANGELOG
 

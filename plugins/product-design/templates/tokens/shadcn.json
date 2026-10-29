@@ -44,6 +44,10 @@
           "bg": "card"
         },
         {
+          "fg": "primary-foreground",
+          "bg": "destructive"
+        },
+        {
           "fg": "success-foreground",
           "bg": "success"
         },
@@ -54,6 +58,11 @@
         {
           "fg": "info-foreground",
           "bg": "info"
+        },
+        {
+          "fg": "ring",
+          "bg": "background",
+          "kind": "ui"
         }
       ]
     }
@@ -402,11 +411,11 @@
           "$value": {
             "colorSpace": "srgb",
             "components": [
-              0.8431,
+              0.9059,
               0,
-              0.0824
+              0.0431
             ],
-            "hex": "#d70015"
+            "hex": "#e7000b"
           }
         },
         "dark": {
@@ -476,11 +485,11 @@
           "$value": {
             "colorSpace": "srgb",
             "components": [
-              0.6314,
-              0.6314,
-              0.6314
+              0.5608,
+              0.5608,
+              0.5608
             ],
-            "hex": "#a1a1a1"
+            "hex": "#8f8f8f"
           }
         },
         "dark": {
@@ -869,7 +878,7 @@
     },
     "destructive": {
       "$value": "{primitive.color.destructive.light}",
-      "$description": "エラー、削除などの破壊的な操作",
+      "$description": "エラー、削除などの破壊的な操作（destructive のボタンの文字は primary-foreground）",
       "$extensions": {
         "com.github.japan-da-man.product-design": {
           "modes": {

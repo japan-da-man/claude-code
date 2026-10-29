@@ -3,7 +3,7 @@ name: init
 description: アプリのデザインシステムを、プロダクトの原則から一気通貫で最初に作る。① プロダクトの原則 → ② デザインの原則 → ③ 基礎とトークン（DTCG）→ ④ 部品の仕様・画面の型・文言 を、段ごとに一問一答で決めて承認をもらい、どの決まりにも上の段の ID を根拠として書き、機械のチェックを置く。途中で止めても続きから始められる。「デザインシステムを作って」「プロダクトの原則から作って」「/product-design:init」と言われたときに使う。アプリごとに 1 回。
 argument-hint: "[--base hig|shadcn]"
 model: opus
-allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node design-system/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git diff*) Bash(git add *) Bash(git commit *)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node *design-system/check.mjs*) Bash(git fetch *) Bash(git status*) Bash(git rev-parse *) Bash(git diff*) Bash(git add *) Bash(git commit *)
 ---
 
 # product-design:init: デザインシステムを作る
@@ -16,15 +16,17 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node desi
 
 質問は必ず **AskUserQuestion** で出す。本文に質問を並べない。1 回に出すのは、答えが前の答えに依存しない質問だけ（最大 4 問）。選択肢をつけ、おすすめは先頭にして「(Recommended)」を付ける。**調べれば分かること（今の値、画面の作り、プロジェクトの設定）は質問せず、自分で調べる。**
 
-> この版でできるのは ④ まで（プラットフォームに依らない部分）。⑤ の出力（HTML・SwiftUI・Expo の部品とカタログ、スクリーンショット、Claude の Design System への写し）は、プラグインの次の段階で足す。それまで、アプリの SwiftUI の部品が要るなら `/design-system:init` を使う。
+> この版でできるのは ④ まで（プラットフォームに依らない部分）。⑤ の出力（HTML・SwiftUI・Expo の部品とカタログ、スクリーンショット、Claude の Design System への写し）は、プラグインの次の段階で足す。
+>
+> **始める前に選んでもらう**: SwiftUI の部品とカタログが今すぐ要るアプリは、product-design を始めずに `/design-system:init` を使う。一度 product-design で始めると（`design-system.json` が v2 になると）、`/design-system:*` はそのアプリを断るので、出力はこのプラグインの次の段階を待つことになる。0 で `design-system.json` がなく、1 で SwiftUI のアプリだとわかったら、2 の前に AskUserQuestion でどちらにするかを確かめる。
 
 ## 0. 準備
 
 - 対象のアプリのリポジトリを決める。`git rev-parse --show-toplevel` がアプリのリポジトリでなければ、AskUserQuestion でパスを尋ね、以降のコマンドはすべてそのパスで実行する（`cd <repo> && …`）。
 - `design-system/design-system.json` があれば、`node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs status <repo>` で段の進み具合（`stages`・`next`）を見る。
-  - `version` が 2 でない（v1）なら、v1 からの移行はまだこの版にないことを伝え、今は `/design-system:update` を使うよう勧めて終える。
-  - ① から ④ がすべて `approved` なら、作り直さずに `/product-design:update` を勧めて終える。
-  - 途中まで進んでいれば、`next` の段から続ける（2 は飛ばしてよい。置いたひな形と、書いた文書はそのまま使う）。
+  - `status` がエラーになったら、その文を読む。`version` が 2 でない（v1）なら、v1 からの移行はまだこの版にないことを伝え、今は `/design-system:update` を使うよう勧めて終える。`tokens.json` が読めないなら、JSON の誤りを直してからやり直す。
+  - `next` が `null`（① から ④ がすべて `approved`）なら、作り直さずに `/product-design:update` を勧めて終える。
+  - 途中まで進んでいれば、1 を短くやり直して（今のコードと文書を読み直す）から、`next` の段から続ける。2 は飛ばす（置いたひな形と、書いた文書はそのまま使う）。
 - `git fetch -q origin` のあと `git status -sb` を見る。origin より遅れていたら pull してよいか尋ねる。まだコミットしていない変更があれば、それを伝えて続けてよいか尋ねる。
 
 ## 1. アプリを調べる
@@ -56,7 +58,11 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node desi
 
 `docs/product/principles.md` は、デザインシステムの外の文書（仕様づくりや優先順位の判断にも使う）。
 
-- **もとからあった**なら、読んで要約を見せる。原則の見出しに `### P1 …` の ID がなければ、付けてよいか尋ねる。断られたら、`docs/product/principles.md` は変えずに、ID つきの写しを作るか（`design-system.json` の `product_principles` をその写しに向ける）を尋ねる。
+- **もとからあった**なら、読んで要約を見せる。原則の見出しに `### P1 …` の ID がなければ、付けてよいか尋ねる。断られたら、`docs/product/principles.md` は変えずに、ID つきの写しを作るかを尋ねる。作るなら:
+  1. 写しを `docs/product/principles.ids.md` に置く（もとの原則を `### P1 …` の見出しに並べ直したもの。冒頭に「`docs/product/principles.md` の写し。もとを変えたら、ここも直す」と書く）。
+  2. `design-system/design-system.json` の `product_principles` を写しに向け、`protected_paths` の `docs/product/principles.md` も写しの道のりに替える。
+  3. `design-system/README.md` の ① のリンクを写しに向ける。
+  4. もとの文書が変わっても写しは変わらないので、変えたら `/product-design:update` で写しも直すことを、ユーザーに伝える。
 - **ひな形を置いた**なら、一問一答で書き直す。聞くこと:
   1. 誰のためのプロダクトか、その人が何に困っているか
   2. 優先順位を「A より B」の形で 3〜5 個（1 で読んだ README や今の画面から下書きを作り、選択肢にする）
@@ -78,6 +84,8 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs stage <repo> product approved
 - 1 で見つけた「揺れ」を、どの原則で決めるかの例にする。
 
 全文を見せて承認をもらい、`stage <repo> design approved`。
+
+**承認したら、ひな形の根拠を付け直す。** ひな形の基礎・パターン・文言の `根拠:`、トークンの `from`、部品の `from` は、ひな形の D1〜D3（「読めることを優先」「土台の標準に合わせる」「1 画面の目的は 1 つ」）を指している。番号が同じでも中身が変わっていれば、意味がずれたまま check を通ってしまう。新しい ② の原則の中身を見て、5 と 6 で各節・各トークンのグループ・各部品の根拠を付け直す（5 と 6 の一問一答のついでに直す。番号の対応表を先に作っておくとよい）。
 
 ## 5. ③ 基礎とトークン
 
@@ -101,7 +109,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs stage <repo> product approved
 直したら確かめる:
 
 ```bash
-node design-system/check.mjs --strict
+node <repo>/design-system/check.mjs --strict
 ```
 
 `tokens:` で始まる誤りとコントラストの誤りがなくなるまで直す。全体を表（役割・ライト・ダーク・使いどころ）で見せて承認をもらい、`stage <repo> foundations approved`。
@@ -117,14 +125,14 @@ node design-system/check.mjs --strict
 - **画面の型**（`patterns.md`）: 今のアプリの画面を、どの型にするか。追加・削除・保存の操作の場所。確認か取り消しか。
 - **文言**（`copy.md`）: 調子（です・ます、文末の「。」）、数字と単位、ボタンは動詞か、確認と取り消しの言い方。1 で読み取った今の文言で揺れているところを決める。
 - `patterns.md` と `copy.md` は `##` の節ごとに、見出しの直後の行に `根拠: D…`。
-- `README.md` の「土台」と「原則の要約」を書く。ひな形の `<!-- … -->` のコメントはすべて消す。例の文は、このアプリの画面の言葉にする。
+- `README.md` の「土台」「原則の要約」「部品の一覧」（部品の名前と目的の表）を書く。ひな形の `<!-- … -->` のコメントはすべて消す。例の文は、このアプリの画面の言葉にする。
 - `CHANGELOG.md` に最初の版を書く（`## 1.0.0 — <日付>`、作ったもの、根拠）。
 
 `check.mjs --strict` を通してから、部品の一覧と、パターン・文言の要点を見せて承認をもらい、`stage <repo> components approved`。
 
 ## 7. 確かめる
 
-1. `node design-system/check.mjs --strict` が終了コード 0 で終わる。`warnings` があれば、それぞれ問題ないかを確かめる（`trace-orphan` は、使われない原則。消すか、使うところを足すかを尋ねる）。
+1. `node <repo>/design-system/check.mjs --strict` が終了コード 0 で終わる。`warnings` があれば、それぞれ問題ないかを確かめる（`trace-orphan` は、使われない原則。消すか、使うところを足すかを尋ねる）。
 2. 影響の一覧が引けることを確かめる（例: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs trace <repo> --from P1`）。
 
 ## 8. コミット

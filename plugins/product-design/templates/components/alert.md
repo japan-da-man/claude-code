@@ -2,7 +2,7 @@
 name: alert
 status: stable
 from: [D2]
-outputs: { swiftui: dsAlert, expo: AlertDialog, html: alert }
+outputs: { swiftui: dsAlert, expo: AlertDialog, html: alert-dialog }
 ---
 
 # アラート
