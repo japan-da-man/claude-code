@@ -6,7 +6,7 @@
 //                                            シミュレーターでカタログ（と、ふつうの起動の画面）を撮る
 //   node cli.mjs artifact-stage <repo> <dir> Artifact に写すファイルを <dir>/project/ に並べ、上げるスクリーンショットの一覧を出す
 //   node cli.mjs artifact-done <repo> <url>  写した Artifact の url と中身のハッシュを design-system.json に書く
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -160,7 +160,7 @@ export function main(argv) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href) {
   try {
     const r = main(process.argv.slice(2))
     console.log(JSON.stringify(r, null, 2))

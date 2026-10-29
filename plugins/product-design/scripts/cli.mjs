@@ -1,18 +1,21 @@
 // スキルから呼ぶ CLI。結果は JSON で出す。
-//   node cli.mjs install <repo> [--base hig|shadcn]   design-system.json（v2）がなければ作り、ないものだけひな形を置き、check.mjs を写す
+//   node cli.mjs install <repo> [--base hig|shadcn] [--add <path,…>]
+//       design-system.json（v2）がなければ作り、ひな形を置く。すでにあれば check.mjs だけを写し、
+//       置いていないひな形を available に並べる（消した部品を戻さないため、--add で名前を挙げたものだけ置く）
 //   node cli.mjs stage <repo> <段> <pending|approved>  段の進み具合を書く。承認したら、その下の承認済みの段は pending に戻す
 //   node cli.mjs trace <repo> --from <ID|トークン>      影響を受けるもの（原則 → トークン・基礎・部品・パターン・文言）を下へたどる
 //   node cli.mjs status <repo>                         チェックの結果に、段の進み具合と古くなった check.mjs を加えて出す
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { CONFIG_PATH, REQUIRED, collectTrace, flattenTokens, loadConfig, runCheck, traceFrom } from './check.mjs'
+import { CONFIG_PATH, REQUIRED, STAGES, collectTrace, flattenTokens, loadConfig, runCheck, traceFrom } from './check.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CHECK = join(ROOT, 'scripts', 'check.mjs')
 const TEMPLATES = join(ROOT, 'templates')
 const DS_DIR = dirname(CONFIG_PATH)
-export const STAGES = ['product', 'design', 'foundations', 'components', 'outputs']
+// 出力（⑤）は 2 段階目から。それまでは ① から ④ だけを進める段として扱う。
+const ACTIVE_STAGES = STAGES.filter((s) => s !== 'outputs')
 
 const posix = (p) => p.split(sep).join('/')
 
@@ -64,31 +67,51 @@ export function componentTemplates(base) {
   return picked
 }
 
-export function install(repo, { base } = {}) {
+// ひな形とアプリの中の置き場所の組（[プラグインの中のファイル, アプリの中の道のり]）。
+function templateFiles(config) {
+  return [
+    [join(TEMPLATES, 'product', 'principles.md'), config.product_principles],
+    ...filesUnder(join(TEMPLATES, 'docs')).map((f) => [join(TEMPLATES, 'docs', f), join(DS_DIR, f)]),
+    [join(TEMPLATES, 'tokens', `${config.base}.json`), config.tokens],
+    ...[...componentTemplates(config.base)].map(([name, from]) => [from, join(config.components, `${name}.md`)]),
+    [join(TEMPLATES, 'candidates', 'README.md'), join(config.candidates, 'README.md')],
+  ].map(([from, to]) => [from, posix(to)])
+}
+
+export function install(repo, { base, add = [] } = {}) {
   let config = readConfigFile(repo)
   const created = !config
-  if (config && config.version !== 2) throw new Error(`${CONFIG_PATH} は v${config.version} です。v1 のアプリは /product-design:update で移す`)
+  if (config && config.version !== 2) throw new Error(`${CONFIG_PATH} は v${config.version} です。v1 のアプリは、v1 からの移行ができるまで /design-system:* を使ってください`)
   if (!config) {
     if (!REQUIRED[base]) throw new Error('新しく作るときは --base hig か --base shadcn を渡してください')
     config = defaultConfig(base)
     writeConfig(repo, config)
   }
+  const templates = templateFiles(config)
+  const unknown = add.filter((p) => !templates.some(([, to]) => to === p))
+  if (unknown.length) throw new Error(`--add に、ひな形のない道のりがあります: ${unknown.join(', ')}`)
   const copied = []
   const skipped = []
-  const place = (from, to) => {
+  const available = []
+  for (const [from, to] of templates) {
     const abs = join(repo, to)
-    if (existsSync(abs)) return skipped.push(posix(to))
+    if (existsSync(abs)) {
+      if (created || add.includes(to)) skipped.push(to)
+      continue
+    }
+    // 2 回目からは、名前を挙げたものだけ置く（消した部品の仕様や文書を、黙って戻さない）。
+    if (!created && !add.includes(to)) {
+      available.push(to)
+      continue
+    }
     mkdirSync(dirname(abs), { recursive: true })
     copyFileSync(from, abs)
-    copied.push(posix(to))
+    copied.push(to)
   }
-  place(join(TEMPLATES, 'product', 'principles.md'), config.product_principles)
-  for (const f of filesUnder(join(TEMPLATES, 'docs'))) place(join(TEMPLATES, 'docs', f), join(DS_DIR, f))
-  place(join(TEMPLATES, 'tokens', `${config.base}.json`), config.tokens)
-  for (const [name, from] of componentTemplates(config.base)) place(from, join(config.components, `${name}.md`))
-  place(join(TEMPLATES, 'candidates', 'README.md'), join(config.candidates, 'README.md'))
+  mkdirSync(join(repo, DS_DIR), { recursive: true })
   copyFileSync(CHECK, join(repo, DS_DIR, 'check.mjs'))
-  return { config: created ? 'created' : 'kept', base: config.base, check: `${DS_DIR}/check.mjs`, copied, skipped }
+  const note = !created && base && base !== config.base ? `設定の base は ${config.base} のままです（--base ${base} は使っていません。土台を変えるのは update でのメジャーな変更）` : undefined
+  return { config: created ? 'created' : 'kept', base: config.base, check: `${DS_DIR}/check.mjs`, copied, skipped, available, ...(note ? { note } : {}) }
 }
 
 export function stage(repo, name, state) {
@@ -112,11 +135,12 @@ export function stage(repo, name, state) {
 export function trace(repo, from) {
   if (!from) throw new Error('--from <ID かトークンの道のり> を渡してください')
   const config = loadConfig(repo)
-  const root = JSON.parse(readFileSync(join(repo, config.tokens), 'utf8'))
-  const t = collectTrace(repo, config, flattenTokens(root).tokens)
-  const known = t.P.has(from) || t.D.has(from) || t.users.some((u) => u.token === from) || flattenTokens(root).tokens.has(from)
-  if (!known) throw new Error(`${from} は原則の ID にもトークンにもありません`)
-  return { from, affected: traceFrom(t, from) }
+  const tokens = flattenTokens(JSON.parse(readFileSync(join(repo, config.tokens), 'utf8'))).tokens
+  const t = collectTrace(repo, config, tokens)
+  if (!t.P.has(from) && !t.D.has(from) && !tokens.has(from)) throw new Error(`${from} は原則の ID にもトークンにもありません`)
+  // 部品の仕様は意味の段のトークンを指していないので、トークンから部品へはたどれない（1 段階目）。
+  const note = tokens.has(from) ? 'トークンからたどれるのは、そのトークンを別名で使うトークンまで。部品への影響は、部品の仕様とトークンの $description を読んで判断する' : undefined
+  return { from, affected: traceFrom(t, from), ...(note ? { note } : {}) }
 }
 
 export function status(repo) {
@@ -126,7 +150,8 @@ export function status(repo) {
   if (!existsSync(vendored) || readFileSync(vendored, 'utf8') !== readFileSync(CHECK, 'utf8')) {
     r.stale.unshift(`${DS_DIR}/check.mjs がプラグインの版と違います（/product-design:update で写し直す）`)
   }
-  const next = STAGES.find((s) => config.stages?.[s] !== 'approved') ?? null
+  // next は、この版で進められる段（① から ④）の中で、まだ承認されていない最初の段。すべて承認済みなら null。
+  const next = ACTIVE_STAGES.find((s) => config.stages?.[s] !== 'approved') ?? null
   return { ...r, stages: config.stages, next }
 }
 
@@ -139,11 +164,12 @@ const USAGE = 'node cli.mjs install|stage|trace|status <repo> …'
 
 export function main(argv) {
   const [command, repoArg, ...rest] = argv
-  const repo = repoArg && resolve(repoArg)
-  if (!repo) throw new Error(`使い方: ${USAGE}`)
+  // <repo> を書き忘れて、--base などがリポジトリとみなされないように。
+  if (!repoArg || repoArg.startsWith('--')) throw new Error(`使い方: ${USAGE}`)
+  const repo = resolve(repoArg)
   switch (command) {
     case 'install':
-      return install(repo, { base: option(argv, '--base') })
+      return install(repo, { base: option(argv, '--base'), add: option(argv, '--add')?.split(',').filter(Boolean) ?? [] })
     case 'stage':
       return stage(repo, rest[0], rest[1])
     case 'trace':
@@ -155,7 +181,7 @@ export function main(argv) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href) {
   try {
     console.log(JSON.stringify(main(process.argv.slice(2)), null, 2))
   } catch (e) {

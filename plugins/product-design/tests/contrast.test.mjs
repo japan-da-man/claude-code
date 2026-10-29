@@ -31,7 +31,8 @@ test('text pairs below 4.5:1 fail in either mode, large text needs 3:1, UI pairs
   }
   const text = withPairs([{ fg: 'secondary-label', bg: 'system-background' }], grey)
   assert.equal(text.errors.length, 2)
-  assert.match(text.errors[0], /（light）が 3\.44:1 で、4\.5:1 に届きません/)
+  // 比は切り捨てて見せる（3.4399… → 3.43）
+  assert.match(text.errors[0], /（light）が 3\.43:1 で、4\.5:1 に届きません/)
   assert.match(text.errors[1], /（dark）が 1\.00:1/)
 
   assert.equal(withPairs([{ fg: 'secondary-label', bg: 'system-background', kind: 'large-text' }], (r) => (r.color['secondary-label'] = { $value: hex('#8a8a8e') })).errors.length, 0)
