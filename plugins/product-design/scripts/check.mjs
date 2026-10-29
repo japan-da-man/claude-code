@@ -58,13 +58,15 @@ export const SYSTEM_COLORS = [
 
 const NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const ALIAS = /^\{([^{}]+)\}$/
-const STAGES = ['product', 'design', 'foundations', 'components', 'outputs']
+export const STAGES = ['product', 'design', 'foundations', 'components', 'outputs']
 const CANDIDATE_STATUS = ['open', 'adopted', 'exception', 'rejected']
 const COMPONENT_STATUS = ['draft', 'stable', 'deprecated']
 
 const posix = (p) => p.split(sep).join('/')
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const ext = (node) => (isObject(node?.$extensions?.[NS]) ? node.$extensions[NS] : {})
+// DTCG の $deprecated は真偽値か説明の文字列。false は「廃止ではない」。
+export const isDeprecated = (d) => d !== undefined && d !== false
 
 // ---------------------------------------------------------------------------
 // トークン
@@ -84,6 +86,7 @@ export function flattenTokens(root) {
         continue
       }
       const childType = child.$type ?? type
+      if (ext(child).from !== undefined && !Array.isArray(ext(child).from)) errors.push(`"${name}" の from は配列にしてください（例 ["D1"]）`)
       const childFrom = Array.isArray(ext(child).from) ? ext(child).from : from
       if ('$value' in child) {
         if (!path.length) errors.push(`"${name}" は最上位に置かずに、グループ（color・space など）の中に置いてください`)
@@ -117,6 +120,14 @@ export function resolveAlias(tokens, ref, seen = []) {
   return r.error ? r : { value: r.value, token: r.token ?? target }
 }
 
+// 値の中（合成型の中も）にある別名の参照先の道のり。
+export function aliasesIn(value) {
+  if (typeof value === 'string') return ALIAS.test(value) ? [ALIAS.exec(value)[1]] : []
+  if (Array.isArray(value)) return value.flatMap(aliasesIn)
+  if (isObject(value)) return Object.values(value).flatMap(aliasesIn)
+  return []
+}
+
 // 別名の鎖に並ぶトークン（循環していたら途中まで）。
 function aliasChain(tokens, ref) {
   const chain = []
@@ -129,18 +140,29 @@ function aliasChain(tokens, ref) {
   return chain
 }
 
-// 値の中の別名をすべて解決する（合成型の中も）。
-function deepResolve(tokens, value, errors, where) {
+// 値の中の別名をすべて解決する（合成型の中も）。seen で、合成型の中から戻ってくる循環も止める。
+function deepResolve(tokens, value, errors, where, seen = []) {
   if (typeof value === 'string' && ALIAS.test(value)) {
-    const r = resolveAlias(tokens, value)
-    if (r.error) {
-      errors.push(`${where}: ${r.error}`)
+    const path = ALIAS.exec(value)[1]
+    if (seen.includes(path)) {
+      errors.push(`${where}: 別名が循環しています（${[...seen, path].join(' → ')}）`)
       return undefined
     }
-    return deepResolve(tokens, r.value, errors, where)
+    const target = tokens.get(path)
+    if (!target) {
+      errors.push(`${where}: 参照先 ${value} がありません`)
+      return undefined
+    }
+    return deepResolve(tokens, target.value, errors, where, [...seen, path])
   }
-  if (Array.isArray(value)) return value.map((v) => deepResolve(tokens, v, errors, where))
-  if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, deepResolve(tokens, v, errors, where)]))
+  if (Array.isArray(value)) {
+    const out = value.map((v) => deepResolve(tokens, v, errors, where, seen))
+    return out.includes(undefined) ? undefined : out
+  }
+  if (isObject(value)) {
+    const out = Object.entries(value).map(([k, v]) => [k, deepResolve(tokens, v, errors, where, seen)])
+    return out.some(([, v]) => v === undefined) ? undefined : Object.fromEntries(out)
+  }
   return value
 }
 
@@ -165,37 +187,53 @@ const VALIDATORS = {
   fontWeight: (v) => ((num(v) && v >= 1 && v <= 1000) || typeof v === 'string' ? null : 'fontWeight は 1〜1000 の数にしてください'),
   typography: (v) => {
     if (!isObject(v)) return 'typography は { fontFamily, fontSize, fontWeight, lineHeight, letterSpacing } にしてください'
-    for (const k of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight']) if (v[k] === undefined) return `typography に ${k} がありません`
-    return VALIDATORS.fontFamily(v.fontFamily) ?? VALIDATORS.dimension(v.fontSize) ?? VALIDATORS.fontWeight(v.fontWeight) ?? (num(v.lineHeight) ? null : 'typography の lineHeight は文字の大きさに対する比（数）にしてください')
+    for (const k of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing']) if (v[k] === undefined) return `typography に ${k} がありません`
+    return (
+      VALIDATORS.fontFamily(v.fontFamily) ??
+      VALIDATORS.dimension(v.fontSize) ??
+      VALIDATORS.fontWeight(v.fontWeight) ??
+      (num(v.lineHeight) ? null : 'typography の lineHeight は文字の大きさに対する比（数）にしてください') ??
+      (VALIDATORS.dimension(v.letterSpacing) ? 'typography の letterSpacing は { value, unit } にしてください' : null)
+    )
   },
   shadow: (v) => {
     const one = (s) =>
       isObject(s) && VALIDATORS.color(s.color) === null && ['offsetX', 'offsetY', 'blur', 'spread'].every((k) => VALIDATORS.dimension(s[k]) === null)
         ? null
         : 'shadow は { color, offsetX, offsetY, blur, spread } にしてください'
-    return Array.isArray(v) ? v.map(one).find(Boolean) ?? null : one(v)
+    if (Array.isArray(v)) return v.length ? v.map(one).find(Boolean) ?? null : 'shadow の配列が空です'
+    return one(v)
   },
 }
+// DTCG のほかの型。値の形はまだ調べないが、書き間違い（colour など）とは区別する。
+const OTHER_TYPES = ['border', 'transition', 'gradient', 'strokeStyle']
 
 // 色の値を [r, g, b, a] にする。
 export function rgba(v) {
   return [...v.components, v.alpha ?? 1]
 }
 
-// 意味の段のトークンの色を、ライトとダークで解決する（ダークは $extensions の modes.dark、なければライトと同じ）。
-export function colorModes(tokens, path) {
+// 色のトークンを、ライトとダークで解決する。ダークは $extensions の modes.dark。
+// なければ、$value が別名ならその先のトークンのダーク、別名でなければライトと同じ。
+export function colorModes(tokens, path, seen = []) {
   const t = tokens.get(path)
-  if (!t) return null
+  if (!t || seen.includes(path)) return null
   const light = deepResolve(tokens, t.value, [], path)
   const darkRef = t.ext.modes?.dark
-  const dark = darkRef === undefined ? light : deepResolve(tokens, darkRef, [], path)
+  let dark
+  if (darkRef !== undefined) dark = deepResolve(tokens, darkRef, [], path)
+  else if (typeof t.value === 'string' && ALIAS.test(t.value)) {
+    const inner = colorModes(tokens, ALIAS.exec(t.value)[1], [...seen, path])
+    if (!inner) return null
+    if (VALIDATORS.color(light)) return null
+    return { light: rgba(light), dark: inner.dark }
+  } else dark = light
   if (VALIDATORS.color(light) || VALIDATORS.color(dark)) return null
   return { light: rgba(light), dark: rgba(dark) }
 }
 
 export function validateTokens(root, base) {
   const { tokens, errors } = flattenTokens(root)
-  const warnings = []
   const deprecated = []
   for (const t of tokens.values()) {
     const type = typeOf(tokens, t)
@@ -204,12 +242,18 @@ export function validateTokens(root, base) {
       errors.push(`${where} の $type がありません（トークンか、それを含むグループに書く）`)
       continue
     }
+    if (!VALIDATORS[type] && !OTHER_TYPES.includes(type)) {
+      errors.push(`${where} の $type "${type}" は DTCG の型ではありません（${[...Object.keys(VALIDATORS), ...OTHER_TYPES].join('・')}）`)
+      continue
+    }
     const value = deepResolve(tokens, t.value, errors, where)
     if (value === undefined) continue
     const bad = VALIDATORS[type]?.(value)
     if (bad) errors.push(`${where}: ${bad}`)
-    const retired = t.deprecated === undefined && aliasChain(tokens, t.value).find((c) => c.deprecated !== undefined)
-    if (retired) deprecated.push(`${where} が、廃止されたトークン "${retired.path}" を使っています`)
+    if (!isDeprecated(t.deprecated)) {
+      const retired = [t.value, t.ext.modes?.dark].flatMap((v) => aliasChain(tokens, v)).find((c) => isDeprecated(c.deprecated))
+      if (retired) deprecated.push(`${where} が、廃止されたトークン "${retired.path}" を使っています`)
+    }
 
     const { modes, swiftui, textStyle } = t.ext
     if (modes !== undefined) {
@@ -235,7 +279,7 @@ export function validateTokens(root, base) {
       for (const name of names) if (!tokens.has(`${group}.${name}`)) errors.push(`必ずある役割 "${group}.${name}" がありません`)
     }
   }
-  return { tokens, errors, warnings, deprecated }
+  return { tokens, errors, deprecated }
 }
 
 // ---------------------------------------------------------------------------
@@ -285,13 +329,19 @@ export function checkContrast(root, tokens) {
           errors.push(`${label}（${mode}）: 背景が半透明なので、何の上に重ねるかを over に書いてください`)
           continue
         }
+        if (o[mode][3] < 1) {
+          errors.push(`${label}（${mode}）: over の ${over} も半透明です。不透明な色を書いてください`)
+          continue
+        }
         back = composite(back, o[mode])
       }
       const ratio = contrastRatio(composite(f[mode], back), back)
       if (ratio + 1e-9 >= MIN[kind]) continue
       const pinned = tokens.get(`color.${fg}`)?.ext.swiftui?.system
       const hint = pinned && pinned !== 'accentColor' ? '。濃くするには swiftui.system を外して独自の値にする' : ''
-      const msg = `${label}（${mode}）が ${ratio.toFixed(2)}:1 で、${MIN[kind]}:1 に届きません${hint}`
+      // 切り捨てて見せる（4.497 を 4.50 と見せて「届かない」と言わないように）
+      const shown = (Math.floor(ratio * 100) / 100).toFixed(2)
+      const msg = `${label}（${mode}）が ${shown}:1 で、${MIN[kind]}:1 に届きません${hint}`
       ;(kind === 'ui' ? warnings : errors).push(msg)
     }
   }
@@ -302,29 +352,38 @@ export function checkContrast(root, tokens) {
 // 文書
 
 // 先頭のメタデータ（--- で囲んだ YAML の一部）を読む。読めるのは key: 値、[a, b]、{ k: v }、- の箇条、# のコメント。
-export function parseFrontMatter(text) {
+// それ以外の書き方（字下げした対応など）の行は problems に入れる。
+export function parseFrontMatter(raw) {
+  const text = raw.replace(/^﻿/, '')
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text)
-  if (!m) return { data: null, body: text }
+  if (!m) return { data: null, body: text, problems: [] }
   const data = {}
+  const problems = []
   let listKey = null
-  for (const raw of m[1].split(/\r?\n/)) {
-    const line = stripComment(raw)
+  for (const rawLine of m[1].split(/\r?\n/)) {
+    const line = stripComment(rawLine)
     if (!line.trim()) continue
-    const item = /^\s+-\s+(.*)$/.exec(line) ?? /^-\s+(.*)$/.exec(line)
+    const item = /^\s*-\s+(.*)$/.exec(line)
     if (item && listKey) {
       data[listKey].push(scalar(item[1]))
       continue
     }
     const kv = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(line)
-    if (!kv) continue
+    if (!kv) {
+      problems.push(`先頭のメタデータの「${line.trim()}」が読めません（key: 値、[a, b]、{ k: v }、- の箇条で書く）`)
+      continue
+    }
     listKey = null
     if (kv[2] === '') {
       data[kv[1]] = []
       listKey = kv[1]
     } else data[kv[1]] = yamlValue(kv[2])
   }
-  return { data, body: text.slice(m[0].length) }
+  return { data, body: text.slice(m[0].length), problems }
 }
+
+// 引用符は値の始まり（行頭か、: [ { , - と空白のあと）でだけ開く。don't のような語の中の ' は引用符にしない。
+const QUOTE_OPENS = /(?:^|[:[{,\-]\s*|\s)$/
 
 function stripComment(line) {
   let quote = null
@@ -332,20 +391,28 @@ function stripComment(line) {
     const c = line[i]
     if (quote) {
       if (c === quote) quote = null
-    } else if (c === '"' || c === "'") quote = c
+    } else if ((c === '"' || c === "'") && QUOTE_OPENS.test(line.slice(0, i))) quote = c
     else if (c === '#' && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i).trimEnd()
   }
   return line
 }
 
+// , で区切る。かっこの中と、引用符の中の , [ ] { } は数えない。
 function splitTop(s) {
   const parts = []
   let depth = 0
+  let quote = null
   let cur = ''
   for (const c of s) {
+    if (quote) {
+      if (c === quote) quote = null
+      cur += c
+      continue
+    }
+    if ((c === '"' || c === "'") && QUOTE_OPENS.test(cur)) quote = c
     if (c === '[' || c === '{') depth++
     if (c === ']' || c === '}') depth--
-    if (c === ',' && depth === 0) {
+    if (c === ',' && depth === 0 && !quote) {
       parts.push(cur)
       cur = ''
     } else cur += c
@@ -387,11 +454,25 @@ function idsIn(text) {
     .filter(Boolean)
 }
 
+// コードブロック（``` か ~~~ で囲んだところ）の行を空にする。中の見出しの例を、見出しとして数えないため。
+function proseLines(text) {
+  let fence = null
+  return text.split(/\r?\n/).map((line) => {
+    const m = /^\s*(```|~~~)/.exec(line)
+    if (m) {
+      if (!fence) fence = m[1]
+      else if (m[1] === fence) fence = null
+      return ''
+    }
+    return fence ? '' : line
+  })
+}
+
 // 原則の文書（### P1 … / ### D1 …）を読む。見出しの次の空でない行が「根拠: …」なら根拠。## 廃止 の下は廃止。
 export function readPrinciples(text, prefix) {
   const ids = new Map()
   const errors = []
-  const lines = text.split(/\r?\n/)
+  const lines = proseLines(text)
   let retired = false
   const heading = new RegExp(`^###\\s+(${prefix}\\d+)\\b`)
   lines.forEach((line, i) => {
@@ -416,10 +497,10 @@ function nextRefs(lines, i) {
 // 決まりの文書（foundations・patterns・copy）の ## の節ごとの根拠を読む。## 廃止 は数えない。
 export function readSections(text) {
   const sections = []
-  const lines = text.split(/\r?\n/)
+  const lines = proseLines(text)
   lines.forEach((line, i) => {
     const m = /^##\s+(.+?)\s*$/.exec(line)
-    if (!m || /^#{3}/.test(line) || m[1] === '廃止') return
+    if (!m || m[1] === '廃止') return
     sections.push({ title: m[1], line: i + 1, refs: nextRefs(lines, i) })
   })
   return sections
@@ -470,18 +551,24 @@ export function collectTrace(repo, config, tokens) {
   }
   const componentsDir = config.components ?? posix(join(DS_DIR, 'components'))
   for (const file of mdFiles(repo, componentsDir)) {
-    const { data } = parseFrontMatter(readFileSync(join(repo, file), 'utf8'))
+    const { data, problems } = parseFrontMatter(readFileSync(join(repo, file), 'utf8'))
     if (!data) {
       errors.push(`${file}: 先頭のメタデータ（--- で囲む）がありません`)
       continue
     }
+    errors.push(...problems.map((p) => `${file}: ${p}`))
     if (!COMPONENT_STATUS.includes(data.status)) errors.push(`${file}: status は ${COMPONENT_STATUS.join('・')} のどれかにしてください`)
+    if (data.from !== undefined && !Array.isArray(data.from)) errors.push(`${file}: from は [D1, D2] の形の一覧にしてください`)
     users.push({ where: `${file} ${data.name ?? basename(file, '.md')}`, layer: 'rule', refs: Array.isArray(data.from) ? data.from : null, retired: data.status === 'deprecated', component: { file, ...data } })
   }
   for (const t of tokens.values()) {
-    if (t.tier !== 'semantic') continue
-    const aliases = [t.value, t.ext.modes?.dark].map((v) => (typeof v === 'string' ? ALIAS.exec(v)?.[1] : undefined)).filter(Boolean)
-    users.push({ where: `${config.tokens} ${t.path}`, layer: 'rule', refs: Array.isArray(t.from) ? t.from : null, retired: t.deprecated !== undefined, token: t.path, aliases })
+    // 基本の段は根拠を持たないが、意味の段への影響をたどるために、別名の辺だけは持つ。
+    const aliases = [...aliasesIn(t.value), ...aliasesIn(t.ext.modes?.dark)]
+    if (t.tier !== 'semantic') {
+      if (aliases.length) users.push({ where: `${config.tokens} ${t.path}`, layer: 'primitive', refs: [], retired: true, token: t.path, aliases })
+      continue
+    }
+    users.push({ where: `${config.tokens} ${t.path}`, layer: 'rule', refs: Array.isArray(t.from) ? t.from : null, retired: isDeprecated(t.deprecated), token: t.path, aliases })
   }
   return { P: P.ids, D: D.ids, users, errors }
 }
@@ -513,23 +600,25 @@ export function checkTrace(trace) {
   return { errors, warnings, deprecated }
 }
 
-// ID かトークンの道のりから、影響を受けるものを下へたどる。
+// ID かトークンの道のりから、影響を受けるものを下へたどる（幅優先なので、depth はいちばん短い段数）。
 export function traceFrom(trace, start) {
   const out = []
-  const seen = new Set()
-  const visit = (key, depth) => {
-    for (const u of trace.users) {
-      const hits = u.refs?.includes(key) || (u.aliases?.includes(key) ?? false)
-      if (!hits) continue
-      const id = u.id ?? u.token ?? u.where
-      if (seen.has(id)) continue
-      seen.add(id)
-      out.push({ depth, where: u.where, ...(u.component ? { outputs: u.component.outputs ?? {} } : {}) })
-      if (u.id) visit(u.id, depth + 1)
-      if (u.token) visit(u.token, depth + 1)
+  const seen = new Set([start])
+  let frontier = [start]
+  for (let depth = 1; frontier.length; depth++) {
+    const next = []
+    for (const key of frontier) {
+      for (const u of trace.users) {
+        if (!(u.refs?.includes(key) || u.aliases?.includes(key))) continue
+        const id = u.id ?? u.token ?? u.where
+        if (seen.has(id)) continue
+        seen.add(id)
+        out.push({ depth, where: u.where, ...(u.component ? { outputs: u.component.outputs ?? {} } : {}) })
+        if (u.id || u.token) next.push(u.id ?? u.token)
+      }
     }
+    frontier = next
   }
-  visit(start, 1)
   return out
 }
 
@@ -540,7 +629,8 @@ export function readCandidates(repo, config) {
   const errors = []
   const open = []
   for (const file of mdFiles(repo, config.candidates ?? 'docs/design-candidates')) {
-    const { data } = parseFrontMatter(readFileSync(join(repo, file), 'utf8'))
+    const { data, problems } = parseFrontMatter(readFileSync(join(repo, file), 'utf8'))
+    errors.push(...problems.map((p) => `${file}: ${p}`))
     if (!data || !CANDIDATE_STATUS.includes(data.status)) {
       errors.push(`${file}: 先頭のメタデータの status は ${CANDIDATE_STATUS.join('・')} のどれかにしてください`)
       continue
@@ -558,7 +648,10 @@ export function loadConfig(repo) {
   const file = join(repo, CONFIG_PATH)
   if (!existsSync(file)) throw new Error(`${file} がありません。先に /product-design:init を実行してください`)
   const config = JSON.parse(readFileSync(file, 'utf8'))
-  if (config.version !== 2) throw new Error(`${file} の version が 2 ではありません（v1 のアプリは /product-design:update で移す）`)
+  if (config.version !== 2) {
+    const hint = config.version === 1 ? 'v1 のアプリは、v1 からの移行ができるまで /design-system:* を使ってください' : 'この版の product-design が読めるのは version 2 だけです'
+    throw new Error(`${file} の version が 2 ではありません（${hint}）`)
+  }
   return config
 }
 
@@ -579,11 +672,10 @@ export function runCheck(repo, { strict = false } = {}) {
   const tok = validateTokens(root, config.base)
   dsErrors.push(...tok.errors.map((e) => `tokens: ${e}`))
   deprecated.push(...tok.deprecated)
-  if (!tok.errors.length) {
-    const c = checkContrast(root, tok.tokens)
-    dsErrors.push(...c.errors)
-    warnings.push(...c.warnings)
-  }
+  // トークンにほかの誤りがあっても、読める組のコントラストは調べる（読めない組はその組の誤りになる）。
+  const c = checkContrast(root, tok.tokens)
+  dsErrors.push(...c.errors)
+  warnings.push(...c.warnings)
   const tr = checkTrace(collectTrace(repo, config, tok.tokens))
   dsErrors.push(...tr.errors)
   warnings.push(...tr.warnings)
@@ -617,13 +709,16 @@ function defaultRepo() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href) {
   const args = process.argv.slice(2)
-  const at = args.indexOf('--repo')
-  const repo = at >= 0 ? resolve(args[at + 1]) : defaultRepo()
   try {
+    const at = args.indexOf('--repo')
+    if (at >= 0 && (!args[at + 1] || args[at + 1].startsWith('--'))) throw new Error('使い方: node design-system/check.mjs [--json] [--strict] [--repo <path>]')
+    const repo = at >= 0 ? resolve(args[at + 1]) : defaultRepo()
     const r = runCheck(repo, { strict: args.includes('--strict') })
     console.log(args.includes('--json') ? JSON.stringify(r, null, 2) : formatResult(r))
     process.exitCode = r.ok ? 0 : 1
   } catch (e) {
+    // チェックが成り立たない。--json を読む側のために、JSON でも出す。
+    if (args.includes('--json')) console.log(JSON.stringify({ ok: false, error: e.message }))
     console.error(e.message)
     process.exitCode = 2
   }
