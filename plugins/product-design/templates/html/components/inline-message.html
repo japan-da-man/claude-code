@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>その場のメッセージ</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../base.css">
+<link rel="stylesheet" href="inline-message.css">
+<script src="../theme.js"></script>
+</head>
+<body>
+<header class="ds-page-header">
+  <h1 class="ds-page-title">その場のメッセージ</h1>
+  <p class="ds-page-lead">仕様: design-system/components/inline-message.md</p>
+</header>
+<main class="ds-page" data-group="メッセージ" data-height="240">
+  <section class="ds-example">
+    <h2 class="ds-example-title">種類（エラー・注意・成功・お知らせ）</h2>
+    <div class="ds-stack">
+      <p class="ds-inline-message ds-inline-message--error" role="alert" data-testid="save-error"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg><span>保存できませんでした。通信できる場所でもう一度試してください</span></p>
+      <p class="ds-inline-message ds-inline-message--warning" role="status"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg><span>空き容量が少なくなっています</span></p>
+      <p class="ds-inline-message ds-inline-message--success" role="status"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg><span>保存しました</span></p>
+      <p class="ds-inline-message ds-inline-message--info" role="status"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg><span>新しい版があります</span></p>
+    </div>
+  </section>
+</main>
+</body>
+</html>

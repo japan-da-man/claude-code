@@ -1,0 +1,56 @@
+/* トースト（HIG に部品はない。画面の下に、色を反転した短い文と、取り消す操作） */
+.ds-toast-stage {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: center;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--system-background);
+}
+
+.ds-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: 999px;
+  background: var(--label);
+  color: var(--system-background);
+  box-shadow: var(--shadow-md);
+  font: var(--font-subheadline);
+  letter-spacing: var(--letter-spacing-subheadline);
+}
+
+.ds-toast:not(:has(.ds-toast-action)) {
+  padding-right: var(--space-4);
+}
+
+.ds-toast .ds-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.ds-toast-text {
+  flex: 1;
+}
+
+.ds-toast-action {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: var(--font-headline);
+  font-size: inherit;
+  letter-spacing: var(--letter-spacing-headline);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ds-toast[data-state="hidden"] {
+  opacity: 0;
+  transition: opacity var(--duration-normal) var(--easing-standard);
+}

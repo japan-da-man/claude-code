@@ -1,0 +1,64 @@
+/* アラート（HIG。中央の小さな面に見出しと本文、下に区切り線で分けたボタン）。確認もこれを使う */
+.ds-dialog-stage {
+  display: grid;
+  place-items: center;
+  padding: var(--space-6) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--label) 20%, var(--system-background));
+}
+
+.ds-dialog {
+  width: 270px;
+  max-width: 100%;
+  border-radius: var(--radius-lg);
+  background: var(--secondary-system-background);
+  overflow: hidden;
+  text-align: center;
+}
+
+.ds-dialog-body {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-5) var(--space-4) var(--space-4);
+}
+
+.ds-dialog-title {
+  margin: 0;
+  font: var(--font-headline);
+  letter-spacing: var(--letter-spacing-headline);
+}
+
+.ds-dialog-text {
+  margin: 0;
+  font: var(--font-footnote);
+  letter-spacing: var(--letter-spacing-footnote);
+}
+
+.ds-dialog-actions {
+  display: flex;
+  border-top: 1px solid var(--separator);
+}
+
+.ds-dialog-button {
+  flex: 1;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--tint);
+  font: var(--font-body);
+  letter-spacing: var(--letter-spacing-body);
+  cursor: pointer;
+}
+
+.ds-dialog-button + .ds-dialog-button {
+  border-left: 1px solid var(--separator);
+}
+
+.ds-dialog-button--primary {
+  font: var(--font-headline);
+  letter-spacing: var(--letter-spacing-headline);
+}
+
+.ds-dialog-button:active {
+  background: var(--fill);
+}

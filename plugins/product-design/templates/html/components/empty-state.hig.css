@@ -1,0 +1,49 @@
+/* 空の状態（HIG の ContentUnavailableView に寄せる。一覧の中では小さく、画面いっぱいでは大きく） */
+.ds-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  text-align: center;
+}
+
+.ds-empty-state--inline {
+  padding: var(--space-5) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--secondary-system-grouped-background);
+}
+
+.ds-empty-state--full {
+  gap: var(--space-2);
+  padding: var(--space-8) var(--space-4);
+}
+
+.ds-empty-state-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: var(--space-2);
+  color: var(--secondary-label);
+  stroke-width: 1.5;
+}
+
+.ds-empty-state-title {
+  margin: 0;
+  font: var(--font-headline);
+  letter-spacing: var(--letter-spacing-headline);
+}
+
+.ds-empty-state--full .ds-empty-state-title {
+  font: var(--font-title-2);
+  letter-spacing: var(--letter-spacing-title-2);
+  font-weight: 700;
+}
+
+.ds-empty-state-text {
+  margin: 0;
+  font: var(--font-subheadline);
+  letter-spacing: var(--letter-spacing-subheadline);
+  color: var(--secondary-label);
+}
+
+.ds-empty-state .ds-button {
+  margin-top: var(--space-3);
+}

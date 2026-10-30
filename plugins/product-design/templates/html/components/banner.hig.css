@@ -1,0 +1,45 @@
+/* バナー（HIG に部品はない。種類の色を薄く敷いた面に、アイコン・文・操作のボタン） */
+.ds-banner {
+  --ds-banner-color: var(--info);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--ds-banner-color) 12%, var(--secondary-system-grouped-background));
+  color: var(--label);
+}
+
+.ds-banner--error {
+  --ds-banner-color: var(--destructive);
+}
+
+.ds-banner--warning {
+  --ds-banner-color: var(--warning);
+}
+
+.ds-banner--success {
+  --ds-banner-color: var(--success);
+}
+
+.ds-banner > .ds-icon {
+  color: var(--ds-banner-color);
+}
+
+.ds-banner-text {
+  flex: 1;
+  margin: 0;
+  font: var(--font-callout);
+  letter-spacing: var(--letter-spacing-callout);
+}
+
+.ds-banner-action {
+  min-height: 44px;
+  padding: 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--tint);
+  font: var(--font-headline);
+  letter-spacing: var(--letter-spacing-headline);
+  cursor: pointer;
+}

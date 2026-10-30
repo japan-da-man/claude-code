@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>空の状態</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../base.css">
+<link rel="stylesheet" href="button.css">
+<link rel="stylesheet" href="empty-state.css">
+<script src="../theme.js"></script>
+</head>
+<body>
+<header class="ds-page-header">
+  <h1 class="ds-page-title">空の状態</h1>
+  <p class="ds-page-lead">仕様: design-system/components/empty-state.md</p>
+</header>
+<main class="ds-page" data-group="状態" data-height="520">
+  <section class="ds-example">
+    <h2 class="ds-example-title">一覧の中</h2>
+    <div class="ds-stack">
+      <div class="ds-empty-state ds-empty-state--inline" data-testid="empty-search">
+        <p class="ds-empty-state-title">見つかりませんでした</p>
+        <p class="ds-empty-state-text">別のことばで探してください</p>
+      </div>
+    </div>
+  </section>
+  <section class="ds-example">
+    <h2 class="ds-example-title">画面いっぱい</h2>
+    <div class="ds-stack">
+      <div class="ds-empty-state ds-empty-state--full">
+        <svg class="ds-icon ds-empty-state-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/></svg>
+        <p class="ds-empty-state-title">まだメモがありません</p>
+        <p class="ds-empty-state-text">気づいたことを書いておくと、あとから探せます</p>
+        <button class="ds-button ds-button--filled ds-button--default" type="button"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>メモを書く</button>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

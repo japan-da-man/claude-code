@@ -1,0 +1,9 @@
+/* 確認（HIG のアラートに、キャンセルと破壊的な色の実行を並べる。面はアラートの CSS） */
+.ds-dialog-button--cancel {
+  font: var(--font-headline);
+  letter-spacing: var(--letter-spacing-headline);
+}
+
+.ds-dialog-button--destructive {
+  color: var(--destructive);
+}
