@@ -105,7 +105,10 @@ test('a new index is read-only and synced from code; an existing one keeps its k
 
 test('artifact-done records the url and hash, and a later change makes the Design System stale', () => {
   const repo = fresh('hig')
-  const r = artifactDone(repo, 'https://claude.ai/artifact/abc')
+  const staged = artifactStage(repo, stageDir(), { title: 'Memo' })
+  assert.deepEqual(staged.skipped, [])
+  assert.throws(() => artifactDone(repo, 'https://claude.ai/artifact/abc'), /--hash/)
+  const r = artifactDone(repo, 'https://claude.ai/artifact/abc', staged.hash)
   assert.equal(r.url, 'https://claude.ai/artifact/abc')
   assert.match(r.hash, /^[0-9a-f]{64}$/)
   assert.deepEqual(readJson(join(repo, 'design-system/design-system.json')).artifact, r)

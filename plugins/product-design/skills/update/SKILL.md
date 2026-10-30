@@ -21,6 +21,7 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node *des
 - 対象のアプリのリポジトリを決める（`git rev-parse --show-toplevel`。アプリでなければ AskUserQuestion でパスを尋ね、以降は `cd <repo> && …` で実行する）。
 - `design-system/design-system.json` がなければ、先に `/product-design:init` を実行するよう伝えて終える。`version` が 2 でない（v1）なら、v1 からの移行はまだこの版にないことを伝え、今は `/design-system:update` を使うよう勧めて終える。
 - ① から ⑤ の `stages` に `pending` が残っていれば（⑤ の `outputs` は、`outputs` に出力があるときだけ数える。`status` の `next` を見る）、どちらの途中かを見分ける。`design-system/CHANGELOG.md` に版（`## 1.0.0` など）がまだなければ init の途中なので、`/product-design:init` で続きを終えるよう勧めて終える。版があれば前の update の途中で止まったので、変えたいことに入る前に、残った段の承認（6 の 3）から続ける。
+- **写し直すだけのとき**: 変えたいことが「Design System に写す・写し直す」だけなら、1 の `status` を見たあと 9 へ直行する（版は上げず、CHANGELOG も書かない）。`artifact` がない（init が写す前に止まった）ときも同じ。
 - 変えたいことが空なら、何を変えたいか尋ねる（`docs/design-candidates/` に `open` の候補があれば、それも選択肢に出す）。
 - `git fetch -q origin` のあと `git status -sb` を見て、遅れていれば pull してよいか尋ねる。
 
@@ -32,9 +33,9 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node *des
 node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs status <repo>
 ```
 
-で、今の不備（`ds_errors`）・警告・古くなったもの・未決の候補も見ておく（変更とは別の不備があれば、最初にユーザーに伝える）。`stale` に `check.mjs` があれば、5 の最初に写し直す。`tokens.css` があれば 5 で作り直す。`Design System` があれば 9 で写し直す。
+で、今の不備（`ds_errors`）・警告・古くなったもの・未決の候補も見ておく（変更とは別の不備があれば、最初にユーザーに伝える）。`stale` に `check.mjs` の行があれば、5 の最初に写し直す。`tokens.css` の行があれば 5 で作り直す。`Design System` の行があれば 9 で写し直す。
 
-`outputs` に `html` がない（1 段階目の版で作った）なら、5 の `install` で HTML の出力が足される（`html_added`）。そのときは、この update の中で ⑤ の段（`/product-design:init` の 7）も行う。
+`outputs` に `html` がない（1 段階目の版で作った）なら、5 の `install` で HTML の出力が足される（`html_added`）。そのときは、この update の中で ⑤ の段（`/product-design:init` の 7）も行う。`install` はひな形の 18 部品の見本をすべて置くので、仕様（`components/*.md`）のない見本（HTML と CSS）は消して `index.html` から外し、見本のない仕様（自分で足した部品）には見本を作る。
 
 ## 2. どの段の変更かを決める
 
@@ -94,7 +95,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs trace <repo> --from <P1 | D2 | color.
 - **⑤ HTML の出力**も直す（書き方は `/product-design:init` の 7）:
   - トークンを変えたら、`node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs tokens <repo>` で `tokens.css` を作り直す（手で直さない）。
   - 部品の仕様を変えた・足した・消したら、`design-system/html/components/` の見本のページと CSS を合わせ、`index.html` の一覧も直す。CSS で使ってよいのは `tokens.css` の変数だけ。
-  - 変えた部品のスクリーンショットを撮り直す: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs screenshot <repo> --pages <部品の名前,…>`（トークンを変えたなら、影響の一覧に出た部品をすべて）。変える前の画像は、撮り直す前にスクラッチへ写しておき、6 で前後を並べて見せる。
+  - 変えた部品のスクリーンショットを撮り直す: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs screenshot <repo> --pages <outputs.html の名前,…>`（仕様の `name` ではない。たとえばアラートは `alert-dialog`）。トークンを変えたなら、影響の一覧に出た部品をすべて撮る。`index.html` を変えたら `index` も撮る。消した部品の `design-system/screenshots/html/<名前>-*.png` は消す。変える前の画像は、撮り直す前にスクラッチへ写しておき、6 で前後を並べて見せる。
 - **廃止**: 原則は消さずに、文書の最後の `## 廃止` の下に `### D4 …（廃止: 理由。置き換え: D6）` の形で移す。トークンは `$deprecated` に理由と置き換え先、部品は `status: deprecated` と置き換え先を書く。使っているところは、置き換え先に直すか、次のメジャー版まで残すかを決める。
 - この時点では、まだ `stage` を記録しない（承認は 6 でもらう）。
 
@@ -131,16 +132,20 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs trace <repo> --from <P1 | D2 | color.
 
 `--local` なら飛ばす。`design-system/design-system.json` に `artifact.url` があれば、その Design System を直す。なければ `/product-design:init` の 10 と同じく新しく作る。
 
-1. 今の索引を読んで保存する: `Artifact` の `action: "read"`、`url` は `artifact.url`、`path` は `project/design-system.json`。保存された場所を、次の `--index` に渡す（索引のキーと名前を保つため）。読めない（共有されていない、消された）ときは、ユーザーに伝えて、新しく作るかを尋ねる。
+`Artifact` のツールがないセッションなら写さずに、そのことを伝える（`stale` に「Design System が古い」が残り、次の update で写し直せる）。
+
+1. 今の索引を読んで保存する: `Artifact` の `action: "read"`、`url` は `artifact.url`、`path` は `project/design-system.json`。保存された場所を、次の `--index` に渡す（索引のキーと名前を保つため）。読めない（共有されていない、消された）ときは、ユーザーに伝えて、新しく作るかを尋ねる。新しく作るなら、`/product-design:init` の 10 の 1〜5 に従う（`--title` を付け、表紙も作る）。
 2. 写すファイルを並べる:
 
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs artifact-stage <repo> <スクラッチのフォルダ>/artifact --index <1 で保存した索引> --by "<ユーザーの名前>"
    ```
 
+   `skipped` があれば、その部品の見本のページを `/product-design:init` の 7 の 2 の形に直してからやり直す（並べていない部品は、3 で消すことになるため）。
+
 3. 写した Design System のファイルの一覧（`Artifact` の `action: "list"`、`scope: "files"`）と比べ、今は並べていない `project/components/<名前>/…`（消した部品）があれば、`files` にその道のりを `null` で足して消す。表紙（`project/components/Cover/preview.html`）は消さない。名前・色・角丸が変わったときだけ、型の `cover.md` に従って作り直して足す。
 4. 1 回の `publish` で送る（`url`、`root`、`file_path` は索引、`files`）。ほかの人がページで保存していて断られたら、1 からやり直す（1 回まで）。
-5. `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs artifact-done <repo> <url>` で記録し、`design-system/design-system.json` をコミットする。
+5. `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs artifact-done <repo> <url> --hash <2 の hash>` で記録し、`design-system/design-system.json` をコミットする。
 
 ## 終わりに
 

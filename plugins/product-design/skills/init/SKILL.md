@@ -25,7 +25,10 @@ allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs *) Bash(node *des
 - 対象のアプリのリポジトリを決める。`git rev-parse --show-toplevel` がアプリのリポジトリでなければ、AskUserQuestion でパスを尋ね、以降のコマンドはすべてそのパスで実行する（`cd <repo> && …`）。
 - `design-system/design-system.json` があれば、`node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs status <repo>` で段の進み具合（`stages`・`next`）を見る。
   - `status` がエラーになったら、その文を読む。`version` が 2 でない（v1）なら、v1 からの移行はまだこの版にないことを伝え、今は `/design-system:update` を使うよう勧めて終える。`tokens.json` が読めないなら、JSON の誤りを直してからやり直す。
-  - `next` が `null`（① から ⑤ がすべて `approved`）なら、作り直さずに `/product-design:update` を勧めて終える。
+  - `outputs` に `html` がなければ（1 段階目の版で始めた）、先に `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs install <repo>` を動かす。HTML の出力が足され（`html_added`）、⑤ の段も数えるようになる。そのあと `status` を見直す。
+  - `next` が `null`（すべての段が `approved`）のとき:
+    - `artifact` がなく、`--local` でなければ、写す前に止まっている。10 だけを行って終える。
+    - そうでなければ、作り直さずに `/product-design:update` を勧めて終える。
   - 途中まで進んでいれば、1 を短くやり直して（今のコードと文書を読み直す）から、`next` の段から続ける。2 は飛ばす（置いたひな形と、書いた文書はそのまま使う）。
 - `git fetch -q origin` のあと `git status -sb` を見る。origin より遅れていたら pull してよいか尋ねる。まだコミットしていない変更があれば、それを伝えて続けてよいか尋ねる。
 
@@ -168,8 +171,6 @@ node <repo>/design-system/check.mjs --strict
 - **文言**（`copy.md`）: 調子（です・ます、文末の「。」）、数字と単位、ボタンは動詞か、確認と取り消しの言い方。1 で読み取った今の文言で揺れているところを決める。
 - `patterns.md` と `copy.md` は `##` の節ごとに、見出しの直後の行に `根拠: D…`。
 - `README.md` の「土台」「原則の要約」「部品の一覧」（部品の名前と目的の表）を書く。ひな形の `<!-- … -->` のコメントはすべて消す。例の文は、このアプリの画面の言葉にする。
-- `CHANGELOG.md` に最初の版を書く（`## 1.0.0 — <日付>`、作ったもの、根拠）。
-
 `check.mjs --strict` を通してから、部品の一覧と、パターン・文言の要点を見せて承認をもらい、`stage <repo> components approved`。
 
 ## 7. ⑤ HTML の出力
@@ -185,8 +186,10 @@ node <repo>/design-system/check.mjs --strict
 2. 部品の見本を、④ で決めた仕様に合わせて直す。部品ごとに `components/<outputs.html の名前>.html` と `.css` の 2 つ。
    - 種類・状態・構造を仕様と揃える（仕様で種類を足した・消したなら、見本も足す・消す）。例の文は、このアプリの画面の言葉にする。
    - 消した部品は、その HTML と CSS も消す。足した部品は、同じ形で 2 つ作る（`<main class="ds-page" data-group="…" data-height="…">` の中に例を並べ、`data-testid` の例を 1 つ入れる）。`index.html` の一覧も直す。
-   - **CSS で使ってよいのは `tokens.css` の変数（`var(--…)`）だけ**。色・文字・余白・角丸の値を直に書かない（線の太さの 1px・2px、押せる大きさの 44px などの寸法はよい）。クラスは `ds-` で始める。Tailwind のクラスは使わない。スクリプトは `theme.js` だけ。
-   - 部品の CSS が使う `var(--…)` から、トークンを変えたときに影響を受ける部品がたどれる（`cli.mjs trace`）。部品の CSS は、その部品のページだけが読む。
+   - **`<main class="ds-page" data-group="…" data-height="…">` と `<link rel="stylesheet" href="…">` は、この属性・この順のまま書く**（ほかの属性を足さない）。コードはこの形しか読まないので、違うと Design System に写らず（`artifact-stage` の `skipped` に出る）、影響の一覧からも外れる。
+   - **CSS で使ってよい変数は、`tokens.css` の変数と、部品の CSS が自分で宣言した `--ds-…` の変数だけ**。色・文字・余白・角丸の値を直に書かない（丸い端の `999px`、線の太さ、押せる大きさの `44px` などの寸法はよい）。クラスは `ds-` で始める。Tailwind のクラスは使わない。スクリプトは `theme.js` だけ。
+   - 部品の CSS は、その部品のページが読む（伏せ字の入力と複数行の入力は 1 行の入力の CSS も、確認はアラートの CSS も読む）。Design System では、すべての部品の CSS を 1 つの `bundle.css` につないで読む。そのため、**クラスの名前は部品をまたいで重ねない**。別の部品の CSS のクラスに足すときは、そのクラスと組み合わせたセレクタにする（`.ds-field-input.ds-text-editor` など。つなぐ順に頼らない）。
+   - 部品の CSS が使う `var(--…)` から、トークンを変えたときに影響を受ける部品がたどれる（`cli.mjs trace`）。
 3. スクリーンショットを撮る（手元の Chrome。見本のページごとに、ライトとダーク）:
 
    ```bash
@@ -204,11 +207,13 @@ node <repo>/design-system/check.mjs --strict
 
 ## 9. コミット
 
+まず `design-system/CHANGELOG.md` に最初の版を書く（`## 1.0.0 — <日付>`、作ったもの、根拠）。**書くのは ⑤ を承認したあと**。`/product-design:update` は、この版があるかどうかで、止まっているのが init の途中か update の途中かを見分けるため。
+
 `git status` で変わったファイルを確かめ、`docs/product/`、`docs/design-candidates/`、`design-system/`（スクリーンショットも）をコミットする。メッセージはリポジトリの書き方に合わせる（例: `Add the design system from the product principles: principles, tokens, component specs, patterns, copy and the HTML components`）。push はしない（push するかユーザーに尋ねる）。
 
 ## 10. Claude の Design System に写す
 
-`--local` なら飛ばす。正はリポジトリで、Claude の Design System には **一方向で** 写す（Claude Design で案を作るときに使う）。ページの上では直せないようにする。
+`--local` なら飛ばす。正はリポジトリで、Claude の Design System には **一方向で** 写す（Claude Design で案を作るときに使う）。ページの上では直せないようにする。`Artifact` のツールがないセッションなら写さずに、写していないことと、Artifact のツールがあるセッションで `/product-design:init` を動かせば写せることを伝える。
 
 1. 写すファイルを並べる（スクラッチのフォルダに）:
 
@@ -216,14 +221,14 @@ node <repo>/design-system/check.mjs --strict
    node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs artifact-stage <repo> <スクラッチのフォルダ>/artifact --title "<アプリの名前>" --by "<ユーザーの名前>"
    ```
 
-   `root`（並べたフォルダ）、`file_path`（索引 `project/design-system.json`）、`files`（送るファイルの組。トークンは Design System の形に変えた `tokens.json` と `tokens.css`、README と各節、部品ごとの `components/<名前>/README.md`・`preview.html`、`components/bundle.css`）、`hash` が出る。
-2. Design System を作る。`Artifact` の `action: "quickstart"`（`intent: "other"`）か型の一覧から **Design System** の型を選び、`type_url` と `title`（アプリの名前）で、ファイルなしで 1 回だけ作る。結果に出る型の手順（SKILL.md）を読み、それに従う。
+   `root`（並べたフォルダ）、`file_path`（索引 `project/design-system.json`）、`files`（送るファイルの組。トークンは Design System の形に変えた `tokens.json` と `tokens.css`、README と各節、部品ごとの `components/<名前>/README.md`・`preview.html`、`components/bundle.css`）、`hash`（5 で使う）、`skipped`（見本のページがない・読めないので写さない部品）が出る。`skipped` があれば、7 の 2 の形に直してからやり直す。
+2. Design System を作る。`Artifact` の `action: "quickstart"`（`intent: "other"`）か型の一覧から **Design System** の型を選び、`type_url` と `title`（アプリの名前）で、ファイルなしで 1 回だけ作る。結果に出る型の手順（SKILL.md）を読み、それに従う。作った url は、すぐユーザーに伝える（5 の前に止まっても、同じ Design System に写し直せるように）。
 3. 表紙を作る。型の `artifact-type/reference/cover.md` を読み（`Artifact` の `action: "read"`、`path`）、`<root>/project/components/Cover/preview.html` を、写すトークンの色と角丸から作って `files` に足す。
 4. 1 回の `publish` で送る: `url` は 2 で作った Design System、`root`、`file_path` は索引、`files` は 1 と 3 のファイル。索引は `editing: "code"`（リポジトリから写すので、ページの上では直せない）。
-5. 写し終えたら、url と中身のハッシュを記録して、コミットする:
+5. 写し終えたら、url と、1 で並べたときのハッシュを記録して、コミットする:
 
    ```bash
-   node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs artifact-done <repo> <Design System の url>
+   node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs artifact-done <repo> <Design System の url> --hash <1 の hash>
    ```
 
    `design-system/design-system.json` の `artifact` が変わるので、それをコミットする（push はしない）。
