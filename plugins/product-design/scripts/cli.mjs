@@ -14,7 +14,7 @@
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, delimiter, dirname, join, resolve, sep } from 'node:path'
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { CONFIG_PATH, REQUIRED, STAGES, artifactHash, collectTrace, cssDeclarations, cssFamily, deepResolve, flattenTokens, generateCss, isDeprecated, loadConfig, parseFrontMatter, runCheck, traceFrom, typeOf, validateTokens } from './check.mjs'
 
@@ -171,7 +171,12 @@ export function tokens(repo) {
   const config = loadConfig(repo)
   const code = config.outputs?.html?.code
   if (!code) throw new Error(`${CONFIG_PATH} に outputs.html がありません`)
-  const root = JSON.parse(readFileSync(join(repo, config.tokens), 'utf8'))
+  let root
+  try {
+    root = JSON.parse(readFileSync(join(repo, config.tokens), 'utf8'))
+  } catch (e) {
+    return { written: [], errors: [`${config.tokens} が読めません: ${e.message}`] }
+  }
   const { errors } = validateTokens(root, config.base)
   if (errors.length) return { written: [], errors }
   const file = posix(join(code, 'tokens.css'))
@@ -223,6 +228,11 @@ export function toDesignSystemTokens(root, { title, base, ds_version, tokens: fi
     const value = type === 'color' || light !== dark ? { light, dark } : light
     ;(out[family] ??= { tokens: [] }).tokens.push({ name: variable.slice(2), value, ...note })
   }
+  // 書体の変数（--font-<書体>）が文字の段の変数（--font-<段>）と重ならないよう、段と同じ名前の書体は名前を変える。
+  const styleNames = new Set(styles.map((x) => x.style.name))
+  const familyKey = (k) => (styleNames.has(k) ? `${k}-family` : k)
+  out.type.families = Object.fromEntries(Object.entries(out.type.families).map(([k, v]) => [familyKey(k), v]))
+  for (const x of styles) x.family = familyKey(x.family)
   if (styles.length) {
     const family = styles[0].family
     out.type.groups.push({ name: 'Text', family, styles: styles.map((s) => (s.family === family ? s.style : { ...s.style, family: s.family })) })
@@ -289,7 +299,17 @@ export function artifactStage(repo, dir, { title, index, by = 'Claude', now = ne
   const current = index ? JSON.parse(readFileSync(index, 'utf8')) : null
   const name = title ?? current?.title ?? /^# (.+)$/m.exec(readme)?.[1] ?? basename(repo)
 
+  const rel = relative(resolve(repo), resolve(dir))
+  if (!rel.startsWith('..') && !isAbsolute(rel)) throw new Error(`並べる先 ${dir} がリポジトリの中です。スクラッチのフォルダを渡してください`)
   const out = join(dir, 'project')
+  // 消すのは、前に並べたもの（索引の lastChange.via が product-design）だけ。
+  if (existsSync(out)) {
+    let via
+    try {
+      via = JSON.parse(readFileSync(join(out, 'design-system.json'), 'utf8')).lastChange?.via
+    } catch {}
+    if (via !== 'product-design') throw new Error(`${out} は product-design が並べたものではないので消しません。空のフォルダを渡してください`)
+  }
   rmSync(out, { recursive: true, force: true })
   const files = {}
   const put = (rel, text) => {
@@ -378,6 +398,7 @@ export function screenshot(repo, { pages, chrome = findChrome() } = {}) {
       for (const theme of ['light', 'dark']) {
         const out = posix(join(DS_DIR, 'screenshots', 'html', `${page}-${theme}.png`))
         const url = `${pathToFileURL(join(repo, file)).href}?theme=${theme}`
+        rmSync(join(repo, out), { force: true })
         const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', `--user-data-dir=${profile}`, size, `--screenshot=${join(repo, out)}`, url], { encoding: 'utf8', timeout: 60_000 })
         if (r.status !== 0 || !existsSync(join(repo, out))) throw new Error(`${page}（${theme}）を撮れませんでした: ${r.error?.message ?? r.stderr}`)
         shots.push({ page, theme, path: out })

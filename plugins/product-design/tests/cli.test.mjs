@@ -131,3 +131,10 @@ test('the command line prints JSON and exits 1 with a message on a bad call', ()
   assert.equal(bad.status, 1)
   assert.match(bad.stderr, /使い方/)
 })
+
+test('without an HTML output, a trace from a token says it cannot reach the components', () => {
+  const repo = fresh('hig')
+  const file = join(repo, 'design-system', 'design-system.json')
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), outputs: {} }))
+  assert.match(trace(repo, 'color.tint').note, /HTML の出力がない/)
+})

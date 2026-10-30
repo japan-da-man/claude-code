@@ -1,7 +1,7 @@
 // Claude の Design System への写し（artifact-stage・artifact-done）と、写した中身が古くなったときの知らせ。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runCheck } from '../scripts/check.mjs'
@@ -124,4 +124,26 @@ test('artifact-stage refuses while tokens.json has errors', () => {
   delete root.color.label
   writeFileSync(file, JSON.stringify(root))
   assert.throws(() => artifactStage(repo, stageDir(), { title: 'Memo' }), /tokens\.json/)
+})
+
+test('artifact-stage refuses a folder inside the repository or a project/ it did not write', () => {
+  const repo = fresh('hig')
+  assert.throws(() => artifactStage(repo, repo, { title: 'Memo' }), /リポジトリの中/)
+  const dir = stageDir()
+  writeFileSync(join(dir, 'keep.txt'), '')
+  mkdirSync(join(dir, 'project'))
+  writeFileSync(join(dir, 'project', 'mine.txt'), '')
+  assert.throws(() => artifactStage(repo, dir, { title: 'Memo' }), /product-design が並べたもの/)
+  assert.ok(existsSync(join(dir, 'project', 'mine.txt')))
+  // 前に並べたものは並べ直せる
+  const again = stageDir()
+  artifactStage(repo, again, { title: 'Memo' })
+  artifactStage(repo, again, { title: 'Memo' })
+})
+
+test('a change to the HTML output also makes the Design System stale', () => {
+  const repo = fresh('hig')
+  artifactDone(repo, 'https://claude.ai/artifact/abc', artifactStage(repo, stageDir(), { title: 'Memo' }).hash)
+  writeFileSync(join(repo, 'design-system/html/components/badge.css'), '/* 変えた */\n')
+  assert.match(runCheck(repo).stale.join('\n'), /Design System/)
 })
