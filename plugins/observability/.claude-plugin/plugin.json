@@ -1,0 +1,6 @@
+{
+  "name": "observability",
+  "description": "[skills] Set up an app's observability by sparring with Claude one perspective at a time (purpose, incident detection, logging, product analytics, metrics and SLOs, release health, privacy and cost, operations), then put in stack-matched code (logger, error monitoring, typed analytics wrapper, correlation IDs, redaction) for iOS, Android, Expo, Flutter, web, Node, Python, Go, Rails or JVM, plus a decision record, logging rules, a tracking plan, alerts with runbooks and a dependency-free checker. Also adds events, triages incidents and checks the rules",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}

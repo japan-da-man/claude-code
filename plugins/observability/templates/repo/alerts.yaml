@@ -1,0 +1,20 @@
+# SLO とアラート。「何を、なぜ、誰に」の正本。道具（Sentry・Datadog など）の設定はこれに合わせる。
+#
+# slos:
+#   - id: api-availability
+#     sli: 5xx を返さなかったリクエストの割合
+#     target: 99.9                    # %
+#     window: 30d
+#
+# alerts:
+#   - id: api-error-rate-high
+#     severity: sev2                  # README の「重要度」
+#     slo: api-availability
+#     signal: Datadog の monitor「API 5xx rate」
+#     condition: 5 分間の 5xx の割合が 2% を超える
+#     notify: "#alerts-api"
+#     runbook: observability/runbooks/api-error-rate-high.md
+
+slos: []
+
+alerts: []
