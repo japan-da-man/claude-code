@@ -1,0 +1,80 @@
+/* 一覧の行（shadcn/ui に一覧の部品はないので、Card の面に区切り線で行を並べる） */
+.ds-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--card-foreground);
+  overflow: hidden;
+}
+
+.ds-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-3) var(--space-4);
+  color: inherit;
+  text-decoration: none;
+}
+
+.ds-list > li + li {
+  border-top: 1px solid var(--border);
+}
+
+.ds-list-row-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.ds-list-row-icon .ds-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.ds-list-row-text {
+  display: grid;
+  flex: 1;
+}
+
+.ds-list-row-title {
+  font: var(--font-subheadline);
+  font-weight: 500;
+  letter-spacing: var(--letter-spacing-subheadline);
+}
+
+.ds-list-row-detail,
+.ds-list-row-value {
+  font: var(--font-footnote);
+  letter-spacing: var(--letter-spacing-footnote);
+  color: var(--muted-foreground);
+}
+
+.ds-list-row-chevron,
+.ds-list-row-check {
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+}
+
+.ds-list-row-check {
+  color: var(--foreground);
+}
+
+.ds-list-row[aria-selected="false"] .ds-list-row-check {
+  visibility: hidden;
+}
+
+a.ds-list-row:hover,
+.ds-list-row[data-state="pressed"],
+.ds-list-row[aria-selected="true"] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}

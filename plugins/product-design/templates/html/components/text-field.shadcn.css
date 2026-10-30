@@ -1,0 +1,82 @@
+/* 1 行の入力（shadcn/ui の Input と Label）。伏せ字の入力と複数行の入力もこれを使う */
+.ds-field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ds-field-label {
+  font: var(--font-subheadline);
+  font-weight: 500;
+  letter-spacing: var(--letter-spacing-subheadline);
+}
+
+.ds-field-input {
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--foreground);
+  font: var(--font-subheadline);
+  letter-spacing: var(--letter-spacing-subheadline);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) var(--easing-standard), outline-color var(--duration-fast) var(--easing-standard);
+}
+
+.ds-field-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.ds-field-input:focus,
+.ds-field-input[data-state="focused"] {
+  border-color: var(--ring);
+  outline: 3px solid color-mix(in srgb, var(--ring) 50%, transparent);
+  outline-offset: 0;
+}
+
+.ds-field-input[aria-invalid="true"] {
+  border-color: var(--destructive);
+  outline: 3px solid color-mix(in srgb, var(--destructive) 20%, transparent);
+  outline-offset: 0;
+}
+
+.ds-field-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ds-field-message {
+  margin: 0;
+  font: var(--font-footnote);
+  letter-spacing: var(--letter-spacing-footnote);
+  color: var(--muted-foreground);
+}
+
+.ds-field:has([aria-invalid="true"]) .ds-field-message {
+  color: var(--destructive);
+}
+
+/* 枠なし: 枠のあるまとまりの中に、区切り線で並べる */
+.ds-field-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.ds-field--plain + .ds-field--plain {
+  border-top: 1px solid var(--border);
+}
+
+.ds-field--plain .ds-field-input {
+  padding-inline: var(--space-4);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.ds-field--plain .ds-field-input:focus {
+  outline: none;
+}

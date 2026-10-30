@@ -1,0 +1,28 @@
+/* 伏せ字の入力（shadcn/ui。1 行の入力の右に、見せるボタン） */
+.ds-secure-field {
+  position: relative;
+}
+
+.ds-secure-field .ds-field-input {
+  padding-right: calc(var(--space-8) + var(--space-3));
+}
+
+.ds-secure-field-reveal {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.ds-secure-field-reveal .ds-icon {
+  width: 20px;
+  height: 20px;
+}

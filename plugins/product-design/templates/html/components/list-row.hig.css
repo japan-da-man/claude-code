@@ -1,0 +1,88 @@
+/* 一覧の行（HIG のまとまりのある一覧。左にアイコン、名前と補足、右に値か矢印） */
+.ds-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--radius-lg);
+  background: var(--secondary-system-grouped-background);
+  overflow: hidden;
+}
+
+.ds-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
+  color: var(--label);
+  text-decoration: none;
+}
+
+/* 区切り線は、文字の始まりから右の端まで */
+.ds-list > li + li > .ds-list-row,
+.ds-list > .ds-list-row + .ds-list-row {
+  background-image: linear-gradient(var(--separator), var(--separator));
+  background-repeat: no-repeat;
+  background-position: right top;
+  background-size: calc(100% - var(--space-4)) 1px;
+}
+
+.ds-list > li + li > .ds-list-row:has(.ds-list-row-icon) {
+  background-size: calc(100% - var(--space-4) - 28px - var(--space-3)) 1px;
+}
+
+.ds-list-row-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--tint);
+  color: var(--on-tint);
+}
+
+.ds-list-row-icon .ds-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.ds-list-row-text {
+  display: grid;
+  flex: 1;
+}
+
+.ds-list-row-title {
+  font: var(--font-body);
+  letter-spacing: var(--letter-spacing-body);
+}
+
+.ds-list-row-detail {
+  font: var(--font-subheadline);
+  letter-spacing: var(--letter-spacing-subheadline);
+  color: var(--secondary-label);
+}
+
+.ds-list-row-value {
+  color: var(--secondary-label);
+}
+
+.ds-list-row-chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--tertiary-label);
+}
+
+.ds-list-row-check {
+  width: 20px;
+  height: 20px;
+  color: var(--tint);
+}
+
+.ds-list-row[aria-selected="false"] .ds-list-row-check {
+  visibility: hidden;
+}
+
+a.ds-list-row:active,
+.ds-list-row[data-state="pressed"] {
+  background-color: var(--fill);
+}

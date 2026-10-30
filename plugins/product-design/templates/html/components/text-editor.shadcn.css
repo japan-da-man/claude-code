@@ -1,0 +1,7 @@
+/* 複数行の入力（いつも枠つき。枠と状態は 1 行の入力の .ds-field-input を使う） */
+.ds-text-editor {
+  display: block;
+  min-height: 88px;
+  padding-block: var(--space-2);
+  resize: vertical;
+}

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>伏せ字の入力</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../base.css">
+<link rel="stylesheet" href="text-field.css">
+<link rel="stylesheet" href="secure-field.css">
+<script src="../theme.js"></script>
+</head>
+<body>
+<header class="ds-page-header">
+  <h1 class="ds-page-title">伏せ字の入力</h1>
+  <p class="ds-page-lead">仕様: design-system/components/secure-field.md</p>
+</header>
+<main class="ds-page" data-group="入力" data-height="320">
+  <section class="ds-example">
+    <h2 class="ds-example-title">枠つき（見せるボタンつき）</h2>
+    <div class="ds-stack">
+      <div class="ds-field ds-field--bordered">
+        <label class="ds-field-label" for="sf-password">パスワード</label>
+        <div class="ds-secure-field">
+          <input class="ds-field-input" id="sf-password" type="password" value="secret-pass" autocomplete="current-password" data-testid="password-field">
+          <button class="ds-secure-field-reveal" type="button" aria-label="パスワードを表示する" aria-pressed="false"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section class="ds-example">
+    <h2 class="ds-example-title">エラー</h2>
+    <div class="ds-stack">
+      <div class="ds-field ds-field--bordered">
+        <label class="ds-field-label" for="sf-new">新しいパスワード</label>
+        <div class="ds-secure-field">
+          <input class="ds-field-input" id="sf-new" type="password" value="abc" aria-invalid="true" aria-describedby="sf-new-message">
+          <button class="ds-secure-field-reveal" type="button" aria-label="パスワードを表示する" aria-pressed="false"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        </div>
+        <p class="ds-field-message" id="sf-new-message">8 文字以上にしてください</p>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

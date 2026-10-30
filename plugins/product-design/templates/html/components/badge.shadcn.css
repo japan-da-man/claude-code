@@ -1,0 +1,47 @@
+/* 印（shadcn/ui の Badge。success・warning・info は独自に足したもの） */
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font: var(--font-caption-1);
+  font-weight: 500;
+  letter-spacing: var(--letter-spacing-caption-1);
+  white-space: nowrap;
+}
+
+.ds-badge--default {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.ds-badge--secondary {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+}
+
+.ds-badge--destructive {
+  background: var(--destructive);
+  color: var(--primary-foreground);
+}
+
+.ds-badge--outline {
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+.ds-badge--success {
+  background: var(--success);
+  color: var(--success-foreground);
+}
+
+.ds-badge--warning {
+  background: var(--warning);
+  color: var(--warning-foreground);
+}
+
+.ds-badge--info {
+  background: var(--info);
+  color: var(--info-foreground);
+}
