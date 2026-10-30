@@ -79,6 +79,11 @@
       "name": "observability",
       "source": "./plugins/observability",
       "description": "[skills] Set up an app's observability by sparring with Claude one perspective at a time (purpose, incident detection, logging, product analytics, metrics and SLOs, release health, privacy and cost, operations), then put in stack-matched code (logger, error monitoring, typed analytics wrapper, correlation IDs, redaction) for iOS, Android, Expo, Flutter, web, Node, Python, Go, Rails or JVM, plus a decision record, logging rules, a tracking plan, alerts with runbooks and a dependency-free checker. Also adds events, triages incidents and checks the rules"
+    },
+    {
+      "name": "usable-ui",
+      "source": "./plugins/usable-ui",
+      "description": "[skills] Take AI-made UI from \"operable\" to \"usable\": build fixes the main user, their goal and the product's priority before making a screen and builds in four checks (signifiers, feedback, UX writing, information architecture); review has a separate-context subagent check a screen against those four checks only, splitting must-fix items from polish and handing trade-offs back to people"
     }
   ]
 }
