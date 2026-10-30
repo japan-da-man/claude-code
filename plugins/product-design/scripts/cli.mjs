@@ -6,9 +6,12 @@
 //   node cli.mjs stage <repo> <段> <pending|approved>  段の進み具合を書く。承認したら、その下の承認済みの段は pending に戻す
 //   node cli.mjs trace <repo> --from <ID|トークン>      影響を受けるもの（原則 → トークン・基礎・部品・パターン・文言）を下へたどる
 //   node cli.mjs tokens <repo>                         HTML の出力の tokens.css を tokens.json から作り直す
+//   node cli.mjs screenshot <repo> [--pages <名前,…>]   HTML の見本のページを手元の Chrome でライトとダークで撮る（Chrome がなければ撮らずに知らせる）
 //   node cli.mjs status <repo>                         チェックの結果に、段の進み具合と古くなった check.mjs を加えて出す
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, delimiter, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { CONFIG_PATH, REQUIRED, STAGES, collectTrace, flattenTokens, generateCss, loadConfig, runCheck, traceFrom, validateTokens } from './check.mjs'
 
@@ -176,6 +179,55 @@ export function tokens(repo) {
   return { written: [file], errors: [] }
 }
 
+// 手元の Chrome。$CHROME、macOS の決まった場所、PATH の順に探す。なければ null。
+export function findChrome(env = process.env) {
+  const found = (p) => p && existsSync(p) && statSync(p).isFile()
+  if (found(env.CHROME)) return env.CHROME
+  const mac = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium']
+  const onPath = (env.PATH ?? '').split(delimiter).filter(Boolean).flatMap((d) => ['google-chrome', 'chromium', 'chromium-browser'].map((n) => join(d, n)))
+  return [...mac, ...onPath].find(found) ?? null
+}
+
+const SHOT_WIDTH = 480
+// 部品のページは <main> の data-height に見出しの分を足した高さで、一覧のページは決まった高さで撮る。
+const HEADER_HEIGHT = 160
+const INDEX_HEIGHT = 1200
+
+// HTML の出力の見本のページを、ライトとダークで撮る（design-system/screenshots/html/<ページ>-<light|dark>.png）。
+export function screenshot(repo, { pages, chrome = findChrome() } = {}) {
+  const config = loadConfig(repo)
+  const code = config.outputs?.html?.code
+  if (!code) throw new Error(`${CONFIG_PATH} に outputs.html がありません`)
+  const all = [['index', posix(join(code, 'index.html'))]]
+  const dir = join(repo, code, 'components')
+  if (existsSync(dir)) for (const f of readdirSync(dir).filter((n) => n.endsWith('.html')).sort()) all.push([f.slice(0, -5), posix(join(code, 'components', f))])
+  const unknown = (pages ?? []).filter((p) => !all.some(([name]) => name === p))
+  if (unknown.length) throw new Error(`見本のページがありません: ${unknown.join(', ')}`)
+  const chosen = pages ? all.filter(([name]) => pages.includes(name)) : all
+  if (!chrome) return { skipped: true, reason: 'Chrome が見つからないので撮っていません（$CHROME に Chrome の実行ファイルの場所を書くと撮れる）', shots: [] }
+
+  const outDir = join(repo, DS_DIR, 'screenshots', 'html')
+  mkdirSync(outDir, { recursive: true })
+  const profile = mkdtempSync(join(tmpdir(), 'product-design-chrome-'))
+  const shots = []
+  try {
+    for (const [page, file] of chosen) {
+      const height = /data-height="(\d+)"/.exec(readFileSync(join(repo, file), 'utf8'))?.[1]
+      const size = `--window-size=${SHOT_WIDTH},${height ? Number(height) + HEADER_HEIGHT : INDEX_HEIGHT}`
+      for (const theme of ['light', 'dark']) {
+        const out = posix(join(DS_DIR, 'screenshots', 'html', `${page}-${theme}.png`))
+        const url = `${pathToFileURL(join(repo, file)).href}?theme=${theme}`
+        const r = spawnSync(chrome, ['--headless=new', '--disable-gpu', '--hide-scrollbars', `--user-data-dir=${profile}`, size, `--screenshot=${join(repo, out)}`, url], { encoding: 'utf8', timeout: 60_000 })
+        if (r.status !== 0 || !existsSync(join(repo, out))) throw new Error(`${page}（${theme}）を撮れませんでした: ${r.error?.message ?? r.stderr}`)
+        shots.push({ page, theme, path: out })
+      }
+    }
+  } finally {
+    rmSync(profile, { recursive: true, force: true })
+  }
+  return { shots }
+}
+
 export function status(repo) {
   const r = runCheck(repo)
   const config = loadConfig(repo)
@@ -193,7 +245,7 @@ function option(args, name) {
   return i >= 0 ? args[i + 1] : undefined
 }
 
-const USAGE = 'node cli.mjs install|stage|trace|tokens|status <repo> …'
+const USAGE = 'node cli.mjs install|stage|trace|tokens|screenshot|status <repo> …'
 
 export function main(argv) {
   const [command, repoArg, ...rest] = argv
@@ -209,6 +261,8 @@ export function main(argv) {
       return trace(repo, option(argv, '--from'))
     case 'tokens':
       return tokens(repo)
+    case 'screenshot':
+      return screenshot(repo, { pages: option(argv, '--pages')?.split(',').filter(Boolean) })
     case 'status':
       return status(repo)
     default:
