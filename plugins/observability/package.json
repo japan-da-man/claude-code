@@ -1,0 +1,7 @@
+{
+  "name": "observability-scripts",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -1,0 +1,22 @@
+# トラッキングプラン。イベントはここで定義してから送る（observability/check.mjs がコードとのずれを調べる）。
+# 名前は「対象_動作（過去形）」の snake_case（例: signup_completed、item_added_to_cart）。
+#
+# events:
+#   - name: signup_completed
+#     description: 会員登録が終わった
+#     owner: growth                  # このイベントに責任を持つチームか人
+#     status: active                 # planned / active / deprecated
+#     trigger: 登録完了の画面が表示されたとき
+#     question: 登録の方法ごとの完了率は？   # このイベントで答えたい問い
+#     platforms: [ios, android, web]
+#     properties:
+#       - name: method
+#         type: enum                 # string / number / integer / boolean / enum / datetime / string_list
+#         values: [email, apple, google]
+#         required: true
+#         description: 登録の方法
+
+# すべてのイベントに付くプロパティ（ラッパーが付ける）
+global_properties: []
+
+events: []
