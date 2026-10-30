@@ -2,7 +2,7 @@
 
 プロダクトの原則からデザインシステムまでを、根拠をたどれる形で一気通貫に作り、育てるための Claude Code プラグイン `product-design` の設計。
 
-- 状態: 1 段階目（17節）を実装（2026-10-30）。2 段階目からは設計のまま（2026-10-28 に一問一答で方針を合意。2026-10-29 にレビューの指摘を反映）
+- 状態: 1 段階目と 2 段階目（17節）を実装（2026-10-30）。3 段階目からは設計のまま（2026-10-28 に一問一答で方針を合意。2026-10-29 にレビューの指摘を反映）
 - 今の [design-system](../design-system/DESIGN.md) を作り直したもの。トークン・部品・チェック・カタログ・Artifact への写しは使い回し、段と根拠のつながりを足し、特定の使う側（factory など）への言及をなくす
 - 出力: Claude Design 用の HTML はいつも作る。アプリ用は SwiftUI か Expo（React Native）を、実行のときに選ぶ
 
@@ -117,7 +117,8 @@ check が読む形は、ファイルの種類ごとに 1 つだけにする。
 `update` で上の段を変えるとき、変えるものから下へたどって、影響を受けるものを一覧にする（`cli.mjs trace --from P1` で、P1 → D → トークン・部品・パターン・文言 → 出力のファイル）。部品から出力のファイルへは、部品の名前から決まりでたどる（SwiftUI は `<code>/Components/<outputs.swiftui の名前>.swift`、Expo は `<code>/components/<outputs.expo の名前>.tsx`、HTML は `design-system/html/components/<name>.html`）。人はこの一覧を見て、どこまで直すかを決める。
 
 - 合成型の値（typography・shadow など）の中の別名もたどる（基本の書体を変えると、文字のトークンがすべて出る）。深さは、いちばん短い段数。
-- 1 段階目では、部品の仕様が意味の段のトークンを名前で指していないので、トークンから部品へはたどれない。トークンを起点にした一覧には、そのことを `note` で添え、update のスキルは部品への影響を `$description` と部品の仕様から拾う。部品の仕様にトークンの一覧を持たせるかは、出力を作る段階で決める。
+- トークンから部品へは、HTML の出力の CSS が使う `var(--…)` を通ってたどる（2 段階目に決定）。部品の見本のページが読む部品の CSS（`<link>` で読むもの。伏せ字の入力は 1 行の入力の CSS も読む）とページの中の `<style>` を見て、CSS 変数の名前からトークンを引く。部品の仕様にトークンの一覧は持たせない（実装と二重に持つとずれるため）。部品の仕様の文に書いた使い方（「文字は `primary-foreground`」など）はたどれないので、update のスキルはトークンの名前で部品の仕様も探す。HTML の出力がない設定（1 段階目で作ったもの）では、トークンを起点にした一覧に `note` を添える。
+- 部品の結果には、出力のファイル（`files`。HTML なら `design-system/html/components/<名前>.html` と `.css`）を付ける。
 
 ## 6. 全体の流れ
 
@@ -294,11 +295,11 @@ outputs: { swiftui: DSButton, expo: Button, html: button }
 
 | 持つもの | HTML | SwiftUI | Expo |
 | :- | :- | :- | :- |
-| トークンの生成 | `tokens.css`（CSS 変数。色は hex。ダークは `prefers-color-scheme` と `data-theme`） | `Tokens.swift`（`DS.Color`・`DS.Font`・`DS.Space`・`DS.Radius`・`DS.Shadow`・`DS.Motion`。色は sRGB） | `tokens.ts`、`global.css`（NativeWind の CSS 変数）、`tailwind.config.js` |
+| トークンの生成 | `tokens.css`（CSS 変数。色は hex、透明度は `#rrggbbaa`。ダークは `prefers-color-scheme` と `data-theme`。`check.mjs` の `generateCss` が作る） | `Tokens.swift`（`DS.Color`・`DS.Font`・`DS.Space`・`DS.Radius`・`DS.Shadow`・`DS.Motion`。色は sRGB） | `tokens.ts`、`global.css`（NativeWind の CSS 変数）、`tailwind.config.js` |
 | 部品 | HTML と CSS（ビルドなし）。独自の `ds-*` のクラスと手書きの CSS で作り、Tailwind のユーティリティのクラスは使わない。shadcn/ui を土台にするなら要素・属性・見た目を shadcn/ui に合わせ、HIG なら iOS の見た目をまねる | SwiftUI の標準の部品を包む（今の design-system のひな形） | React Native Reusables を土台にする |
 | カタログ | 部品ごとの見本のページ（Claude の Design System に写す） | `#if DEBUG` のカタログ画面（起動引数 `-DesignSystemCatalog <ページ>`。今のファイルの名前と形を保つ。16節） | 開発のときだけ開くカタログの画面（開き方は 4 段階目に決める） |
 | コードのチェック | なし（生成物なので） | 今の `check.mjs` の Swift の決まり（`color`・`font`・`spacing`・`control`） | TSX の直書きの色・文字・余白と、部品を通さない `Pressable`・`TextInput` など |
-| スクリーンショット | 手元の Chrome を `--headless --screenshot` で呼ぶ（ダークは `data-theme`）。Chrome がなければ撮らずに知らせる | シミュレーターで撮る（今の `shoot.mjs`） | シミュレーターで撮る |
+| スクリーンショット | 手元の Chrome を `--headless=new --screenshot` で呼ぶ（ダークは `?theme=dark` を `theme.js` が `data-theme` にする）。幅は 560px（Chrome の窓は 500px より狭くできず、狭くすると右が切れる）、高さは `<main>` の `data-height` に見出しの分を足す。Chrome がなければ撮らずに知らせる | シミュレーターで撮る（今の `shoot.mjs`） | シミュレーターで撮る |
 
 - **選び方**:
   - 探すのはリポジトリの直下と、その 1 つ下（`apps/*`・`packages/*` など）。
@@ -309,7 +310,8 @@ outputs: { swiftui: DSButton, expo: Button, html: button }
 - **名前の作り方**: トークンの道のりから、各出力の名前を決まりで作る。
   - SwiftUI: 最上位のグループが型（`color` → `DS.Color`、`font` → `DS.Font`、`duration` と `easing` → `DS.Motion`）、残りを camelCase にする（`color.secondary-label` → `DS.Color.secondaryLabel`、`font.title-1` → `DS.Font.title1`）。`space` と `radius` は、v1 と同じくグループの名前を前に付ける（`space.2` → `DS.Space.space2`、`radius.md` → `DS.Radius.radiusMd`）。
   - Dynamic Type の段は SwiftUI の名前に対応させる（`title-1` → `.title`、`caption-1` → `.caption`、`title-2` → `.title2` など）。
-  - CSS と NativeWind: 意味の段の名前をそのまま CSS 変数にする（`--secondary-label`、`--muted-foreground`）。
+  - CSS と NativeWind: 色は役割の名前をそのまま CSS 変数にする（`--secondary-label`、`--muted-foreground`）。ほかはグループの名前を前に付ける（`--space-2`・`--radius-md`・`--shadow-sm`・`--duration-fast`・`--easing-standard`）。文字は `font` の略記の `--font-<段>` と `--letter-spacing-<段>`。Claude の Design System のページが作る CSS 変数と同じ名前にしてあるので、部品の CSS は Design System の中でもそのまま効く（11節）。
+- **HTML の部品の作り**: 部品ごとに見本のページ `components/<outputs.html の名前>.html` と CSS `components/<名前>.css`。ページは `tokens.css`・`base.css`・部品の CSS を読み、例を `<main class="ds-page" data-group="…" data-height="…">` の中に並べる。土台で形が違うものは `<名前>.<土台>.html`・`.css` のひな形を持つ（install が `<名前>.html` として置く）。ひな形の決まりはテストで調べる: CSS の `var()` はトークンかひな形が宣言した変数だけ、色と余白・角丸・文字の値の直書きなし（線の 1px・2px と丸い端の 999px はよい）、クラスは `ds-` だけ、スクリプトは `theme.js` だけ、どの部品の仕様にも見本のページがある。
 - **色空間**: トークンは sRGB で持つ（`components` と `hex`）。shadcn/ui の初期値は OKLCH なので、ひな形を作るときに sRGB に変換し、色域の外は丸める。NativeWind の版と、`global.css` の色の書き方（hex か HSL の成分か）は、4 段階目に版を決めて書く（18節）。
 - **HTML とアプリ用のずれ**: 同じ部品の HTML 版とアプリ用の版のスクリーンショットを、カタログのページごとに並べて見せ、承認のときに見比べる。
 - **Expo の部品を Web に描いて HTML の見本に使う**（react-native-web）ことができれば、Expo では部品の実装が 1 つで済む。できるかは 4 段階目で確かめる（17節・18節）。
@@ -321,13 +323,24 @@ outputs: { swiftui: DSButton, expo: Button, html: button }
 
 ## 11. Claude の Design System への写し
 
-- 正はリポジトリ。init と update の最後に、Claude の Design System（Artifact の型）へ **一方向で** 写す（ページ上の編集は止める）。単独の Claude Design（claude.ai/design）は 2026-12-14 までに閉じて Claude の中に移るので、写し先は Claude の Design System にする。
-- 写すもの:
-  - トークン。`artifact-stage` が DTCG から Design System の受け付ける形（名前・値・使いどころ、ライトとダーク）に変える。v1 は Design System と同じ形で持っていたのでそのまま写せたが、v2 では変換が要る。受け付ける形は 2 段階目に確かめる。
-  - 文書（README・principles・foundations・components・patterns・copy）。
-  - HTML の部品と見本のページ、アプリ用の出力のスクリーンショット、表紙。
-- **Claude Design への決まり**も写す（README の節として）: 「この部品とトークンだけで案を組む。足りないものは、ある部品とトークンで仮の形を組み、案の下に『部品の候補』として、どの画面で何のために何が足りないかを書く」。
-- 写したら、写した中身のハッシュを `design-system.json` の `artifact.hash` に書く。check はハッシュが今のファイルと違えば「Design System が古い」と知らせる。
+- 正はリポジトリ。init と update の最後に、Claude の Design System（Artifact の型）へ **一方向で** 写す。単独の Claude Design（claude.ai/design）は 2026-12-14 までに閉じて Claude の中に移るので、写し先は Claude の Design System にする。
+- 索引（`project/design-system.json`）は `"editing": "code"` にする（コードから写したもので、ページは読むだけ。型の決まり）。2 回目からは、今の索引を読んで `--index` に渡し、そのキーと名前を保って `editing` と `lastChange` だけを書き換える。
+- `cli.mjs artifact-stage` が `<dir>/project/` に並べるもの（2026-10-30 に型の手順 `SKILL.md`・`format.md`・`cover.md` と突き合わせた）:
+
+  | 置き場所 | 中身 |
+  | :- | :- |
+  | `tokens.json` | Design System の形に変えたトークン（下）。`meta.source` は `product-design` |
+  | `tokens.css` | 編集できないページは自分で作らないので、写す側が作る。1 行目は型の決まりの `/* <名前> — generated from tokens.json */`。中身は HTML の出力の `tokens.css` に、書体の変数（`--font-<書体>`）と文字の段のクラス（`.headline` など）を足したもの |
+  | `README.md` | `design-system/README.md` に、「Claude Design で案を作るときの決まり」（この部品とトークンだけで組む。足りないものは仮の形で組み、案の下に「部品の候補」を書く）と、「正はリポジトリ。変えるときは `/product-design:update`」の節を足したもの |
+  | `product-principles.md`・`principles.md`・`foundations.md`・`patterns.md`・`copy.md` | 文書の節 |
+  | `components/<PascalCase>/README.md` | 部品の仕様から先頭のメタデータを除き、目的を見出しのすぐ下に置いたもの（最初の文が要約になる） |
+  | `components/<PascalCase>/preview.html` | 見本のページの `<main>` の中身。1 行目は `<!-- @dsCard group="<data-group>" height=<data-height> -->` |
+  | `components/bundle.css` | `base.css` と部品の CSS をつないだもの（トークンは `tokens.css` が先に読まれる） |
+  | `components/Cover/preview.html` | 表紙。型の `cover.md` に従ってスキルが作る（色の面と模様と名前） |
+
+- **トークンの形**: Design System は DTCG を読まない（名前から値への入れ子は、ページで空になり、最初の編集で消える）。そこで、意味の段だけを、解決した値の一覧にする: `color`（`themes` は light と dark、値は hex）、`type`（`families` と `groups[].styles`。行の高さは比のまま）、`spacing`・`radius`・`shadow`（影はテーマごとの文字列）、それ以外のグループ（`duration`・`easing` や足した役割）は同じ形の族にする。名前は `tokens.css` の変数の名前から `--` を外したもの（族をまたいで重ならない）。廃止したトークンは `usage` の頭に「（廃止: …）」と書く。基本の段は写さない。
+- 写したら、写した中身の元（トークン、文書、部品の仕様、HTML の出力）のハッシュを `design-system.json` の `artifact.hash` に書く（`cli.mjs artifact-done`）。check はハッシュが今のファイルと違えば「Design System が古い」と知らせる。
+- アプリ用の出力のスクリーンショットは、アプリ用の出力ができる 3 段階目から、アセットとして上げる。
 - 写せるのは、Artifact のツールが使える手元のセッションだけ。`--local` なら写さない。
 
 ## 12. 足りないものが見つかったとき
@@ -439,10 +452,11 @@ plugins/product-design/
     update/SKILL.md            /product-design:update
     check/SKILL.md             /product-design:check
   scripts/
-    check.mjs                  トークンの検証、根拠のチェック、各出力のコードのチェック（1 ファイルで完結。アプリに写す）
-    cli.mjs                    スキルから呼ぶ CLI（1 段階目は install / stage / trace / status。tokens / screenshot / migrate / artifact-stage / artifact-done は出力とともに足す）
-    shoot.mjs                  スクリーンショット（アプリに写す）
-    outputs/                   出力ごとの生成（html.mjs / swiftui.mjs / expo.mjs）
+    check.mjs                  トークンの検証、根拠のチェック、各出力のコードのチェック、HTML の tokens.css の生成と
+                               Design System に写した中身のハッシュ（古くなったものを見つけるため。1 ファイルで完結。アプリに写す）
+    cli.mjs                    スキルから呼ぶ CLI（install / stage / trace / tokens / screenshot / artifact-stage / artifact-done / status。
+                               migrate はアプリ用の出力とともに足す。HTML のスクリーンショットと Design System の形への変換もここ）
+    shoot.mjs                  シミュレーターのスクリーンショット（アプリに写す。3 段階目から）
   templates/
     product/principles.md      ① のひな形
     docs/                      ②〜④ の文書のひな形
@@ -450,11 +464,13 @@ plugins/product-design/
     tokens/shadcn.json
     components/                部品の仕様のひな形（<名前>.<土台>.md があれば、その土台ではそれを <名前>.md として使う）
     candidates/README.md       docs/design-candidates/ の書き方
-    html/ swiftui/ expo/       出力ごとの部品とカタログのひな形（2 段階目から）
+    html/                      HTML の出力のひな形（base・theme.js・見本の一覧・部品ごとのページと CSS。<名前>.<土台>.* が優先）
+    swiftui/ expo/             アプリ用の出力のひな形（3・4 段階目から）
   tests/                       node --test
 ```
 
-- `install` は、`design-system.json` を新しく作るときだけひな形を置く。2 回目からは `check.mjs` を写し直すだけで、アプリにないひな形は `available` に並べ、`--add` で名前を挙げたものだけ置く（アプリで消した部品の仕様や文書を、黙って戻さないため）。
+- `install` は、`design-system.json` を新しく作るときだけひな形を置く。2 回目からは `check.mjs` を写し直すだけで、アプリにないひな形は `available` に並べ、`--add` で名前を挙げたものだけ置く（アプリで消した部品の仕様や文書を、黙って戻さないため）。ただし `outputs.html` のない設定（1 段階目で作ったもの）には、`outputs.html` を足して HTML のひな形をすべて置く（HTML の出力はいつも作るため）。最後に `tokens.css` を作り直す。
+- `status` の `next` は、`outputs` に出力が 1 つでもあれば ⑤（`outputs`）も数える。
 
 ## 16. 今の design-system からの移行
 
@@ -524,7 +540,7 @@ plugins/product-design/
 ## 17. 作る順番
 
 1. **土台**（2026-10-30 に実装）: `plugins/product-design/` を作る（古いプラグインは残し、v2 のアプリを断る版を同時に出す。16節）。①〜④ の段（ひな形と一問一答）、DTCG のトークンと検証、根拠のチェックと影響の一覧（5節）、候補のファイル、版と CHANGELOG。プラットフォームに依らない部分。shadcn/ui の名前の突き合わせと、文字の段の決定（8節）もここで行った。`swiftui.system` の値を HIG の値の表と比べる処理は、HIG の値の表が要るので 3 段階目に回した（1 段階目は書ける名前だけを調べる）。
-2. **HTML の出力**と、Claude の Design System への写し（いつも要るので先に作る）。Design System が受け付けるトークンの形を確かめる。
+2. **HTML の出力**と、Claude の Design System への写し（2026-10-30 に実装）。`tokens.css` の生成と古くなったときの知らせ、部品 18 種類の見本のページと CSS（土台ごと）とその決まりのテスト、手元の Chrome でのスクリーンショット、影響の一覧から HTML のファイルまで（トークンから部品へは CSS を通って）、Design System の形への変換と写し（`artifact-stage`・`artifact-done`・写した中身が古いときの知らせ）、スキルの ⑤ と写し。Design System が受け付けるトークンの形を確かめ（11節）、DTCG の Resolver には移さないと決めた（18節）。
 3. **SwiftUI の出力**を今のものから作り直し、v1 からの移行を作る。使う側（16節の表）の対応が済んだら、古いプラグインを消す。
 4. **Expo の出力**（`tokens.ts`・`global.css`・`tailwind.config.js`・React Native Reusables を土台にした部品・カタログ・TSX のチェック）。NativeWind の版とカタログの開き方を決め、react-native-web で部品を HTML の見本に使えるかを確かめる。
 
@@ -534,9 +550,10 @@ plugins/product-design/
 
 - **shadcn/ui を土台にするときの文字の段**（2026-10-30 に決定）。shadcn/ui には文字の段がないので、HIG の Dynamic Type の名前に揃えた。Android も同じくらい大事なアプリで Material 3 の段が要るようになったら、足すかどうかを決め直す。
 - **shadcn/ui の名前と HIG の値の出どころ**。shadcn/ui の名前は 2026-10-30 に公式の資料と突き合わせた（8節）。HIG のひな形のシステムの色の値（背景・区切り・塗り・薄い文字）は記憶に基づく値で、iOS の版で変わっていることもありうる。3 段階目で HIG の値の表を作るときに、シミュレーターで書き出した値と比べ直す。
-- **DTCG のテーマ**。DTCG 2025.10 の Format の仕様はテーマの切り替えを持たない。テーマを扱う Resolver の仕様が、2025.10 と一緒に安定版として出ているかもしれない（要確認）。最初の版は、作りが簡単な `$extensions` の `modes` で始める。1 段階目では確かめきれなかったので、2 段階目（Claude の Design System に写すとき）に、Resolver の状態と道具の対応を確かめ、使えるなら移す。`modes` のままだと、ほかの DTCG の道具はダークの値を読まない。
+- **DTCG のテーマ**（2026-10-30 に確かめた）。DTCG 2025.10 の Format の仕様はテーマの切り替えを持たない。テーマを扱う Resolver Module 2025.10 は、2025-10-28 に Final Community Group Report（安定版）として出ている（`sets`・`modifiers` の `contexts`・`resolutionOrder`。テーマごとにファイルを分けなくてよい）。ただし、仕様の中で `version` の値が食い違い（`2025-10-01`・`2025-11-01`、新しい草案では `2025.10`）、道具の対応もばらつく（Terrazzo は 2.0 で対応、Style Dictionary の対応は確かめられなかった）。写し先の Claude の Design System は DTCG をそもそも読まず、どのみち変換が要る。そこで、**`$extensions` の `modes` のままにする**。`modes` のままだと、ほかの DTCG の道具はダークの値を読まないので、DTCG の道具で読む使う側が現れたら、`tokens.json` から Resolver の文書（`resolver.json`）を書き出す形で足す。
 - **NativeWind と色の書き方**。今の shadcn/ui は Tailwind v4 と OKLCH を使うが、NativeWind v4 は Tailwind v3 系で、React Native が `oklch()` を解釈できるかもわからない。だからトークンは sRGB で持ち、出力ごとに書き方を変える（10節）。NativeWind の版は 4 段階目に決める。
-- **Design System のトークンの形**。v2 で DTCG に変えたので、写すときに変換が要る。Design System が受け付ける形は、2 段階目に確かめる。
+- **Design System のトークンの形**（2026-10-30 に確かめ、変換を作った。11節）。Design System の型（contract 0.2.47）が変われば、変換と並べ方も直す。型の手順はスキルが写すたびに読むが、`artifact-stage` の形はコードに書いてある。
+- **Design System の「コードから写した」印**。`"editing": "code"` は、型の上では Claude Code の `/design-sync` で写したものを指し、ページや、Design System を読む Claude は「変えるならコードを直して `/design-sync` をやり直す」と案内するかもしれない。README の節に「変えるときは `/product-design:update`」と書いて補う。時間と動きの族（`duration`・`easing`）がページに表示されるかは、写して確かめる（型は motion の族を持たないが、ほかの族は単一の CSS の値なら節になる）。
 - **HIG の値の写し**。HTML の出力で iOS をまねるとき、システムの色の値は HIG に載っている値を書き写すので、OS の版で値が変わるとずれる。SwiftUI の出力はシステムの色をそのまま使うので、ずれは HTML の側にだけ出る。
 - **HTML とアプリ用の部品のずれ**。同じ仕様から別々に実装するので、ずれは残る。スクリーンショットを並べて見比べることで補う。Expo では react-native-web で 1 つにできるかもしれない（4 段階目で確かめる）。
 - **SF Pro**。ライセンスが Apple の OS 向けのソフトの画面の案を作る用途に限られるので、HTML の出力では Web フォントとして埋め込まず、`system-ui` を指定する。
