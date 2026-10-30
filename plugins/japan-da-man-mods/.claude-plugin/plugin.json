@@ -1,6 +1,6 @@
 {
   "name": "japan-da-man-mods",
-  "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow, dev-extras, mod-dev, factory, design-system, product-design, feature-docs and observability",
+  "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow, dev-extras, mod-dev, factory, design-system, product-design, feature-docs, observability and usable-ui",
   "author": {
     "name": "japan-da-man"
   },
@@ -19,6 +19,7 @@
     "design-system",
     "feature-docs",
     "product-design",
-    "observability"
+    "observability",
+    "usable-ui"
   ]
 }

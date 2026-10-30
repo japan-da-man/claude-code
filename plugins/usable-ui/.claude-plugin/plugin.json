@@ -1,0 +1,6 @@
+{
+  "name": "usable-ui",
+  "description": "[skills] Take AI-made UI from \"operable\" to \"usable\": build fixes the main user, their goal and the product's priority before making a screen and builds in four checks (signifiers, feedback, UX writing, information architecture); review has a separate-context subagent check a screen against those four checks only, splitting must-fix items from polish and handing trade-offs back to people",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}
