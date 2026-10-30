@@ -757,10 +757,19 @@ export function runCheck(repo, { strict = false } = {}) {
   const cand = readCandidates(repo, config)
   dsErrors.push(...cand.errors)
 
-  // アプリのコードのチェックは、出力（2 段階目以降）ができてから足す。
+  const stale = []
+  const html = config.outputs?.html?.code
+  if (html && !tok.errors.length) {
+    const file = posix(join(html, 'tokens.css'))
+    const current = readIfExists(repo, file)
+    if (current === null) stale.push(`${file} がありません（/product-design:update で作る）`)
+    else if (current !== generateCss(root)) stale.push(`${file} が tokens.json と合っていません（/product-design:update で作り直す）`)
+  }
+
+  // アプリのコードのチェックは、アプリ用の出力（3 段階目以降）ができてから足す。HTML の出力は生成物なので調べない。
   const violations = []
   const ok = violations.length === 0 && (!strict || dsErrors.length === 0)
-  return { ok, violations, ds_errors: dsErrors, warnings, stale: [], deprecated, candidates: cand.open, allowed: 0, files: 0 }
+  return { ok, violations, ds_errors: dsErrors, warnings, stale, deprecated, candidates: cand.open, allowed: 0, files: 0 }
 }
 
 export function formatResult(r) {
