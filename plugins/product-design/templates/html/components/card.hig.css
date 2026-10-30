@@ -1,0 +1,22 @@
+/* カード（HIG に部品はない。まとまりのある一覧の行と同じ面に、少し浮いた影） */
+.ds-card {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--secondary-system-grouped-background);
+  box-shadow: var(--shadow-sm);
+}
+
+.ds-card-title {
+  margin: 0;
+  font: var(--font-headline);
+  letter-spacing: var(--letter-spacing-headline);
+}
+
+.ds-card-text {
+  margin: 0;
+  font: var(--font-subheadline);
+  letter-spacing: var(--letter-spacing-subheadline);
+  color: var(--secondary-label);
+}

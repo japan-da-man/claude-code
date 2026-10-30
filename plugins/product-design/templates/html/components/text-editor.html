@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>複数行の入力</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../base.css">
+<link rel="stylesheet" href="text-field.css">
+<link rel="stylesheet" href="text-editor.css">
+<script src="../theme.js"></script>
+</head>
+<body>
+<header class="ds-page-header">
+  <h1 class="ds-page-title">複数行の入力</h1>
+  <p class="ds-page-lead">仕様: design-system/components/text-editor.md</p>
+</header>
+<main class="ds-page" data-group="入力" data-height="520">
+  <section class="ds-example">
+    <h2 class="ds-example-title">ふつう</h2>
+    <div class="ds-stack">
+      <div class="ds-field ds-field--bordered">
+        <label class="ds-field-label" for="te-memo">メモ</label>
+        <textarea class="ds-field-input ds-text-editor" id="te-memo" rows="4" placeholder="気づいたことを書く" aria-describedby="te-memo-message" data-testid="memo-editor"></textarea>
+        <p class="ds-field-message" id="te-memo-message">200 文字まで</p>
+      </div>
+    </div>
+  </section>
+  <section class="ds-example">
+    <h2 class="ds-example-title">エラー・押せない</h2>
+    <div class="ds-stack">
+      <div class="ds-field ds-field--bordered">
+        <label class="ds-field-label" for="te-error">メモ</label>
+        <textarea class="ds-field-input ds-text-editor" id="te-error" rows="2" aria-invalid="true" aria-describedby="te-error-message">とても長いメモ…</textarea>
+        <p class="ds-field-message" id="te-error-message">200 文字を超えています（あと 12 文字減らす）</p>
+      </div>
+      <div class="ds-field ds-field--bordered">
+        <label class="ds-field-label" for="te-disabled">メモ</label>
+        <textarea class="ds-field-input ds-text-editor" id="te-disabled" rows="2" disabled>終わった予定のメモは変えられません</textarea>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

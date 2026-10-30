@@ -1,0 +1,26 @@
+/* 一覧の見出し（HIG。まとまりの上の小さな見出しと、右の補足） */
+.ds-list-section {
+  gap: var(--space-1);
+}
+
+.ds-list-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-inline: var(--space-4);
+}
+
+.ds-list-header-title {
+  margin: 0;
+  font: var(--font-footnote);
+  letter-spacing: var(--letter-spacing-footnote);
+  color: var(--secondary-label);
+  text-transform: uppercase;
+}
+
+.ds-list-header-detail {
+  font: var(--font-footnote);
+  letter-spacing: var(--letter-spacing-footnote);
+  color: var(--secondary-label);
+}

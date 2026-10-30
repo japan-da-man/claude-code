@@ -1,0 +1,42 @@
+/* 印（HIG に部品はない。角丸の小さな面と短い文字） */
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 20px;
+  padding: 0 var(--space-2);
+  border-radius: 999px;
+  font: var(--font-caption-1);
+  font-weight: 600;
+  letter-spacing: var(--letter-spacing-caption-1);
+  min-height: 20px;
+}
+
+.ds-badge--neutral {
+  background: var(--fill);
+  color: var(--label);
+}
+
+.ds-badge--accent {
+  background: var(--tint);
+  color: var(--on-tint);
+}
+
+.ds-badge--error {
+  background: var(--destructive);
+  color: var(--on-tint);
+}
+
+.ds-badge--success {
+  background: var(--success);
+  color: var(--on-tint);
+}
+
+.ds-badge--warning {
+  background: var(--warning);
+  color: var(--on-tint);
+}
+
+.ds-badge--info {
+  background: var(--info);
+  color: var(--on-tint);
+}
