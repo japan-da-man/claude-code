@@ -1,0 +1,45 @@
+/* アイコンのボタン（shadcn/ui の size="icon"。主な色は default、目立たせない色は ghost） */
+.ds-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--easing-standard);
+}
+
+.ds-icon-button .ds-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.ds-icon-button--accent {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: var(--shadow-sm);
+}
+
+.ds-icon-button--muted {
+  color: var(--foreground);
+}
+
+.ds-icon-button--accent:hover,
+.ds-icon-button--accent[data-state="pressed"] {
+  opacity: 0.9;
+}
+
+.ds-icon-button--muted:hover,
+.ds-icon-button--muted[data-state="pressed"] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.ds-icon-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+  pointer-events: none;
+}

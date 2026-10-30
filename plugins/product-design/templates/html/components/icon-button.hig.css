@@ -1,0 +1,36 @@
+/* アイコンのボタン（HIG。押せる場所は 44×44pt） */
+.ds-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--easing-standard);
+}
+
+.ds-icon-button .ds-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.ds-icon-button--accent {
+  color: var(--tint);
+}
+
+.ds-icon-button--muted {
+  color: var(--secondary-label);
+}
+
+.ds-icon-button:active,
+.ds-icon-button[data-state="pressed"] {
+  opacity: 0.6;
+}
+
+.ds-icon-button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}

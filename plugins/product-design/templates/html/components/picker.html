@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>選択</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../base.css">
+<link rel="stylesheet" href="picker.css">
+<script src="../theme.js"></script>
+</head>
+<body>
+<header class="ds-page-header">
+  <h1 class="ds-page-title">選択</h1>
+  <p class="ds-page-lead">仕様: design-system/components/picker.md</p>
+</header>
+<main class="ds-page" data-group="操作" data-height="380">
+  <section class="ds-example">
+    <h2 class="ds-example-title">状態（ふつう・押せない）</h2>
+    <div class="ds-picker-group">
+      <button class="ds-picker-row" type="button" aria-haspopup="listbox" aria-expanded="false" data-testid="sort-picker"><span class="ds-picker-row-label">並べ替え</span><span class="ds-picker-row-value">新しい順</span><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5M7 9l5-5 5 5"/></svg></button>
+      <button class="ds-picker-row" type="button" aria-haspopup="listbox" aria-expanded="false" disabled><span class="ds-picker-row-label">表示</span><span class="ds-picker-row-value">一覧</span><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5M7 9l5-5 5 5"/></svg></button>
+    </div>
+  </section>
+  <section class="ds-example">
+    <h2 class="ds-example-title">開いている</h2>
+    <div class="ds-picker-group">
+      <button class="ds-picker-row" type="button" aria-haspopup="listbox" aria-expanded="true"><span class="ds-picker-row-label">並べ替え</span><span class="ds-picker-row-value">新しい順</span><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 15 5 5 5-5M7 9l5-5 5 5"/></svg></button>
+      <ul class="ds-picker-options" role="listbox" aria-label="並べ替え">
+        <li class="ds-picker-option" role="option" aria-selected="true"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>新しい順</li>
+        <li class="ds-picker-option" role="option" aria-selected="false"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>古い順</li>
+        <li class="ds-picker-option" role="option" aria-selected="false"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>名前の順</li>
+      </ul>
+    </div>
+  </section>
+</main>
+</body>
+</html>

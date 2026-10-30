@@ -14,9 +14,9 @@ const tokensOf = (base) => JSON.parse(read(new URL(`../templates/tokens/${base}.
 const cssInHtml = (html) => [...html.matchAll(/<style>([\s\S]*?)<\/style>/g), ...html.matchAll(/style="([^"]*)"/g)].map((m) => m[1]).join('\n')
 const declared = (css) => new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]))
 
-// 余白・角丸・文字に、数の直書きを使わない（線の太さの 1px・2px は許す）。
+// 余白・角丸・文字に、数の直書きを使わない（線の太さの 1px・2px と、丸い端の 999px は許す）。
 const SIZED = /(?:^|[;{\s])((?:margin|padding|inset)[\w-]*|gap|row-gap|column-gap|border-radius|font|font-size|letter-spacing|line-height)\s*:\s*([^;}]*)/g
-const LITERAL = /(?<![\w.-])(?!0(?:px|rem|em)?\b)(?!(?:1|2)px\b)\d+(?:\.\d+)?(?:px|rem|em)\b/
+const LITERAL = /(?<![\w.-])(?!0(?:px|rem|em)?\b)(?!(?:1|2|999)px\b)\d+(?:\.\d+)?(?:px|rem|em)\b/
 
 function problems(css) {
   const out = []
