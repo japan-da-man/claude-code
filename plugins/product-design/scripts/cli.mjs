@@ -1,7 +1,8 @@
 // スキルから呼ぶ CLI。結果は JSON で出す。
 //   node cli.mjs install <repo> [--base hig|shadcn] [--add <path,…>]
 //       design-system.json（v2）がなければ作り、ひな形を置く。すでにあれば check.mjs だけを写し、
-//       置いていないひな形を available に並べる（消した部品を戻さないため、--add で名前を挙げたものだけ置く）
+//       置いていないひな形を available に並べる（消した部品を戻さないため、--add で名前を挙げたものだけ置く）。
+//       HTML の出力（outputs.html）がなければ足して、そのひな形を置く。最後に tokens.css を作り直す
 //   node cli.mjs stage <repo> <段> <pending|approved>  段の進み具合を書く。承認したら、その下の承認済みの段は pending に戻す
 //   node cli.mjs trace <repo> --from <ID|トークン>      影響を受けるもの（原則 → トークン・基礎・部品・パターン・文言）を下へたどる
 //   node cli.mjs tokens <repo>                         HTML の出力の tokens.css を tokens.json から作り直す
@@ -38,7 +39,7 @@ export function defaultConfig(base) {
     components: `${DS_DIR}/components`,
     tokens: `${DS_DIR}/tokens.json`,
     candidates: 'docs/design-candidates',
-    outputs: {},
+    outputs: { html: { code: `${DS_DIR}/html` } },
     protected_paths: [`${DS_DIR}/**`, 'docs/product/principles.md'],
     check: { command: `node ${DS_DIR}/check.mjs`, exclude: [] },
   }
@@ -55,17 +56,25 @@ function writeConfig(repo, config) {
   writeFileSync(file, JSON.stringify(config, null, 2) + '\n')
 }
 
-// 部品の仕様のひな形。<名前>.<土台>.md があれば、それを <名前>.md として使う。
-export function componentTemplates(base) {
-  const dir = join(TEMPLATES, 'components')
+// ひな形の道のりのうち、<名前>.<土台>.<拡張子> があれば、その土台ではそれを <名前>.<拡張子> として使う（ほかの土台のものは使わない）。
+// 返すのは、置く道のり → プラグインの中のファイル。
+export function pickForBase(dir, base) {
+  const bases = Object.keys(REQUIRED).join('|')
+  const named = new RegExp(`^(.*?)(?:\\.(${bases}))?(\\.[^./]+)$`)
   const picked = new Map()
-  for (const f of readdirSync(dir).filter((n) => n.endsWith('.md')).sort()) {
-    const m = /^(.+?)(?:\.(\w+))?\.md$/.exec(f)
+  for (const f of filesUnder(dir)) {
+    const m = named.exec(posix(f))
     if (m[2] && m[2] !== base) continue
-    if (!m[2] && picked.has(m[1])) continue
-    picked.set(m[1], join(dir, f))
+    const key = m[1] + m[3]
+    if (!m[2] && picked.has(key)) continue
+    picked.set(key, join(dir, f))
   }
   return picked
+}
+
+// 部品の仕様のひな形（名前 → ファイル）。
+export function componentTemplates(base) {
+  return new Map([...pickForBase(join(TEMPLATES, 'components'), base)].filter(([k]) => k.endsWith('.md')).map(([k, f]) => [k.slice(0, -3), f]))
 }
 
 // ひな形とアプリの中の置き場所の組（[プラグインの中のファイル, アプリの中の道のり]）。
@@ -76,6 +85,7 @@ function templateFiles(config) {
     [join(TEMPLATES, 'tokens', `${config.base}.json`), config.tokens],
     ...[...componentTemplates(config.base)].map(([name, from]) => [from, join(config.components, `${name}.md`)]),
     [join(TEMPLATES, 'candidates', 'README.md'), join(config.candidates, 'README.md')],
+    ...(config.outputs?.html ? [...pickForBase(join(TEMPLATES, 'html'), config.base)].map(([rel, from]) => [from, join(config.outputs.html.code, rel)]) : []),
   ].map(([from, to]) => [from, posix(to)])
 }
 
@@ -88,6 +98,13 @@ export function install(repo, { base, add = [] } = {}) {
     config = defaultConfig(base)
     writeConfig(repo, config)
   }
+  // HTML の出力はいつも作る。outputs.html のない設定（1 段階目で作ったもの）には足して、HTML のひな形をすべて置く。
+  const htmlAdded = !config.outputs?.html
+  if (htmlAdded) {
+    config.outputs = { ...config.outputs, html: { code: `${DS_DIR}/html` } }
+    writeConfig(repo, config)
+  }
+  const placeAll = (to) => created || (htmlAdded && to.startsWith(`${config.outputs.html.code}/`))
   const templates = templateFiles(config)
   const unknown = add.filter((p) => !templates.some(([, to]) => to === p))
   if (unknown.length) throw new Error(`--add に、ひな形のない道のりがあります: ${unknown.join(', ')}`)
@@ -97,11 +114,11 @@ export function install(repo, { base, add = [] } = {}) {
   for (const [from, to] of templates) {
     const abs = join(repo, to)
     if (existsSync(abs)) {
-      if (created || add.includes(to)) skipped.push(to)
+      if (placeAll(to) || add.includes(to)) skipped.push(to)
       continue
     }
     // 2 回目からは、名前を挙げたものだけ置く（消した部品の仕様や文書を、黙って戻さない）。
-    if (!created && !add.includes(to)) {
+    if (!placeAll(to) && !add.includes(to)) {
       available.push(to)
       continue
     }
@@ -111,8 +128,9 @@ export function install(repo, { base, add = [] } = {}) {
   }
   mkdirSync(join(repo, DS_DIR), { recursive: true })
   copyFileSync(CHECK, join(repo, DS_DIR, 'check.mjs'))
+  const css = tokens(repo)
   const note = !created && base && base !== config.base ? `設定の base は ${config.base} のままです（--base ${base} は使っていません。土台を変えるのは update でのメジャーな変更）` : undefined
-  return { config: created ? 'created' : 'kept', base: config.base, check: `${DS_DIR}/check.mjs`, copied, skipped, available, ...(note ? { note } : {}) }
+  return { config: created ? 'created' : 'kept', base: config.base, check: `${DS_DIR}/check.mjs`, copied, skipped, available, tokens: css, ...(htmlAdded && !created ? { html_added: true } : {}), ...(note ? { note } : {}) }
 }
 
 export function stage(repo, name, state) {
