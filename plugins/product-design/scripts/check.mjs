@@ -9,6 +9,7 @@
 //   - 原則・基礎・部品・パターン・文言・トークンが、上の段の ID を根拠に持っているか（trace-*）
 //   - 未決の候補（docs/design-candidates/ の status: open）
 // 終了コード: 0 = 通った、1 = アプリのコードの違反（--strict のときはデザインシステムの中の不備も）、2 = チェックが成り立たない。
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -749,6 +750,30 @@ export function readCandidates(repo, config) {
 }
 
 // ---------------------------------------------------------------------------
+// Claude の Design System に写した中身
+
+function filesIn(repo, dir) {
+  const abs = join(repo, dir)
+  if (!existsSync(abs)) return []
+  return readdirSync(abs, { recursive: true })
+    .map(String)
+    .filter((p) => statSync(join(abs, p)).isFile() && basename(p) !== '.DS_Store')
+    .map((p) => posix(join(dir, p)))
+}
+
+// 写す中身の元（トークン、文書、部品の仕様、HTML の出力）のハッシュ。写したときの値と違えば、Design System が古い。
+export function artifactHash(repo, config) {
+  const files = [config.tokens, config.product_principles, ...(config.docs ?? []), ...mdFiles(repo, config.components ?? posix(join(DS_DIR, 'components'))), ...(config.outputs?.html?.code ? filesIn(repo, config.outputs.html.code) : [])]
+  const h = createHash('sha256')
+  for (const p of [...new Set(files)].sort()) {
+    h.update(`${p}\0`)
+    h.update(readIfExists(repo, p) ?? 'missing')
+    h.update('\0')
+  }
+  return h.digest('hex')
+}
+
+// ---------------------------------------------------------------------------
 // 実行
 
 export function loadConfig(repo) {
@@ -797,6 +822,10 @@ export function runCheck(repo, { strict = false } = {}) {
     const current = readIfExists(repo, file)
     if (current === null) stale.push(`${file} がありません（/product-design:update で作る）`)
     else if (current !== generateCss(root)) stale.push(`${file} が tokens.json と合っていません（/product-design:update で作り直す）`)
+  }
+
+  if (config.artifact?.hash && artifactHash(repo, config) !== config.artifact.hash) {
+    stale.push(`Design System（${config.artifact.url}）に写した中身が古くなっています（/product-design:update で写し直す）`)
   }
 
   // アプリのコードのチェックは、アプリ用の出力（3 段階目以降）ができてから足す。HTML の出力は生成物なので調べない。

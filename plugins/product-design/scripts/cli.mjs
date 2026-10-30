@@ -7,13 +7,16 @@
 //   node cli.mjs trace <repo> --from <ID|トークン>      影響を受けるもの（原則 → トークン・基礎・部品・パターン・文言 → HTML の出力のファイル）を下へたどる
 //   node cli.mjs tokens <repo>                         HTML の出力の tokens.css を tokens.json から作り直す
 //   node cli.mjs screenshot <repo> [--pages <名前,…>]   HTML の見本のページを手元の Chrome でライトとダークで撮る（Chrome がなければ撮らずに知らせる）
+//   node cli.mjs artifact-stage <repo> <dir> [--title <名前>] [--index <今の索引>] [--by <名前>]
+//       Claude の Design System に写すファイルを <dir>/project/ に並べる（トークンは Design System の形に変える）
+//   node cli.mjs artifact-done <repo> <url>            写した Artifact の url と中身のハッシュを design-system.json に書く
 //   node cli.mjs status <repo>                         チェックの結果に、段の進み具合と古くなった check.mjs を加えて出す
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { CONFIG_PATH, REQUIRED, STAGES, collectTrace, cssDeclarations, cssFamily, deepResolve, flattenTokens, generateCss, isDeprecated, loadConfig, runCheck, traceFrom, typeOf, validateTokens } from './check.mjs'
+import { CONFIG_PATH, REQUIRED, STAGES, artifactHash, collectTrace, cssDeclarations, cssFamily, deepResolve, flattenTokens, generateCss, isDeprecated, loadConfig, parseFrontMatter, runCheck, traceFrom, typeOf, validateTokens } from './check.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CHECK = join(ROOT, 'scripts', 'check.mjs')
@@ -232,6 +235,107 @@ export function toDesignSystemTokens(root, { title, base, ds_version, tokens: fi
   return out
 }
 
+const pascal = (name) => name.split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join('')
+
+// Design System の README に足す節。写したものだけを読む人（Claude Design など）への決まり。
+function claudeDesignRules(config) {
+  return `
+
+## Claude Design で案を作るときの決まり
+
+- この Design System の部品とトークンだけで案を組む。色・文字・余白の値を直に書かない。
+- 部品の見本は \`components/bundle.css\` の \`ds-*\` のクラスで書いてある。案でも同じクラスとトークンの CSS 変数を使う。
+- 足りないものがあれば、ある部品とトークンで仮の形を組んで案は先に進め、案の下に「部品の候補」として、どの画面で、何のために、何が足りないかを書く。
+
+## この Design System について
+
+- 正はアプリのリポジトリ（\`design-system/\`）で、ここはそこから一方向に写したもの。このページでは直せない。
+- 変えるときは、リポジトリで \`/product-design:update\` を実行する（決まりを変え、ここにも写し直す）。
+- 版 ${config.ds_version}、土台 ${config.base === 'hig' ? 'Apple HIG' : 'shadcn/ui ＋ Tailwind'}。
+`
+}
+
+// 部品の仕様を、Design System の部品の README にする（最初の文が要約になるよう、目的を見出しのすぐ下に置く）。
+function componentReadme(spec, file) {
+  const { body } = parseFrontMatter(spec)
+  const title = /^# (.+)$/m.exec(body)?.[1] ?? ''
+  const purpose = /^## 目的\s*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(body)?.[1].trim() ?? ''
+  const rest = body.replace(/^# .+$/m, '').replace(/^## 目的\s*\n[\s\S]*?(?=^## |(?![\s\S]))/m, '').trim()
+  return `# ${title}\n\n${purpose}\n\n${rest}\n\n---\n\n仕様の正はリポジトリの \`${file}\`。\n`
+}
+
+// 見本のページの <main> を、Design System の部品の preview.html にする（1 行目は Design System のカードの印）。
+function componentPreview(page) {
+  const m = /<main class="ds-page" data-group="([^"]+)" data-height="(\d+)">([\s\S]*?)<\/main>/.exec(page)
+  if (!m) return null
+  return `<!-- @dsCard group="${m[1]}" height=${m[2]} -->\n<main class="ds-page">${m[3].replace(/\s+$/, '')}\n</main>\n`
+}
+
+// Design System の tokens.css。編集できないページは自分で作らないので、写す側が作る（1 行目は型の決まりの印）。
+function designSystemCss(title, root, ds) {
+  const families = Object.entries(ds.type.families).map(([k, v]) => `  --font-${k}: ${v};`)
+  const styles = ds.type.groups.flatMap((g) => g.styles).map((s) => `.${s.name} { font: var(--font-${s.name}); letter-spacing: var(--letter-spacing-${s.name}); }`)
+  return [`/* ${title} — generated from tokens.json */`, generateCss(root), ':root {', ...families, '}', '', ...styles, ''].join('\n')
+}
+
+// Design System に写すファイルを <dir>/project/ に並べる。Artifact の publish に root: <dir>、file_path: 索引、files: 残りを渡す。
+// index に今の索引（読んで保存したもの）を渡すと、そのキーと名前を保って、編集を止めた印と lastChange だけを書き換える。
+export function artifactStage(repo, dir, { title, index, by = 'Claude', now = new Date().toISOString() } = {}) {
+  const config = loadConfig(repo)
+  const code = config.outputs?.html?.code
+  if (!code) throw new Error(`${CONFIG_PATH} に outputs.html がありません`)
+  const root = JSON.parse(readFileSync(join(repo, config.tokens), 'utf8'))
+  const { errors } = validateTokens(root, config.base)
+  if (errors.length) throw new Error(`${config.tokens} に誤りがあるので写せません（${errors.length} 件。最初: ${errors[0]}）`)
+  const readme = readFileSync(join(repo, DS_DIR, 'README.md'), 'utf8')
+  const name = title ?? /^# (.+)$/m.exec(readme)?.[1] ?? basename(repo)
+
+  const out = join(dir, 'project')
+  rmSync(out, { recursive: true, force: true })
+  const files = {}
+  const put = (rel, text) => {
+    mkdirSync(dirname(join(out, rel)), { recursive: true })
+    writeFileSync(join(out, rel), text)
+    files[`project/${rel}`] = `project/${rel}`
+  }
+  const ds = toDesignSystemTokens(root, { title: name, ...config })
+  put('tokens.json', JSON.stringify(ds, null, 2) + '\n')
+  put('tokens.css', designSystemCss(name, root, ds))
+  put('README.md', readme.trimEnd() + claudeDesignRules(config))
+  put('product-principles.md', readFileSync(join(repo, config.product_principles), 'utf8'))
+  for (const doc of config.docs ?? []) if (basename(doc) !== 'README.md' && existsSync(join(repo, doc))) put(basename(doc), readFileSync(join(repo, doc), 'utf8'))
+
+  const htmlDir = join(repo, code)
+  const sheets = [join(htmlDir, 'base.css'), ...readdirSync(join(htmlDir, 'components')).filter((n) => n.endsWith('.css')).sort().map((n) => join(htmlDir, 'components', n))]
+  put('components/bundle.css', sheets.filter((f) => existsSync(f)).map((f) => readFileSync(f, 'utf8').trimEnd()).join('\n\n') + '\n')
+  const specs = config.components ?? `${DS_DIR}/components`
+  for (const f of readdirSync(join(repo, specs)).filter((n) => n.endsWith('.md') && n !== 'README.md').sort()) {
+    const spec = readFileSync(join(repo, specs, f), 'utf8')
+    const html = parseFrontMatter(spec).data?.outputs?.html
+    const page = typeof html === 'string' ? join(htmlDir, 'components', `${html}.html`) : null
+    if (!page || !existsSync(page)) continue
+    const preview = componentPreview(readFileSync(page, 'utf8'))
+    if (!preview) continue
+    put(`components/${pascal(html)}/README.md`, componentReadme(spec, posix(join(specs, f))))
+    put(`components/${pascal(html)}/preview.html`, preview)
+  }
+
+  const fresh = { v: 3, layout: 'files', createdOnFiles: { v: 1, at: now }, title: name, namespace: pascal(name) || 'DesignSystem', libraries: [], sections: {}, groups: [], assetGroups: {}, blobs: {}, docs: { readme: 'project/README.md', sections: [] } }
+  const current = index ? JSON.parse(readFileSync(index, 'utf8')) : fresh
+  const indexFile = join(out, 'design-system.json')
+  writeFileSync(indexFile, JSON.stringify({ ...current, editing: 'code', lastChange: { by, at: now, via: 'product-design', note: `design-system ${config.ds_version} を写した` } }, null, 2) + '\n')
+  return { root: dir, file_path: indexFile, files, hash: artifactHash(repo, config) }
+}
+
+// 写し終えた Artifact の url と、写した中身のハッシュを design-system.json に書く。
+export function artifactDone(repo, url) {
+  if (!/^https:\/\/claude\.ai\//.test(url ?? '')) throw new Error('写した Artifact の url（https://claude.ai/…）を渡してください')
+  const config = loadConfig(repo)
+  config.artifact = { url, hash: artifactHash(repo, config) }
+  writeConfig(repo, config)
+  return config.artifact
+}
+
 // 手元の Chrome。$CHROME、macOS の決まった場所、PATH の順に探す。なければ null。
 export function findChrome(env = process.env) {
   const found = (p) => p && existsSync(p) && statSync(p).isFile()
@@ -299,7 +403,7 @@ function option(args, name) {
   return i >= 0 ? args[i + 1] : undefined
 }
 
-const USAGE = 'node cli.mjs install|stage|trace|tokens|screenshot|status <repo> …'
+const USAGE = 'node cli.mjs install|stage|trace|tokens|screenshot|artifact-stage|artifact-done|status <repo> …'
 
 export function main(argv) {
   const [command, repoArg, ...rest] = argv
@@ -317,6 +421,11 @@ export function main(argv) {
       return tokens(repo)
     case 'screenshot':
       return screenshot(repo, { pages: option(argv, '--pages')?.split(',').filter(Boolean) })
+    case 'artifact-stage':
+      if (!rest[0] || rest[0].startsWith('--')) throw new Error('使い方: node cli.mjs artifact-stage <repo> <dir> [--title <名前>] [--index <今の索引>] [--by <名前>]')
+      return artifactStage(repo, resolve(rest[0]), { title: option(argv, '--title'), index: option(argv, '--index'), by: option(argv, '--by') })
+    case 'artifact-done':
+      return artifactDone(repo, rest[0])
     case 'status':
       return status(repo)
     default:
