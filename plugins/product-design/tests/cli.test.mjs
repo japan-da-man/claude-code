@@ -92,6 +92,17 @@ test('status shows the next stage and a stale check.mjs', () => {
   assert.match(status(repo).stale[0], /check\.mjs がプラグインの版と違います/)
 })
 
+test('status counts the outputs stage once there is an output', () => {
+  const repo = fresh('hig')
+  for (const s of ['product', 'design', 'foundations', 'components']) stage(repo, s, 'approved')
+  assert.equal(status(repo).next, 'outputs')
+  stage(repo, 'outputs', 'approved')
+  assert.equal(status(repo).next, null)
+  const file = join(repo, 'design-system', 'design-system.json')
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), outputs: {}, stages: { product: 'approved', design: 'approved', foundations: 'approved', components: 'approved', outputs: 'pending' } }))
+  assert.equal(status(repo).next, null)
+})
+
 test('trace lists what a principle reaches and rejects an unknown start', () => {
   const repo = fresh('hig')
   const r = trace(repo, 'P3')
