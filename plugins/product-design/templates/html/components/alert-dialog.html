@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>アラート</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../base.css">
+<link rel="stylesheet" href="alert-dialog.css">
+<script src="../theme.js"></script>
+</head>
+<body>
+<header class="ds-page-header">
+  <h1 class="ds-page-title">アラート</h1>
+  <p class="ds-page-lead">仕様: design-system/components/alert.md</p>
+</header>
+<main class="ds-page" data-group="メッセージ" data-height="300">
+  <section class="ds-example">
+    <h2 class="ds-example-title">見出し・本文・閉じるボタン</h2>
+    <div class="ds-stack">
+      <div class="ds-dialog-stage">
+        <div class="ds-dialog" role="alertdialog" aria-modal="true" aria-labelledby="alert-title" aria-describedby="alert-text" data-testid="update-alert">
+          <div class="ds-dialog-body">
+            <h3 class="ds-dialog-title" id="alert-title">保存できませんでした</h3>
+            <p class="ds-dialog-text" id="alert-text">通信できる場所で、もう一度試してください。</p>
+          </div>
+          <div class="ds-dialog-actions">
+            <button class="ds-dialog-button ds-dialog-button--primary" type="button">OK</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

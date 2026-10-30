@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>確認</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../base.css">
+<link rel="stylesheet" href="alert-dialog.css">
+<link rel="stylesheet" href="confirmation.css">
+<script src="../theme.js"></script>
+</head>
+<body>
+<header class="ds-page-header">
+  <h1 class="ds-page-title">確認</h1>
+  <p class="ds-page-lead">仕様: design-system/components/confirmation.md</p>
+</header>
+<main class="ds-page" data-group="メッセージ" data-height="320">
+  <section class="ds-example">
+    <h2 class="ds-example-title">問いかけ・補足・キャンセルと実行</h2>
+    <div class="ds-stack">
+      <div class="ds-dialog-stage">
+        <div class="ds-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-text" data-testid="delete-confirmation">
+          <div class="ds-dialog-body">
+            <h3 class="ds-dialog-title" id="confirm-title">このメモを削除しますか？</h3>
+            <p class="ds-dialog-text" id="confirm-text">削除すると、もとに戻せません。</p>
+          </div>
+          <div class="ds-dialog-actions ds-confirmation-actions">
+            <button class="ds-dialog-button ds-dialog-button--cancel" type="button">キャンセル</button>
+            <button class="ds-dialog-button ds-dialog-button--destructive" type="button">削除する</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

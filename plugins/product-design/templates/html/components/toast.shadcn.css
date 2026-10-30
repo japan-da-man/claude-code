@@ -1,0 +1,60 @@
+/* トースト（shadcn/ui の Sonner。画面の下に、枠のある面と取り消す操作） */
+.ds-toast-stage {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: end;
+  padding: var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.ds-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: var(--shadow-md);
+  font: var(--font-subheadline);
+  letter-spacing: var(--letter-spacing-subheadline);
+}
+
+.ds-toast .ds-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.ds-toast--success .ds-icon {
+  color: var(--success);
+}
+
+.ds-toast--info .ds-icon {
+  color: var(--info);
+}
+
+.ds-toast-text {
+  flex: 1;
+}
+
+.ds-toast-action {
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font: var(--font-footnote);
+  font-weight: 500;
+  letter-spacing: var(--letter-spacing-footnote);
+  cursor: pointer;
+}
+
+.ds-toast[data-state="hidden"] {
+  opacity: 0;
+  transition: opacity var(--duration-normal) var(--easing-standard);
+}

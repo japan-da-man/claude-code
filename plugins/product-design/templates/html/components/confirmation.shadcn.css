@@ -1,0 +1,12 @@
+/* 確認（shadcn/ui の AlertDialog に、outline のキャンセルと destructive の実行。面はアラートの CSS） */
+.ds-dialog-button--cancel {
+  border-color: var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: var(--shadow-sm);
+}
+
+.ds-dialog-button--destructive {
+  background: var(--destructive);
+  color: var(--primary-foreground);
+}

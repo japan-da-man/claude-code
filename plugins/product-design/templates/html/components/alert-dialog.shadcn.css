@@ -1,0 +1,61 @@
+/* アラート（shadcn/ui の AlertDialog。枠のある面に見出しと説明、右下にボタン）。確認もこれを使う */
+.ds-dialog-stage {
+  display: grid;
+  place-items: center;
+  padding: var(--space-6) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--foreground) 50%, var(--background));
+}
+
+.ds-dialog {
+  display: grid;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 420px;
+  padding: var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: var(--shadow-md);
+}
+
+.ds-dialog-body {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ds-dialog-title {
+  margin: 0;
+  font: var(--font-headline);
+  letter-spacing: var(--letter-spacing-headline);
+}
+
+.ds-dialog-text {
+  margin: 0;
+  font: var(--font-subheadline);
+  letter-spacing: var(--letter-spacing-subheadline);
+  color: var(--muted-foreground);
+}
+
+.ds-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.ds-dialog-button {
+  min-height: 44px;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font: var(--font-subheadline);
+  font-weight: 500;
+  letter-spacing: var(--letter-spacing-subheadline);
+  cursor: pointer;
+}
+
+.ds-dialog-button--primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}

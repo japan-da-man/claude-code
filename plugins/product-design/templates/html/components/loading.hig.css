@@ -1,0 +1,30 @@
+/* 読み込み中（HIG の ProgressView に寄せる。回る印と短い文） */
+.ds-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--secondary-label);
+  font: var(--font-subheadline);
+  letter-spacing: var(--letter-spacing-subheadline);
+}
+
+.ds-loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--fill);
+  border-top-color: var(--secondary-label);
+  border-radius: 50%;
+  animation: ds-loading-spin 0.8s linear infinite;
+}
+
+@keyframes ds-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-loading-spinner {
+    animation-duration: 2.4s;
+  }
+}

@@ -3,8 +3,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { generateCss } from '../scripts/check.mjs'
-import { pickForBase } from '../scripts/cli.mjs'
+import { generateCss, parseFrontMatter } from '../scripts/check.mjs'
+import { componentTemplates, pickForBase } from '../scripts/cli.mjs'
 
 const HTML = fileURLToPath(new URL('../templates/html', import.meta.url))
 const read = (f) => readFileSync(f, 'utf8')
@@ -63,6 +63,16 @@ for (const base of ['hig', 'shadcn']) {
       assert.match(text, /<main class="ds-page" data-group="[^"]+" data-height="\d+">/, `${name}: <main> の data-group と data-height`)
       assert.match(text, /data-testid="[^"]+"/, `${name}: 識別子の例`)
     }
+  })
+}
+
+for (const base of ['hig', 'shadcn']) {
+  test(`${base}: every component spec has its HTML page, and every page has a spec`, () => {
+    const files = pickForBase(HTML, base)
+    const named = [...componentTemplates(base).values()].map((f) => parseFrontMatter(read(f)).data.outputs.html).sort()
+    const pages = [...files.keys()].filter((k) => /^components\/[^/]+\.html$/.test(k)).map((k) => k.slice(11, -5)).sort()
+    assert.deepEqual(pages, named)
+    for (const name of named) assert.ok(read(files.get('index.html')).includes(`href="components/${name}.html"`), `index.html に ${name} がありません`)
   })
 }
 
