@@ -1,5 +1,6 @@
 # トラッキングプラン（設計層。ヘルプ AI には渡さない）
 # イベント名は「対象_動作」（snake_case、過去形）。プロパティは 1 イベント 20 個まで。名前はコードに固定の文字列で書く。
+# observability/events.yaml があるリポジトリでは、定義はそちらに書き、ここには name と kpi だけを書く。
 feature: F-000
 events:
   - name: <object_action>
