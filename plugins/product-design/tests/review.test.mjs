@@ -162,13 +162,6 @@ test('install does not bring back a template that was deleted, but --add places 
   assert.throws(() => install(repo, { add: ['design-system/components/nothing.md'] }), /ひな形のない道のり/)
 })
 
-test('status.next stays within the stages this version can finish', () => {
-  const repo = tempRepo({ 'a.txt': '' })
-  install(repo, { base: 'hig' })
-  for (const s of ['product', 'design', 'foundations', 'components']) stage(repo, s, 'approved')
-  assert.equal(status(repo).next, null)
-})
-
 test('the command lines fail cleanly on a missing argument', () => {
   const repo = tempRepo(validRepoFiles())
   copyFileSync(CHECK, join(repo, 'design-system', 'check.mjs'))

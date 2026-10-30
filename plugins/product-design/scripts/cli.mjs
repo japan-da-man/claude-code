@@ -22,8 +22,6 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CHECK = join(ROOT, 'scripts', 'check.mjs')
 const TEMPLATES = join(ROOT, 'templates')
 const DS_DIR = dirname(CONFIG_PATH)
-// 出力（⑤）は 2 段階目から。それまでは ① から ④ だけを進める段として扱う。
-const ACTIVE_STAGES = STAGES.filter((s) => s !== 'outputs')
 
 const posix = (p) => p.split(sep).join('/')
 
@@ -288,7 +286,8 @@ export function artifactStage(repo, dir, { title, index, by = 'Claude', now = ne
   const { errors } = validateTokens(root, config.base)
   if (errors.length) throw new Error(`${config.tokens} に誤りがあるので写せません（${errors.length} 件。最初: ${errors[0]}）`)
   const readme = readFileSync(join(repo, DS_DIR, 'README.md'), 'utf8')
-  const name = title ?? /^# (.+)$/m.exec(readme)?.[1] ?? basename(repo)
+  const current = index ? JSON.parse(readFileSync(index, 'utf8')) : null
+  const name = title ?? current?.title ?? /^# (.+)$/m.exec(readme)?.[1] ?? basename(repo)
 
   const out = join(dir, 'project')
   rmSync(out, { recursive: true, force: true })
@@ -321,9 +320,8 @@ export function artifactStage(repo, dir, { title, index, by = 'Claude', now = ne
   }
 
   const fresh = { v: 3, layout: 'files', createdOnFiles: { v: 1, at: now }, title: name, namespace: pascal(name) || 'DesignSystem', libraries: [], sections: {}, groups: [], assetGroups: {}, blobs: {}, docs: { readme: 'project/README.md', sections: [] } }
-  const current = index ? JSON.parse(readFileSync(index, 'utf8')) : fresh
   const indexFile = join(out, 'design-system.json')
-  writeFileSync(indexFile, JSON.stringify({ ...current, editing: 'code', lastChange: { by, at: now, via: 'product-design', note: `design-system ${config.ds_version} を写した` } }, null, 2) + '\n')
+  writeFileSync(indexFile, JSON.stringify({ ...(current ?? fresh), editing: 'code', lastChange: { by, at: now, via: 'product-design', note: `design-system ${config.ds_version} を写した` } }, null, 2) + '\n')
   return { root: dir, file_path: indexFile, files, hash: artifactHash(repo, config) }
 }
 
@@ -393,8 +391,9 @@ export function status(repo) {
   if (!existsSync(vendored) || readFileSync(vendored, 'utf8') !== readFileSync(CHECK, 'utf8')) {
     r.stale.unshift(`${DS_DIR}/check.mjs がプラグインの版と違います（/product-design:update で写し直す）`)
   }
-  // next は、この版で進められる段（① から ④）の中で、まだ承認されていない最初の段。すべて承認済みなら null。
-  const next = ACTIVE_STAGES.find((s) => config.stages?.[s] !== 'approved') ?? null
+  // next は、まだ承認されていない最初の段。⑤（outputs）は、出力が 1 つでもあれば数える。すべて承認済みなら null。
+  const active = Object.keys(config.outputs ?? {}).length ? STAGES : STAGES.filter((s) => s !== 'outputs')
+  const next = active.find((s) => config.stages?.[s] !== 'approved') ?? null
   return { ...r, stages: config.stages, next }
 }
 
