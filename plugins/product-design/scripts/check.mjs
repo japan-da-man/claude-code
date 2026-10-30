@@ -349,6 +349,80 @@ export function checkContrast(root, tokens) {
 }
 
 // ---------------------------------------------------------------------------
+// HTML の出力の tokens.css（意味の段だけを CSS 変数にする。名前は Claude の Design System が作る名前と揃える）
+
+const hex2 = (c) => Math.round(c * 255).toString(16).padStart(2, '0')
+export const cssColor = ([r, g, b, a]) => `#${hex2(r)}${hex2(g)}${hex2(b)}${a < 1 ? hex2(a) : ''}`
+const cssDimension = (d) => `${d.value}${d.unit}`
+const cssFamily = (f) => (Array.isArray(f) ? f : [f]).map((s) => (/\s/.test(s) ? `"${s}"` : s)).join(', ')
+const cssShadow = (v) => (Array.isArray(v) ? v : [v]).map((s) => [s.offsetX, s.offsetY, s.blur, s.spread].map(cssDimension).join(' ') + ` ${cssColor(rgba(s.color))}`).join(', ')
+
+// 色は役割の名前だけ（--secondary-label）、ほかはグループの名前を前に付ける（--space-2、--font-title-1）。
+export function cssVarName(path) {
+  const [group, ...rest] = path.split('.')
+  return group === 'color' ? `--${rest.join('-')}` : `--${group}-${rest.join('-')}`
+}
+
+function cssValue(type, v) {
+  switch (type) {
+    case 'color':
+      return cssColor(rgba(v))
+    case 'dimension':
+    case 'duration':
+      return cssDimension(v)
+    case 'cubicBezier':
+      return `cubic-bezier(${v.join(', ')})`
+    case 'shadow':
+      return cssShadow(v)
+    case 'fontFamily':
+      return cssFamily(v)
+    default:
+      return typeof v === 'object' ? null : String(v)
+  }
+}
+
+// トークンの CSS 変数を、{ 名前: [ライト, ダーク] } で返す。
+function cssDeclarations(tokens, t) {
+  const type = typeOf(tokens, t)
+  if (type === 'typography') {
+    const v = deepResolve(tokens, t.value, [], t.path)
+    if (!v) return {}
+    const name = t.path.split('.').slice(1).join('-')
+    const font = `${v.fontWeight} ${cssDimension(v.fontSize)}/${v.lineHeight} ${cssFamily(v.fontFamily)}`
+    return { [`--font-${name}`]: [font, font], [`--letter-spacing-${name}`]: [cssDimension(v.letterSpacing), cssDimension(v.letterSpacing)] }
+  }
+  if (type === 'color') {
+    const m = colorModes(tokens, t.path)
+    return m ? { [cssVarName(t.path)]: [cssColor(m.light), cssColor(m.dark)] } : {}
+  }
+  const light = deepResolve(tokens, t.value, [], t.path)
+  const dark = t.ext.modes?.dark === undefined ? light : deepResolve(tokens, t.ext.modes.dark, [], t.path)
+  const values = [light, dark].map((v) => (v === undefined ? null : cssValue(type, v)))
+  return values.includes(null) ? {} : { [cssVarName(t.path)]: values }
+}
+
+export function generateCss(root) {
+  const { tokens } = flattenTokens(root)
+  const vars = {}
+  for (const t of tokens.values()) if (t.tier === 'semantic') Object.assign(vars, cssDeclarations(tokens, t))
+  const block = (selector, scheme, entries, indent = '') =>
+    [`${indent}${selector} {`, `${indent}  color-scheme: ${scheme};`, ...entries.map(([k, v]) => `${indent}  ${k}: ${v};`), `${indent}}`].join('\n')
+  const light = Object.entries(vars).map(([k, [l]]) => [k, l])
+  const dark = Object.entries(vars).filter(([, [l, d]]) => l !== d).map(([k, [, d]]) => [k, d])
+  return [
+    '/* 生成したファイル。手で直さない（tokens.json から /product-design:update が作り直す） */',
+    block(':root, [data-theme="light"]', 'light', light),
+    '',
+    '@media (prefers-color-scheme: dark) {',
+    block(':root:not([data-theme="light"])', 'dark', dark, '  '),
+    '}',
+    '',
+    block('[data-theme="dark"]', 'dark', dark),
+    '',
+  ].join('\n')
+}
+
+// ---------------------------------------------------------------------------
 // 文書
 
 // 先頭のメタデータ（--- で囲んだ YAML の一部）を読む。読めるのは key: 値、[a, b]、{ k: v }、- の箇条、# のコメント。
