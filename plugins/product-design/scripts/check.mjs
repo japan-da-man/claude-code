@@ -623,6 +623,7 @@ export function collectTrace(repo, config, tokens) {
     }
     for (const s of readSections(text)) users.push({ where: `${file}:${s.line} ${s.title}`, layer: 'rule', refs: s.refs })
   }
+  const cssNames = cssVarTokens(tokens)
   const componentsDir = config.components ?? posix(join(DS_DIR, 'components'))
   for (const file of mdFiles(repo, componentsDir)) {
     const { data, problems } = parseFrontMatter(readFileSync(join(repo, file), 'utf8'))
@@ -633,7 +634,8 @@ export function collectTrace(repo, config, tokens) {
     errors.push(...problems.map((p) => `${file}: ${p}`))
     if (!COMPONENT_STATUS.includes(data.status)) errors.push(`${file}: status は ${COMPONENT_STATUS.join('・')} のどれかにしてください`)
     if (data.from !== undefined && !Array.isArray(data.from)) errors.push(`${file}: from は [D1, D2] の形の一覧にしてください`)
-    users.push({ where: `${file} ${data.name ?? basename(file, '.md')}`, layer: 'rule', refs: Array.isArray(data.from) ? data.from : null, retired: data.status === 'deprecated', component: { file, ...data } })
+    const html = htmlOutput(repo, config, data.outputs?.html, cssNames)
+    users.push({ where: `${file} ${data.name ?? basename(file, '.md')}`, layer: 'rule', refs: Array.isArray(data.from) ? data.from : null, retired: data.status === 'deprecated', component: { file, ...data }, files: html.files, aliases: html.tokens })
   }
   for (const t of tokens.values()) {
     // 基本の段は根拠を持たないが、意味の段への影響をたどるために、別名の辺だけは持つ。
@@ -645,6 +647,37 @@ export function collectTrace(repo, config, tokens) {
     users.push({ where: `${config.tokens} ${t.path}`, layer: 'rule', refs: Array.isArray(t.from) ? t.from : null, retired: isDeprecated(t.deprecated), token: t.path, aliases })
   }
   return { P: P.ids, D: D.ids, users, errors }
+}
+
+// CSS 変数の名前 → トークンの道のり（意味の段だけ）。
+function cssVarTokens(tokens) {
+  const names = new Map()
+  for (const t of tokens.values()) {
+    if (t.tier !== 'semantic') continue
+    if (typeOf(tokens, t) === 'typography') {
+      const name = t.path.split('.').slice(1).join('-')
+      names.set(`--font-${name}`, t.path).set(`--letter-spacing-${name}`, t.path)
+    } else names.set(cssVarName(t.path), t.path)
+  }
+  return names
+}
+
+// 部品の HTML の出力のファイルと、その CSS（ページが読む部品の CSS をすべて）が使うトークン。
+function htmlOutput(repo, config, name, cssNames) {
+  const code = config.outputs?.html?.code
+  if (!code || typeof name !== 'string') return { files: [], tokens: [] }
+  const dir = posix(join(code, 'components'))
+  const page = `${dir}/${name}.html`
+  const html = readIfExists(repo, page)
+  if (html === null) return { files: [], tokens: [] }
+  const sheets = [...html.matchAll(/<link rel="stylesheet" href="([^"/]+\.css)">/g)].map((m) => `${dir}/${m[1]}`)
+  const own = `${dir}/${name}.css`
+  const files = [page, ...(sheets.includes(own) && readIfExists(repo, own) !== null ? [own] : [])]
+  const used = new Set()
+  for (const css of [html, ...sheets.map((f) => readIfExists(repo, f) ?? '')]) {
+    for (const [, v] of css.matchAll(/var\((--[\w-]+)/g)) if (cssNames.has(v)) used.add(cssNames.get(v))
+  }
+  return { files, tokens: [...used] }
 }
 
 export function checkTrace(trace) {
@@ -687,7 +720,7 @@ export function traceFrom(trace, start) {
         const id = u.id ?? u.token ?? u.where
         if (seen.has(id)) continue
         seen.add(id)
-        out.push({ depth, where: u.where, ...(u.component ? { outputs: u.component.outputs ?? {} } : {}) })
+        out.push({ depth, where: u.where, ...(u.component ? { outputs: u.component.outputs ?? {}, files: u.files } : {}) })
         if (u.id || u.token) next.push(u.id ?? u.token)
       }
     }

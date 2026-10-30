@@ -101,3 +101,26 @@ test('candidates list the open ones with their screens and reject a bad status',
   assert.deepEqual(r.open, [{ file: 'docs/design-candidates/chip.md', screens: ['SettingsView', 'ListView'] }])
   assert.equal(r.errors.length, 2)
 })
+
+const withHtml = {
+  'design-system/html/components/button.html': '<link rel="stylesheet" href="../tokens.css">\n<link rel="stylesheet" href="shared.css">\n<link rel="stylesheet" href="button.css">\n',
+  'design-system/html/components/button.css': '.ds-button { background: var(--tint); padding: var(--space-2); font: var(--font-headline); --ds-x: 1; color: var(--ds-x); }\n',
+  'design-system/html/components/shared.css': '.ds-field { border-color: var(--separator); }\n',
+}
+
+test('a component reaches its HTML files, and a token reaches the components whose CSS uses it', () => {
+  const t = traceOf(withHtml)
+  const fromD1 = traceFrom(t, 'D1').find((a) => a.where.includes('button.md'))
+  assert.deepEqual(fromD1.files, ['design-system/html/components/button.html', 'design-system/html/components/button.css'])
+  for (const token of ['color.tint', 'space.2', 'font.headline', 'color.separator']) {
+    assert.ok(traceFrom(t, token).some((a) => a.where.includes('button.md')), `${token} から部品へたどれません`)
+  }
+  assert.equal(traceFrom(t, 'color.label').some((a) => a.where.includes('button.md')), false)
+  // 基本の段からも、意味の段のトークンを通って部品まで届く
+  assert.ok(traceFrom(t, 'primitive.space.4').some((a) => a.where.includes('button.md')))
+})
+
+test('without HTML files a component lists no files', () => {
+  const fromD1 = traceFrom(traceOf({}), 'D1').find((a) => a.where.includes('button.md'))
+  assert.deepEqual(fromD1.files, [])
+})

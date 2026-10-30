@@ -101,6 +101,16 @@ test('trace lists what a principle reaches and rejects an unknown start', () => 
   assert.throws(() => trace(repo, 'P99'), /原則の ID にもトークンにもありません/)
 })
 
+test('with the HTML templates, a colour reaches the components that use it and their files', () => {
+  const repo = fresh('shadcn')
+  const r = trace(repo, 'color.destructive')
+  assert.equal(r.note, undefined)
+  const button = r.affected.find((a) => a.outputs?.html === 'button')
+  assert.deepEqual(button.files, ['design-system/html/components/button.html', 'design-system/html/components/button.css'])
+  assert.ok(r.affected.some((a) => a.outputs?.html === 'confirmation'))
+  assert.equal(r.affected.some((a) => a.outputs?.html === 'loading'), false)
+})
+
 test('the command line prints JSON and exits 1 with a message on a bad call', () => {
   const repo = tempRepo({ 'a.txt': '' })
   const ok = spawnSync(process.execPath, [CLI, 'install', repo, '--base', 'shadcn'], { encoding: 'utf8' })

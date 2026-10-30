@@ -4,7 +4,7 @@
 //       置いていないひな形を available に並べる（消した部品を戻さないため、--add で名前を挙げたものだけ置く）。
 //       HTML の出力（outputs.html）がなければ足して、そのひな形を置く。最後に tokens.css を作り直す
 //   node cli.mjs stage <repo> <段> <pending|approved>  段の進み具合を書く。承認したら、その下の承認済みの段は pending に戻す
-//   node cli.mjs trace <repo> --from <ID|トークン>      影響を受けるもの（原則 → トークン・基礎・部品・パターン・文言）を下へたどる
+//   node cli.mjs trace <repo> --from <ID|トークン>      影響を受けるもの（原則 → トークン・基礎・部品・パターン・文言 → HTML の出力のファイル）を下へたどる
 //   node cli.mjs tokens <repo>                         HTML の出力の tokens.css を tokens.json から作り直す
 //   node cli.mjs screenshot <repo> [--pages <名前,…>]   HTML の見本のページを手元の Chrome でライトとダークで撮る（Chrome がなければ撮らずに知らせる）
 //   node cli.mjs status <repo>                         チェックの結果に、段の進み具合と古くなった check.mjs を加えて出す
@@ -160,8 +160,8 @@ export function trace(repo, from) {
   const tokens = flattenTokens(JSON.parse(readFileSync(join(repo, config.tokens), 'utf8'))).tokens
   const t = collectTrace(repo, config, tokens)
   if (!t.P.has(from) && !t.D.has(from) && !tokens.has(from)) throw new Error(`${from} は原則の ID にもトークンにもありません`)
-  // 部品の仕様は意味の段のトークンを指していないので、トークンから部品へはたどれない（1 段階目）。
-  const note = tokens.has(from) ? 'トークンからたどれるのは、そのトークンを別名で使うトークンまで。部品への影響は、部品の仕様とトークンの $description を読んで判断する' : undefined
+  // 部品の仕様はトークンを指さないので、トークンから部品へは HTML の出力の CSS（var(--…)）を通ってたどる。
+  const note = tokens.has(from) && !config.outputs?.html ? 'HTML の出力がないので、トークンからたどれるのは、そのトークンを別名で使うトークンまで。部品への影響は、部品の仕様とトークンの $description を読んで判断する' : undefined
   return { from, affected: traceFrom(t, from), ...(note ? { note } : {}) }
 }
 
