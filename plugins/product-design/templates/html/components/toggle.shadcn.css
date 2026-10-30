@@ -1,0 +1,84 @@
+/* オン・オフ（shadcn/ui の Switch と Label を行に並べる） */
+.ds-toggle-group {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ds-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--card-foreground);
+}
+
+.ds-toggle-row-label {
+  display: grid;
+  flex: 1;
+  gap: var(--space-1);
+}
+
+.ds-toggle-row-title {
+  font: var(--font-subheadline);
+  font-weight: 500;
+  letter-spacing: var(--letter-spacing-subheadline);
+}
+
+.ds-toggle-row-detail {
+  font: var(--font-footnote);
+  letter-spacing: var(--letter-spacing-footnote);
+  color: var(--muted-foreground);
+}
+
+.ds-switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--input);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--easing-standard);
+}
+
+.ds-switch::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--background);
+  transition: transform var(--duration-fast) var(--easing-standard);
+}
+
+.ds-switch:checked {
+  background: var(--primary);
+}
+
+.ds-switch:checked::before {
+  transform: translateX(14px);
+  background: var(--primary-foreground);
+}
+
+.ds-switch:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--ring) 50%, transparent);
+  outline-offset: 0;
+}
+
+.ds-switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.ds-toggle-row:has(.ds-switch:disabled) .ds-toggle-row-label {
+  opacity: 0.5;
+}

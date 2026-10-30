@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ボタン</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../base.css">
+<link rel="stylesheet" href="button.css">
+<script src="../theme.js"></script>
+</head>
+<body>
+<header class="ds-page-header">
+  <h1 class="ds-page-title">ボタン</h1>
+  <p class="ds-page-lead">仕様: design-system/components/button.md</p>
+</header>
+<main class="ds-page" data-group="操作" data-height="420">
+  <section class="ds-example">
+    <h2 class="ds-example-title">種類（default・secondary・destructive・outline・ghost・link）</h2>
+    <div class="ds-row">
+      <button class="ds-button ds-button--default" type="button" data-testid="save-button">保存する</button>
+      <button class="ds-button ds-button--secondary" type="button">下書きにする</button>
+      <button class="ds-button ds-button--destructive" type="button">削除する</button>
+      <button class="ds-button ds-button--outline" type="button">キャンセル</button>
+      <button class="ds-button ds-button--ghost" type="button">あとで</button>
+      <button class="ds-button ds-button--link" type="button">詳しく見る</button>
+    </div>
+  </section>
+  <section class="ds-example">
+    <h2 class="ds-example-title">アイコンつき</h2>
+    <div class="ds-row">
+      <button class="ds-button ds-button--default" type="button"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>追加する</button>
+    </div>
+  </section>
+  <section class="ds-example">
+    <h2 class="ds-example-title">状態（ふつう・押している・押せない・処理中）</h2>
+    <div class="ds-row">
+      <button class="ds-button ds-button--default" type="button">保存する</button>
+      <button class="ds-button ds-button--default" type="button" data-state="pressed">保存する</button>
+      <button class="ds-button ds-button--default" type="button" disabled>保存する</button>
+      <button class="ds-button ds-button--default" type="button" aria-busy="true" disabled><span class="ds-button-spinner" aria-hidden="true"></span><span class="ds-visually-hidden">保存しています</span></button>
+    </div>
+  </section>
+</main>
+</body>
+</html>

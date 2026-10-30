@@ -49,7 +49,7 @@ test('a component page is named by its stem and sized from its data-height', () 
   const chrome = fakeChrome(repo)
   const r = screenshot(repo, { chrome, pages: ['button'] })
   assert.equal(r.shots[0].path, 'design-system/screenshots/html/button-light.png')
-  assert.ok(calls(repo)[0].includes('--window-size=480,460'))
+  assert.ok(calls(repo)[0].includes('--window-size=560,460'))
 })
 
 test('every page is shot when none are named, and an unknown page is an error', () => {
@@ -57,7 +57,10 @@ test('every page is shot when none are named, and an unknown page is an error', 
   install(repo, { base: 'hig' })
   addButton(repo)
   const r = screenshot(repo, { chrome: fakeChrome(repo) })
-  assert.deepEqual([...new Set(r.shots.map((s) => s.page))], ['index', 'button'])
+  const pages = [...new Set(r.shots.map((s) => s.page))]
+  assert.equal(pages[0], 'index')
+  assert.ok(pages.includes('button'))
+  assert.equal(r.shots.length, pages.length * 2)
   assert.throws(() => screenshot(repo, { chrome: fakeChrome(repo), pages: ['nothing'] }), /nothing/)
 })
 

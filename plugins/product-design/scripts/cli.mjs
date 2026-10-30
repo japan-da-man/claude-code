@@ -188,7 +188,8 @@ export function findChrome(env = process.env) {
   return [...mac, ...onPath].find(found) ?? null
 }
 
-const SHOT_WIDTH = 480
+// Chrome の窓は幅 500px より狭くできない（狭くすると、広く描いて右を切って撮る）。
+const SHOT_WIDTH = 560
 // 部品のページは <main> の data-height に見出しの分を足した高さで、一覧のページは決まった高さで撮る。
 const HEADER_HEIGHT = 160
 const INDEX_HEIGHT = 1200

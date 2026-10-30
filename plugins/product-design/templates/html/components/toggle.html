@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>オン・オフ</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../base.css">
+<link rel="stylesheet" href="toggle.css">
+<script src="../theme.js"></script>
+</head>
+<body>
+<header class="ds-page-header">
+  <h1 class="ds-page-title">オン・オフ</h1>
+  <p class="ds-page-lead">仕様: design-system/components/toggle.md</p>
+</header>
+<main class="ds-page" data-group="操作" data-height="300">
+  <section class="ds-example">
+    <h2 class="ds-example-title">状態（オン・オフ・押せない）</h2>
+    <div class="ds-toggle-group">
+      <div class="ds-toggle-row">
+        <label class="ds-toggle-row-label" for="toggle-notify"><span class="ds-toggle-row-title">通知</span><span class="ds-toggle-row-detail">新しいメッセージを知らせる</span></label>
+        <input class="ds-switch" id="toggle-notify" type="checkbox" role="switch" checked data-testid="notify-toggle">
+      </div>
+      <div class="ds-toggle-row">
+        <label class="ds-toggle-row-label" for="toggle-sound"><span class="ds-toggle-row-title">音</span></label>
+        <input class="ds-switch" id="toggle-sound" type="checkbox" role="switch">
+      </div>
+      <div class="ds-toggle-row">
+        <label class="ds-toggle-row-label" for="toggle-sync"><span class="ds-toggle-row-title">同期</span><span class="ds-toggle-row-detail">サインインすると使える</span></label>
+        <input class="ds-switch" id="toggle-sync" type="checkbox" role="switch" disabled>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>
