@@ -79,3 +79,19 @@ test('findChrome prefers $CHROME and ignores a path that does not exist', () => 
   assert.equal(findChrome({ CHROME: chrome, PATH: '' }), chrome)
   assert.notEqual(findChrome({ CHROME: join(dir, 'nothing'), PATH: '' }), join(dir, 'nothing'))
 })
+
+// 失敗する Chrome の代わり（終了コード 1 か、何も書かずに 0 で終わる）。
+function brokenChrome(dir, code) {
+  const file = join(dir, `broken-chrome-${code}.mjs`)
+  writeFileSync(file, `#!${process.execPath}\nprocess.exit(${code})\n`)
+  chmodSync(file, 0o755)
+  return file
+}
+
+test('a Chrome that fails or writes nothing is an error, even with an old picture left over', () => {
+  const repo = tempRepo({ 'README.md': '# app\n' })
+  install(repo, { base: 'hig' })
+  screenshot(repo, { chrome: fakeChrome(repo), pages: ['index'] })
+  assert.throws(() => screenshot(repo, { chrome: brokenChrome(repo, 1), pages: ['index'] }), /撮れませんでした/)
+  assert.throws(() => screenshot(repo, { chrome: brokenChrome(repo, 0), pages: ['index'] }), /撮れませんでした/)
+})

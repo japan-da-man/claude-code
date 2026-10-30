@@ -273,6 +273,15 @@ export function validateTokens(root, base) {
       errors.push(`${where}: 文字のトークンには $extensions の textStyle（${TEXT_STYLES.join('・')} のどれか）が要ります`)
     }
   }
+  // CSS 変数の名前（tokens.css と Design System の名前）が重なると、片方が黙って消えるので誤りにする。
+  const owners = new Map()
+  for (const t of tokens.values()) {
+    if (t.tier !== 'semantic') continue
+    for (const name of cssVarNames(tokens, t)) {
+      if (owners.has(name)) errors.push(`CSS 変数 ${name} が "${owners.get(name)}" と "${t.path}" で重なります（どちらかの名前を変える）`)
+      else owners.set(name, t.path)
+    }
+  }
   const required = REQUIRED[base]
   if (!required) errors.push(`base "${base}" は hig か shadcn にしてください`)
   else {
@@ -364,6 +373,33 @@ export function cssVarName(path) {
   return group === 'color' ? `--${rest.join('-')}` : `--${group}-${rest.join('-')}`
 }
 
+// トークンが tokens.css に出す変数の名前。文字は font の略記と letter-spacing の 2 つ。
+export function cssVarNames(tokens, t) {
+  if (typeOf(tokens, t) !== 'typography') return [cssVarName(t.path)]
+  const name = t.path.split('.').slice(1).join('-')
+  return [`--font-${name}`, `--letter-spacing-${name}`]
+}
+
+// 値の中の別名を、ライトかダークで解決する（合成型の中も）。ダークでは、別名の先のトークンに modes.dark があればそれをたどる。
+function resolveMode(tokens, value, mode, seen = []) {
+  if (typeof value === 'string' && ALIAS.test(value)) {
+    const path = ALIAS.exec(value)[1]
+    const target = tokens.get(path)
+    if (!target || seen.includes(path)) return undefined
+    const next = mode === 'dark' && target.ext.modes?.dark !== undefined ? target.ext.modes.dark : target.value
+    return resolveMode(tokens, next, mode, [...seen, path])
+  }
+  if (Array.isArray(value)) {
+    const out = value.map((v) => resolveMode(tokens, v, mode, seen))
+    return out.includes(undefined) ? undefined : out
+  }
+  if (isObject(value)) {
+    const out = Object.entries(value).map(([k, v]) => [k, resolveMode(tokens, v, mode, seen)])
+    return out.some(([, v]) => v === undefined) ? undefined : Object.fromEntries(out)
+  }
+  return value
+}
+
 function cssValue(type, v) {
   switch (type) {
     case 'color':
@@ -396,8 +432,8 @@ export function cssDeclarations(tokens, t) {
     const m = colorModes(tokens, t.path)
     return m ? { [cssVarName(t.path)]: [cssColor(m.light), cssColor(m.dark)] } : {}
   }
-  const light = deepResolve(tokens, t.value, [], t.path)
-  const dark = t.ext.modes?.dark === undefined ? light : deepResolve(tokens, t.ext.modes.dark, [], t.path)
+  const light = resolveMode(tokens, t.value, 'light')
+  const dark = resolveMode(tokens, t.ext.modes?.dark ?? t.value, 'dark')
   const values = [light, dark].map((v) => (v === undefined ? null : cssValue(type, v)))
   return values.includes(null) ? {} : { [cssVarName(t.path)]: values }
 }
@@ -653,13 +689,7 @@ export function collectTrace(repo, config, tokens) {
 // CSS 変数の名前 → トークンの道のり（意味の段だけ）。
 function cssVarTokens(tokens) {
   const names = new Map()
-  for (const t of tokens.values()) {
-    if (t.tier !== 'semantic') continue
-    if (typeOf(tokens, t) === 'typography') {
-      const name = t.path.split('.').slice(1).join('-')
-      names.set(`--font-${name}`, t.path).set(`--letter-spacing-${name}`, t.path)
-    } else names.set(cssVarName(t.path), t.path)
-  }
+  for (const t of tokens.values()) if (t.tier === 'semantic') for (const name of cssVarNames(tokens, t)) names.set(name, t.path)
   return names
 }
 

@@ -66,3 +66,12 @@ test('a role added in its own group becomes its own family, and a shadow with a 
   assert.deepEqual(ds.opacity.tokens, [{ name: 'opacity-disabled', value: '0.4', usage: '押せない部品' }])
   assert.deepEqual(ds.shadow.tokens.find((t) => t.name === 'shadow-md').value, { light: '0px 1px 2px 0px #0000001a', dark: '0px 1px 2px 0px #ffffff1a' })
 })
+
+test('a font family named like a text style gets its own name, so .body keeps working', () => {
+  const root = minimalTokens()
+  root.primitive['font-family'] = { $type: 'fontFamily', body: { $value: ['system-ui'] } }
+  for (const k of Object.keys(root.font).filter((k) => !k.startsWith('$'))) root.font[k].$value.fontFamily = '{primitive.font-family.body}'
+  const ds = toDesignSystemTokens(root, { title: 'App', base: 'hig' })
+  assert.deepEqual(Object.keys(ds.type.families), ['body-family'])
+  assert.equal(ds.type.groups[0].family, 'body-family')
+})

@@ -74,3 +74,12 @@ test('without an HTML output there is no tokens.css to check or write', () => {
   assert.deepEqual(runCheck(repo).stale, [])
   assert.throws(() => tokens(repo), /outputs\.html/)
 })
+
+test('a tokens.json that is not JSON makes tokens and install report it instead of throwing', () => {
+  const repo = tempRepo({ 'README.md': '# app\n' })
+  install(repo, { base: 'hig' })
+  writeFileSync(join(repo, 'design-system/tokens.json'), '{ broken')
+  assert.deepEqual(tokens(repo).written, [])
+  assert.match(tokens(repo).errors[0], /tokens\.json が読めません/)
+  assert.match(install(repo).tokens.errors[0], /tokens\.json が読めません/)
+})

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { NS, REQUIRED, cssVarName, generateCss } from '../scripts/check.mjs'
+import { NS, REQUIRED, cssVarName, generateCss, validateTokens } from '../scripts/check.mjs'
 import { hex, minimalTokens } from './helpers.mjs'
 
 const template = (base) => JSON.parse(readFileSync(new URL(`../templates/tokens/${base}.json`, import.meta.url), 'utf8'))
@@ -92,4 +92,24 @@ test('the same tokens give the same CSS, with a header that says not to edit it'
   const a = generateCss(template('shadcn'))
   assert.equal(a, generateCss(template('shadcn')))
   assert.match(a.split('\n')[0], /手で直さない/)
+})
+
+test('two tokens that would share a CSS variable are an error', () => {
+  const root = minimalTokens()
+  root.color['space-1'] = { $value: hex('#ff0000') }
+  root.heading = { $type: 'typography', body: { $value: root.font.body.$value } }
+  const { errors } = validateTokens(root, 'hig')
+  assert.match(errors.join('\n'), /--space-1 が "color\.space-1" と "space\.1" で重なります/)
+  assert.match(errors.join('\n'), /--font-body が "font\.body" と "heading\.body" で重なります/)
+})
+
+test('a non-colour alias follows the dark value of what it points at, also inside a composite', () => {
+  const root = minimalTokens()
+  root.radius.lg.$extensions = { [NS]: { modes: { dark: { value: 12, unit: 'px' } } } }
+  root.radius.card = { $value: '{radius.lg}' }
+  root.color.label = { $value: hex('#000000'), $extensions: { [NS]: { modes: { dark: hex('#ffffff') } } } }
+  root.shadow.sm.$value = { ...root.shadow.sm.$value, color: '{color.label}' }
+  const dark = declarations(generateCss(root), '[data-theme="dark"]')
+  assert.equal(dark['--radius-card'], '12px')
+  assert.equal(dark['--shadow-sm'], '0px 1px 2px 0px #ffffff')
 })
