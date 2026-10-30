@@ -140,7 +140,9 @@ test('trace reaches tokens that use a primitive inside a composite value', () =>
   install(repo, { base: 'hig' })
   const r = trace(repo, 'primitive.font-family.system')
   assert.equal(r.affected.filter((a) => a.where.includes(' font.')).length, 11)
-  assert.match(r.note, /部品への影響は/)
+  // HTML の出力があるので、文字のトークンを使う部品まで届く
+  assert.equal(r.note, undefined)
+  assert.ok(r.affected.some((a) => a.outputs?.html === 'button'))
   const t = collectTrace(repo, { ...config(), product_principles: 'docs/product/principles.md' }, flattenTokens(JSON.parse(spawnSync('cat', [join(repo, 'design-system/tokens.json')], { encoding: 'utf8' }).stdout)).tokens)
   const fromP = traceFrom(t, 'P3')
   const d1 = fromP.find((a) => a.where.includes('principles.md') && a.where.endsWith(' D1'))
