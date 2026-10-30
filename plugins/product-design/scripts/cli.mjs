@@ -4,11 +4,12 @@
 //       置いていないひな形を available に並べる（消した部品を戻さないため、--add で名前を挙げたものだけ置く）
 //   node cli.mjs stage <repo> <段> <pending|approved>  段の進み具合を書く。承認したら、その下の承認済みの段は pending に戻す
 //   node cli.mjs trace <repo> --from <ID|トークン>      影響を受けるもの（原則 → トークン・基礎・部品・パターン・文言）を下へたどる
+//   node cli.mjs tokens <repo>                         HTML の出力の tokens.css を tokens.json から作り直す
 //   node cli.mjs status <repo>                         チェックの結果に、段の進み具合と古くなった check.mjs を加えて出す
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { CONFIG_PATH, REQUIRED, STAGES, collectTrace, flattenTokens, loadConfig, runCheck, traceFrom } from './check.mjs'
+import { CONFIG_PATH, REQUIRED, STAGES, collectTrace, flattenTokens, generateCss, loadConfig, runCheck, traceFrom, validateTokens } from './check.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CHECK = join(ROOT, 'scripts', 'check.mjs')
@@ -143,6 +144,20 @@ export function trace(repo, from) {
   return { from, affected: traceFrom(t, from), ...(note ? { note } : {}) }
 }
 
+// HTML の出力の tokens.css を作り直す。tokens.json に誤りがあれば書かない。
+export function tokens(repo) {
+  const config = loadConfig(repo)
+  const code = config.outputs?.html?.code
+  if (!code) throw new Error(`${CONFIG_PATH} に outputs.html がありません`)
+  const root = JSON.parse(readFileSync(join(repo, config.tokens), 'utf8'))
+  const { errors } = validateTokens(root, config.base)
+  if (errors.length) return { written: [], errors }
+  const file = posix(join(code, 'tokens.css'))
+  mkdirSync(join(repo, code), { recursive: true })
+  writeFileSync(join(repo, file), generateCss(root))
+  return { written: [file], errors: [] }
+}
+
 export function status(repo) {
   const r = runCheck(repo)
   const config = loadConfig(repo)
@@ -160,7 +175,7 @@ function option(args, name) {
   return i >= 0 ? args[i + 1] : undefined
 }
 
-const USAGE = 'node cli.mjs install|stage|trace|status <repo> …'
+const USAGE = 'node cli.mjs install|stage|trace|tokens|status <repo> …'
 
 export function main(argv) {
   const [command, repoArg, ...rest] = argv
@@ -174,6 +189,8 @@ export function main(argv) {
       return stage(repo, rest[0], rest[1])
     case 'trace':
       return trace(repo, option(argv, '--from'))
+    case 'tokens':
+      return tokens(repo)
     case 'status':
       return status(repo)
     default:
