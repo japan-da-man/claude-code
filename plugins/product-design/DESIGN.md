@@ -132,7 +132,7 @@ check が読む形は、ファイルの種類ごとに 1 つだけにする。
   4. ② デザインの原則: ① から下書きを作り、一問一答で決める → 承認
   5. ③ 基礎とトークン: 今のコードと土台から下書き → 一問一答 → 承認
   6. ④ 部品・パターン・文言: ひな形と今のコードから下書き → 一問一答 → 承認。
-     README.md・CHANGELOG.md もここで作る
+     README.md もここで作る（CHANGELOG.md の最初の版は ⑤ の承認のあと）
   7. ⑤ 出力: 今の画面のスクリーンショットを撮っておく（書き換えの前）。
      check.mjs・shoot.mjs を写し、選んだ出力ごとにひな形を置いて仕様とトークンに合わせて直す。
      今の画面も部品とトークンで書き換える
@@ -154,7 +154,7 @@ check が読む形は、ファイルの種類ごとに 1 つだけにする。
   古くなったもの（生成したコード、写した check.mjs と shoot.mjs、Design System）を一覧にする。直さない
 ```
 
-段ごとの進み具合は `design-system.json` の `stages` に書く（`pending`・`approved`）。init はこれを見て続きから始める。上の段を承認し直したら、その下の段は `pending` に戻し、影響の一覧（5節）を見ながら順に承認し直す。update は、人の承認をもらってから段を記録する（記録の前に直しに戻っても、段の状態が崩れないように）。`status` の `next` は、この版で進められる ① から ④ の中で、まだ承認されていない最初の段（`outputs` は数えない）。
+段ごとの進み具合は `design-system.json` の `stages` に書く（`pending`・`approved`）。init はこれを見て続きから始める。上の段を承認し直したら、その下の段は `pending` に戻し、影響の一覧（5節）を見ながら順に承認し直す。update は、人の承認をもらってから段を記録する（記録の前に直しに戻っても、段の状態が崩れないように）。`status` の `next` は、まだ承認されていない最初の段（⑤ の `outputs` は、`outputs` に出力が 1 つでもあるときだけ数える）。init は `CHANGELOG.md` の最初の版を ⑤ の承認のあとに書き、update はこの版があるかで、止まっているのが init の途中か update の途中かを見分ける。
 
 ## 7. 置き場所
 
@@ -338,7 +338,7 @@ outputs: { swiftui: DSButton, expo: Button, html: button }
   | `components/bundle.css` | `base.css` と部品の CSS をつないだもの（トークンは `tokens.css` が先に読まれる） |
   | `components/Cover/preview.html` | 表紙。型の `cover.md` に従ってスキルが作る（色の面と模様と名前） |
 
-- **トークンの形**: Design System は DTCG を読まない（名前から値への入れ子は、ページで空になり、最初の編集で消える）。そこで、意味の段だけを、解決した値の一覧にする: `color`（`themes` は light と dark、値は hex）、`type`（`families` と `groups[].styles`。行の高さは比のまま）、`spacing`・`radius`・`shadow`（影はテーマごとの文字列）、それ以外のグループ（`duration`・`easing` や足した役割）は同じ形の族にする。名前は `tokens.css` の変数の名前から `--` を外したもの（族をまたいで重ならない）。廃止したトークンは `usage` の頭に「（廃止: …）」と書く。基本の段は写さない。
+- **トークンの形**: Design System は DTCG を読まない（名前から値への入れ子は、ページで空になり、最初の編集で消える）。そこで、意味の段だけを、解決した値の一覧にする: `color`（`themes` は light と dark、値は hex）、`type`（`families` と `groups[].styles`。行の高さは比のまま）、`spacing`・`radius`・`shadow`（値がライトとダークで違えば `{light, dark}`、同じなら 1 つの文字列）、それ以外のグループ（`duration`・`easing` や足した役割）は同じ形の族にする。名前は `tokens.css` の変数の名前から `--` を外したもの（族をまたいで重ならない）。廃止したトークンは `usage` の頭に「（廃止: …）」と書く。基本の段は写さない。
 - 写したら、写した中身の元（トークン、文書、部品の仕様、HTML の出力）のハッシュを `design-system.json` の `artifact.hash` に書く（`cli.mjs artifact-done`）。check はハッシュが今のファイルと違えば「Design System が古い」と知らせる。
 - アプリ用の出力のスクリーンショットは、アプリ用の出力ができる 3 段階目から、アセットとして上げる。
 - 写せるのは、Artifact のツールが使える手元のセッションだけ。`--local` なら写さない。

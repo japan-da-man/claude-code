@@ -9,7 +9,7 @@
 //   node cli.mjs screenshot <repo> [--pages <名前,…>]   HTML の見本のページを手元の Chrome でライトとダークで撮る（Chrome がなければ撮らずに知らせる）
 //   node cli.mjs artifact-stage <repo> <dir> [--title <名前>] [--index <今の索引>] [--by <名前>]
 //       Claude の Design System に写すファイルを <dir>/project/ に並べる（トークンは Design System の形に変える）
-//   node cli.mjs artifact-done <repo> <url>            写した Artifact の url と中身のハッシュを design-system.json に書く
+//   node cli.mjs artifact-done <repo> <url> --hash <h>  写した Artifact の url と、artifact-stage が返したハッシュを design-system.json に書く
 //   node cli.mjs status <repo>                         チェックの結果に、段の進み具合と古くなった check.mjs を加えて出す
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -308,13 +308,16 @@ export function artifactStage(repo, dir, { title, index, by = 'Claude', now = ne
   const sheets = [join(htmlDir, 'base.css'), ...readdirSync(join(htmlDir, 'components')).filter((n) => n.endsWith('.css')).sort().map((n) => join(htmlDir, 'components', n))]
   put('components/bundle.css', sheets.filter((f) => existsSync(f)).map((f) => readFileSync(f, 'utf8').trimEnd()).join('\n\n') + '\n')
   const specs = config.components ?? `${DS_DIR}/components`
+  const skipped = []
   for (const f of readdirSync(join(repo, specs)).filter((n) => n.endsWith('.md') && n !== 'README.md').sort()) {
     const spec = readFileSync(join(repo, specs, f), 'utf8')
     const html = parseFrontMatter(spec).data?.outputs?.html
     const page = typeof html === 'string' ? join(htmlDir, 'components', `${html}.html`) : null
-    if (!page || !existsSync(page)) continue
-    const preview = componentPreview(readFileSync(page, 'utf8'))
-    if (!preview) continue
+    const preview = page && existsSync(page) ? componentPreview(readFileSync(page, 'utf8')) : null
+    if (!preview) {
+      skipped.push(posix(join(specs, f)))
+      continue
+    }
     put(`components/${pascal(html)}/README.md`, componentReadme(spec, posix(join(specs, f))))
     put(`components/${pascal(html)}/preview.html`, preview)
   }
@@ -322,14 +325,16 @@ export function artifactStage(repo, dir, { title, index, by = 'Claude', now = ne
   const fresh = { v: 3, layout: 'files', createdOnFiles: { v: 1, at: now }, title: name, namespace: pascal(name) || 'DesignSystem', libraries: [], sections: {}, groups: [], assetGroups: {}, blobs: {}, docs: { readme: 'project/README.md', sections: [] } }
   const indexFile = join(out, 'design-system.json')
   writeFileSync(indexFile, JSON.stringify({ ...(current ?? fresh), editing: 'code', lastChange: { by, at: now, via: 'product-design', note: `design-system ${config.ds_version} を写した` } }, null, 2) + '\n')
-  return { root: dir, file_path: indexFile, files, hash: artifactHash(repo, config) }
+  return { root: dir, file_path: indexFile, files, hash: artifactHash(repo, config), skipped }
 }
 
 // 写し終えた Artifact の url と、写した中身のハッシュを design-system.json に書く。
-export function artifactDone(repo, url) {
+// hash は artifact-stage が返したもの（並べてから記録するまでに変わったものを、写したことにしないため）。
+export function artifactDone(repo, url, hash) {
   if (!/^https:\/\/claude\.ai\//.test(url ?? '')) throw new Error('写した Artifact の url（https://claude.ai/…）を渡してください')
   const config = loadConfig(repo)
-  config.artifact = { url, hash: artifactHash(repo, config) }
+  if (!/^[0-9a-f]{64}$/.test(hash ?? '')) throw new Error('artifact-stage が返した hash を --hash で渡してください')
+  config.artifact = { url, hash }
   writeConfig(repo, config)
   return config.artifact
 }
@@ -424,7 +429,7 @@ export function main(argv) {
       if (!rest[0] || rest[0].startsWith('--')) throw new Error('使い方: node cli.mjs artifact-stage <repo> <dir> [--title <名前>] [--index <今の索引>] [--by <名前>]')
       return artifactStage(repo, resolve(rest[0]), { title: option(argv, '--title'), index: option(argv, '--index'), by: option(argv, '--by') })
     case 'artifact-done':
-      return artifactDone(repo, rest[0])
+      return artifactDone(repo, rest[0], option(argv, '--hash'))
     case 'status':
       return status(repo)
     default:

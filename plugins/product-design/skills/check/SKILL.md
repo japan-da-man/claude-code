@@ -18,7 +18,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs status <repo>
 
 次の形で見せる。
 
-1. 一行の結論と、段の進み具合。`status` は `--strict` なしで動くので、`ok` はデザインシステムの中の不備があっても `true` になる。**結論は `ok` ではなく、`ds_errors` と `violations` の件数で出す**（「不備なし」か「不備 N 件」）。段は `stages` を並べ、`next` があれば「次は ○○ の段（`/product-design:init` で続ける）」と添える。`next` が `null` なら、すべての段が承認済み（⑤ の `outputs` は、`design-system.json` の `outputs` に出力があるときだけ数える。1 段階目の版で作ったアプリは `outputs` が空なので、`/product-design:update` で HTML の出力を足せることも伝える）。
+1. 一行の結論と、段の進み具合。`status` は `--strict` なしで動くので、`ok` はデザインシステムの中の不備があっても `true` になる。**結論は `ok` ではなく、`ds_errors` と `violations` の件数で出す**（「不備なし」か「不備 N 件」）。段は `stages` を並べ、`next` があれば「次は ○○ の段」と、続け方を添える（`design-system/CHANGELOG.md` に版がなければ init の途中なので `/product-design:init`、あれば update の途中なので `/product-design:update`）。`next` が `null` なら、すべての段が承認済み（⑤ の `outputs` は、`design-system.json` の `outputs` に出力があるときだけ数える。1 段階目の版で作ったアプリは `outputs` が空なので、`/product-design:update` で HTML の出力を足せることも伝える）。
 2. `ds_errors`（デザインシステムの中の不備）があれば、種類ごとにまとめて表にする。
 
    | 始まり | 意味 | 直し方 |
@@ -44,4 +44,4 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs status <repo>
 最後に、次にできることを伝える。
 
 - デザインシステムの中の不備や、未決の候補は `/product-design:update` で直す・決める。
-- `next` が ① から ④ のどれかなら、`/product-design:init` で続きから進める。
+- `next` があれば、上の続け方で進める。すべて承認済みで、`design-system.json` に `artifact` がなければ、Claude の Design System にまだ写していないので、`/product-design:update`（写し直すだけ）で写せる。
