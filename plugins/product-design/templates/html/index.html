@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>部品の見本</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="base.css">
+<script src="theme.js"></script>
+<style>
+  .ds-index-group { display: grid; gap: var(--space-2); }
+  .ds-index-group h2 { margin: 0; font: var(--font-headline); letter-spacing: var(--letter-spacing-headline); }
+  .ds-index-group ul { margin: 0; padding-left: var(--space-5); display: grid; gap: var(--space-1); }
+  .ds-index-group a { color: inherit; }
+</style>
+</head>
+<body>
+<header class="ds-page-header">
+  <h1 class="ds-page-title">部品の見本</h1>
+  <p class="ds-page-lead">部品の仕様（design-system/components/）を HTML にしたもの。?theme=dark を付けるとダークで見られる。部品を足したり消したりしたら、この一覧も直す。</p>
+</header>
+<main class="ds-page">
+  <section class="ds-index-group">
+    <h2>操作</h2>
+    <ul>
+      <li><a href="components/button.html">ボタン</a></li>
+      <li><a href="components/icon-button.html">アイコンのボタン</a></li>
+      <li><a href="components/toggle.html">オン・オフ</a></li>
+      <li><a href="components/picker.html">選択</a></li>
+    </ul>
+  </section>
+  <section class="ds-index-group">
+    <h2>入力</h2>
+    <ul>
+      <li><a href="components/text-field.html">1 行の入力</a></li>
+      <li><a href="components/secure-field.html">伏せ字の入力</a></li>
+      <li><a href="components/text-editor.html">複数行の入力</a></li>
+    </ul>
+  </section>
+  <section class="ds-index-group">
+    <h2>一覧と面</h2>
+    <ul>
+      <li><a href="components/list-row.html">一覧の行</a></li>
+      <li><a href="components/list-header.html">一覧の見出し</a></li>
+      <li><a href="components/card.html">カード</a></li>
+      <li><a href="components/badge.html">印</a></li>
+    </ul>
+  </section>
+  <section class="ds-index-group">
+    <h2>メッセージ</h2>
+    <ul>
+      <li><a href="components/inline-message.html">その場のメッセージ</a></li>
+      <li><a href="components/banner.html">バナー</a></li>
+      <li><a href="components/toast.html">トースト</a></li>
+      <li><a href="components/alert-dialog.html">アラート</a></li>
+      <li><a href="components/confirmation.html">確認</a></li>
+    </ul>
+  </section>
+  <section class="ds-index-group">
+    <h2>状態</h2>
+    <ul>
+      <li><a href="components/empty-state.html">空の状態</a></li>
+      <li><a href="components/loading.html">読み込み中</a></li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

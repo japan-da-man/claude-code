@@ -1,0 +1,87 @@
+/* HTML の出力の土台（shadcn/ui）。tokens.css のあと、部品の CSS より先に読む。値は tokens.css の変数だけを使う。 */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font: var(--font-body);
+  letter-spacing: var(--letter-spacing-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* 見本のページ */
+.ds-page-header {
+  padding: var(--space-6) var(--space-4) 0;
+}
+
+.ds-page-title {
+  margin: 0;
+  font: var(--font-large-title);
+  letter-spacing: var(--letter-spacing-large-title);
+}
+
+.ds-page-lead {
+  margin: var(--space-2) 0 0;
+  color: var(--muted-foreground);
+}
+
+.ds-page {
+  display: grid;
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-4);
+}
+
+.ds-example {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.ds-example-title {
+  margin: 0;
+  font: var(--font-footnote);
+  letter-spacing: var(--letter-spacing-footnote);
+  color: var(--muted-foreground);
+}
+
+.ds-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ds-stack {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ds-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.ds-icon {
+  width: 1.25em;
+  height: 1.25em;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
