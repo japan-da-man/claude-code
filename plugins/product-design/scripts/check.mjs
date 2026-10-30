@@ -141,7 +141,7 @@ function aliasChain(tokens, ref) {
 }
 
 // 値の中の別名をすべて解決する（合成型の中も）。seen で、合成型の中から戻ってくる循環も止める。
-function deepResolve(tokens, value, errors, where, seen = []) {
+export function deepResolve(tokens, value, errors = [], where = '', seen = []) {
   if (typeof value === 'string' && ALIAS.test(value)) {
     const path = ALIAS.exec(value)[1]
     if (seen.includes(path)) {
@@ -167,7 +167,7 @@ function deepResolve(tokens, value, errors, where, seen = []) {
 }
 
 // 別名だけのトークンは、参照先の型を受け継ぐ。
-function typeOf(tokens, t) {
+export function typeOf(tokens, t) {
   if (t.type) return t.type
   const r = resolveAlias(tokens, t.value)
   return r.token?.type
@@ -354,7 +354,7 @@ export function checkContrast(root, tokens) {
 const hex2 = (c) => Math.round(c * 255).toString(16).padStart(2, '0')
 export const cssColor = ([r, g, b, a]) => `#${hex2(r)}${hex2(g)}${hex2(b)}${a < 1 ? hex2(a) : ''}`
 const cssDimension = (d) => `${d.value}${d.unit}`
-const cssFamily = (f) => (Array.isArray(f) ? f : [f]).map((s) => (/\s/.test(s) ? `"${s}"` : s)).join(', ')
+export const cssFamily = (f) => (Array.isArray(f) ? f : [f]).map((s) => (/\s/.test(s) ? `"${s}"` : s)).join(', ')
 const cssShadow = (v) => (Array.isArray(v) ? v : [v]).map((s) => [s.offsetX, s.offsetY, s.blur, s.spread].map(cssDimension).join(' ') + ` ${cssColor(rgba(s.color))}`).join(', ')
 
 // 色は役割の名前だけ（--secondary-label）、ほかはグループの名前を前に付ける（--space-2、--font-title-1）。
@@ -382,7 +382,7 @@ function cssValue(type, v) {
 }
 
 // トークンの CSS 変数を、{ 名前: [ライト, ダーク] } で返す。
-function cssDeclarations(tokens, t) {
+export function cssDeclarations(tokens, t) {
   const type = typeOf(tokens, t)
   if (type === 'typography') {
     const v = deepResolve(tokens, t.value, [], t.path)

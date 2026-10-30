@@ -13,7 +13,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { CONFIG_PATH, REQUIRED, STAGES, collectTrace, flattenTokens, generateCss, loadConfig, runCheck, traceFrom, validateTokens } from './check.mjs'
+import { CONFIG_PATH, REQUIRED, STAGES, collectTrace, cssDeclarations, cssFamily, deepResolve, flattenTokens, generateCss, isDeprecated, loadConfig, runCheck, traceFrom, typeOf, validateTokens } from './check.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const CHECK = join(ROOT, 'scripts', 'check.mjs')
@@ -177,6 +177,59 @@ export function tokens(repo) {
   mkdirSync(join(repo, code), { recursive: true })
   writeFileSync(join(repo, file), generateCss(root))
   return { written: [file], errors: [] }
+}
+
+// ---------------------------------------------------------------------------
+// Claude の Design System（Artifact の型）への写し
+
+// Design System のトークンの族（color と type 以外は { tokens: [{ name, value, usage }] }）。余白は spacing と呼ぶ。
+const DS_FAMILY = { space: 'spacing' }
+const DS_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
+
+// DTCG の tokens.json を、Design System が読む一覧の形にする。意味の段だけを、解決した値で渡す。
+// 名前は tokens.css の変数の名前から -- を外したもの（Design System のページが作る CSS 変数と揃う）。
+export function toDesignSystemTokens(root, { title, base, ds_version, tokens: file = `${DS_DIR}/tokens.json` }) {
+  const { tokens } = flattenTokens(root)
+  const out = {
+    name: title,
+    version: 1,
+    meta: { source: 'product-design', base, ...(ds_version ? { ds_version } : {}), tokens: file },
+    color: { themes: [{ id: 'light', name: 'Light' }, { id: 'dark', name: 'Dark' }], tokens: [] },
+    type: { fonts: [], families: {}, groups: [] },
+  }
+  const styles = []
+  for (const t of tokens.values()) {
+    if (t.tier !== 'semantic') continue
+    const retired = isDeprecated(t.deprecated) ? `（廃止${typeof t.deprecated === 'string' ? `: ${t.deprecated}` : ''}）` : ''
+    const usage = retired + (t.description ?? '')
+    const note = usage ? { usage } : {}
+    const type = typeOf(tokens, t)
+    if (type === 'typography') {
+      const v = deepResolve(tokens, t.value)
+      if (!v) continue
+      const alias = /^\{(?:.*\.)?([^.{}]+)\}$/.exec(t.value?.fontFamily ?? '')
+      const stack = cssFamily(v.fontFamily)
+      const family = alias?.[1].toLowerCase() ?? Object.keys(out.type.families).find((k) => out.type.families[k] === stack) ?? `family-${Object.keys(out.type.families).length + 1}`
+      out.type.families[family] = stack
+      const name = t.path.split('.').slice(1).join('-')
+      styles.push({ family, style: { name, fontSize: `${v.fontSize.value}${v.fontSize.unit}`, lineHeight: v.lineHeight, fontWeight: v.fontWeight, letterSpacing: `${v.letterSpacing.value}${v.letterSpacing.unit}`, ...note } })
+      continue
+    }
+    const [entry] = Object.entries(cssDeclarations(tokens, t))
+    if (!entry) continue
+    const [variable, [light, dark]] = entry
+    const family = type === 'color' ? 'color' : (DS_FAMILY[t.group] ?? t.group)
+    const value = type === 'color' || light !== dark ? { light, dark } : light
+    ;(out[family] ??= { tokens: [] }).tokens.push({ name: variable.slice(2), value, ...note })
+  }
+  if (styles.length) {
+    const family = styles[0].family
+    out.type.groups.push({ name: 'Text', family, styles: styles.map((s) => (s.family === family ? s.style : { ...s.style, family: s.family })) })
+  }
+  const names = Object.entries(out).filter(([k, v]) => k !== 'type' && Array.isArray(v?.tokens)).flatMap(([, v]) => v.tokens.map((x) => x.name))
+  const bad = names.filter((n, i) => !DS_NAME.test(n) || names.indexOf(n) !== i)
+  if (bad.length) throw new Error(`Design System に渡せない名前か、族をまたいで重なる名前があります: ${[...new Set(bad)].join(', ')}`)
+  return out
 }
 
 // 手元の Chrome。$CHROME、macOS の決まった場所、PATH の順に探す。なければ null。
