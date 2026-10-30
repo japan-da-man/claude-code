@@ -45,6 +45,8 @@ GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not av
 
 要件定義書の KPI を測るイベントを `tracking/F-xxx.yaml` に書く（`${CLAUDE_PLUGIN_ROOT}/templates/tracking.yaml`）。イベント名は「対象_動作」の snake_case、プロパティは 1 イベント 20 個まで。設計書の `tracking` にパスを書く。
 
+`observability/events.yaml` がある（observability プラグインを使っている）リポジトリでは、イベントの定義はそちらに 1 か所だけ置く。新しいイベントは `observability/events.yaml` に `status: planned` で書き（`owner`・`trigger`・`question` に KPI、プロパティの決まりは observability のチェッカーに従う）、`tracking/F-xxx.yaml` には `feature` と、各イベントの `name` と `kpi` だけを書く（trigger・properties は書き写さない）。
+
 ## 5. UI 案（要件定義書が `ui: none` でなければ）
 
 作業場は Claude Design、正本はリポジトリ。**案はこのスキル（AI）が作り、人は選ぶだけ。**

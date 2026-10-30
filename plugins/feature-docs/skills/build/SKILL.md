@@ -29,7 +29,7 @@ GitHub の操作（`gh pr …`・`gh issue view`）が `GitHub GraphQL is not av
 要件定義書と、`pending` に REQ-xxxx がある設計書の `> 未実装（REQ-xxxx）` の節を読み、**1 タスク = 1 PR** に分ける。
 
 - 1 タスクは、レビューできる小ささ（目安 300 行以内の差分）で、それだけでテストが通るもの。
-- 順番は依存の順：スキーマ・型 → API とデータ → アプリの状態とロジック → 画面 → 計測（tracking のイベント）→ E2E（Maestro のフロー）。
+- 順番は依存の順：スキーマ・型 → API とデータ → アプリの状態とロジック → 画面 → 計測（tracking のイベント。`observability/events.yaml` があれば、送り始めたイベントの `status` を `active` にし、`node observability/check.mjs` も通す）→ E2E（Maestro のフロー）。
 - 各タスクに、満たす受け入れ条件（設計書の「受け入れ条件」の項目）を対応させる。最後に、すべての受け入れ条件がどれかのタスクで満たされることを確かめる。
 - タスクの一覧を TaskCreate で作る（人が進み具合を見られるように）。
 
