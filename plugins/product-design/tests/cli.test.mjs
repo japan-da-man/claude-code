@@ -27,6 +27,18 @@ for (const base of ['hig', 'shadcn']) {
   })
 }
 
+test('every product principle in the template has a priority line, a scene and what it gives up', () => {
+  const text = readFileSync(fileURLToPath(new URL('../templates/product/principles.md', import.meta.url)), 'utf8').replace(/<!--[\s\S]*?-->/g, '')
+  const sections = text.split(/^(?=### P\d+ )/m).slice(1)
+  assert.ok(sections.length >= 3 && sections.length <= 5, `${sections.length} principles`)
+  for (const s of sections) {
+    const id = s.slice(4, s.indexOf(' ', 4))
+    assert.match(s, /^\*\*.+を優先する。\*\*$/m, id)
+    assert.match(s, /^- 場面: \S/m, id)
+    assert.match(s, /^- 捨てるもの: \S/m, id)
+  }
+})
+
 test('install writes a v2 config with every stage pending and places the templates', () => {
   const repo = fresh('hig')
   const config = JSON.parse(readFileSync(join(repo, 'design-system', 'design-system.json'), 'utf8'))
