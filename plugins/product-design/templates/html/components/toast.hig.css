@@ -37,7 +37,7 @@
 }
 
 .ds-toast-action {
-  min-height: 32px;
+  min-height: 44px;
   padding: 0 var(--space-3);
   border: 0;
   border-radius: 999px;

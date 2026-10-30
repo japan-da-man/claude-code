@@ -15,7 +15,7 @@
   <h1 class="ds-page-title">複数行の入力</h1>
   <p class="ds-page-lead">仕様: design-system/components/text-editor.md</p>
 </header>
-<main class="ds-page" data-group="入力" data-height="520">
+<main class="ds-page" data-group="入力" data-height="640">
   <section class="ds-example">
     <h2 class="ds-example-title">ふつう</h2>
     <div class="ds-stack">
@@ -27,8 +27,12 @@
     </div>
   </section>
   <section class="ds-example">
-    <h2 class="ds-example-title">エラー・押せない</h2>
+    <h2 class="ds-example-title">状態（入力中・エラー・押せない）</h2>
     <div class="ds-stack">
+      <div class="ds-field ds-field--bordered">
+        <label class="ds-field-label" for="te-focused">メモ</label>
+        <textarea class="ds-field-input ds-text-editor" id="te-focused" rows="2" data-state="focused">牛乳と卵を買う</textarea>
+      </div>
       <div class="ds-field ds-field--bordered">
         <label class="ds-field-label" for="te-error">メモ</label>
         <textarea class="ds-field-input ds-text-editor" id="te-error" rows="2" aria-invalid="true" aria-describedby="te-error-message">とても長いメモ…</textarea>

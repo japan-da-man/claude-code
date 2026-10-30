@@ -15,7 +15,7 @@
   <h1 class="ds-page-title">伏せ字の入力</h1>
   <p class="ds-page-lead">仕様: design-system/components/secure-field.md</p>
 </header>
-<main class="ds-page" data-group="入力" data-height="320">
+<main class="ds-page" data-group="入力" data-height="620">
   <section class="ds-example">
     <h2 class="ds-example-title">枠つき（見せるボタンつき）</h2>
     <div class="ds-stack">
@@ -29,8 +29,29 @@
     </div>
   </section>
   <section class="ds-example">
-    <h2 class="ds-example-title">エラー</h2>
+    <h2 class="ds-example-title">枠なし（一覧の中）</h2>
     <div class="ds-stack">
+      <div class="ds-field-list">
+        <div class="ds-field ds-field--plain">
+          <label class="ds-visually-hidden" for="sf-plain">パスワード</label>
+          <div class="ds-secure-field">
+            <input class="ds-field-input" id="sf-plain" type="password" placeholder="パスワードを入力" autocomplete="current-password">
+            <button class="ds-secure-field-reveal" type="button" aria-label="パスワードを表示する" aria-pressed="false"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section class="ds-example">
+    <h2 class="ds-example-title">状態（入力中・エラー・押せない）</h2>
+    <div class="ds-stack">
+      <div class="ds-field ds-field--bordered">
+        <label class="ds-field-label" for="sf-focused">パスワード</label>
+        <div class="ds-secure-field">
+          <input class="ds-field-input" id="sf-focused" type="password" value="secret" data-state="focused">
+          <button class="ds-secure-field-reveal" type="button" aria-label="パスワードを表示する" aria-pressed="false"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        </div>
+      </div>
       <div class="ds-field ds-field--bordered">
         <label class="ds-field-label" for="sf-new">新しいパスワード</label>
         <div class="ds-secure-field">
@@ -38,6 +59,13 @@
           <button class="ds-secure-field-reveal" type="button" aria-label="パスワードを表示する" aria-pressed="false"><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
         </div>
         <p class="ds-field-message" id="sf-new-message">8 文字以上にしてください</p>
+      </div>
+      <div class="ds-field ds-field--bordered">
+        <label class="ds-field-label" for="sf-disabled">パスワード</label>
+        <div class="ds-secure-field">
+          <input class="ds-field-input" id="sf-disabled" type="password" value="secret-pass" disabled>
+          <button class="ds-secure-field-reveal" type="button" aria-label="パスワードを表示する" aria-pressed="false" disabled><svg class="ds-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        </div>
       </div>
     </div>
   </section>

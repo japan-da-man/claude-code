@@ -7,6 +7,7 @@
 
 .ds-toggle-row {
   display: flex;
+  cursor: pointer;
   align-items: center;
   gap: var(--space-3);
   min-height: 44px;
@@ -33,7 +34,9 @@
   color: var(--secondary-label);
 }
 
+/* つまみは iOS と同じく、ライトでもダークでも白（ライトの system-background とダークの label が白） */
 .ds-switch {
+  --ds-switch-thumb: var(--system-background);
   appearance: none;
   position: relative;
   flex: none;
@@ -54,9 +57,19 @@
   width: 27px;
   height: 27px;
   border-radius: 50%;
-  background: var(--on-tint);
+  background: var(--ds-switch-thumb);
   box-shadow: var(--shadow-md);
   transition: transform var(--duration-normal) var(--easing-standard);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ds-switch {
+    --ds-switch-thumb: var(--label);
+  }
+}
+
+[data-theme="dark"] .ds-switch {
+  --ds-switch-thumb: var(--label);
 }
 
 .ds-switch:checked {
@@ -70,6 +83,10 @@
 .ds-switch:disabled {
   cursor: default;
   opacity: 0.4;
+}
+
+.ds-toggle-row:has(.ds-switch:disabled) {
+  cursor: default;
 }
 
 .ds-toggle-row:has(.ds-switch:disabled) .ds-toggle-row-label {

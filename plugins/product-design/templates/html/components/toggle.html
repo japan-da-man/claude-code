@@ -18,18 +18,18 @@
   <section class="ds-example">
     <h2 class="ds-example-title">状態（オン・オフ・押せない）</h2>
     <div class="ds-toggle-group">
-      <div class="ds-toggle-row">
-        <label class="ds-toggle-row-label" for="toggle-notify"><span class="ds-toggle-row-title">通知</span><span class="ds-toggle-row-detail">新しいメッセージを知らせる</span></label>
-        <input class="ds-switch" id="toggle-notify" type="checkbox" role="switch" checked data-testid="notify-toggle">
-      </div>
-      <div class="ds-toggle-row">
-        <label class="ds-toggle-row-label" for="toggle-sound"><span class="ds-toggle-row-title">音</span></label>
-        <input class="ds-switch" id="toggle-sound" type="checkbox" role="switch">
-      </div>
-      <div class="ds-toggle-row">
-        <label class="ds-toggle-row-label" for="toggle-sync"><span class="ds-toggle-row-title">同期</span><span class="ds-toggle-row-detail">サインインすると使える</span></label>
-        <input class="ds-switch" id="toggle-sync" type="checkbox" role="switch" disabled>
-      </div>
+      <label class="ds-toggle-row">
+        <span class="ds-toggle-row-label"><span class="ds-toggle-row-title">通知</span><span class="ds-toggle-row-detail">新しいメッセージを知らせる</span></span>
+        <input class="ds-switch" type="checkbox" role="switch" checked data-testid="notify-toggle">
+      </label>
+      <label class="ds-toggle-row">
+        <span class="ds-toggle-row-label"><span class="ds-toggle-row-title">音</span></span>
+        <input class="ds-switch" type="checkbox" role="switch">
+      </label>
+      <label class="ds-toggle-row">
+        <span class="ds-toggle-row-label"><span class="ds-toggle-row-title">同期</span><span class="ds-toggle-row-detail">サインインすると使える</span></span>
+        <input class="ds-switch" type="checkbox" role="switch" disabled>
+      </label>
     </div>
   </section>
 </main>

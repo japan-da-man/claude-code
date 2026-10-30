@@ -4,8 +4,10 @@
   gap: var(--space-3);
 }
 
+/* 行全体が label なので、行のどこを押しても切り替わる（押せる高さは 44px 以上） */
 .ds-toggle-row {
   display: flex;
+  cursor: pointer;
   align-items: center;
   gap: var(--space-3);
   min-height: 44px;
@@ -34,7 +36,9 @@
   color: var(--muted-foreground);
 }
 
+/* オフのつまみは、ライトは background、ダークは foreground（shadcn/ui の Switch と同じ） */
 .ds-switch {
+  --ds-switch-thumb: var(--background);
   appearance: none;
   position: relative;
   flex: none;
@@ -56,8 +60,18 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--background);
+  background: var(--ds-switch-thumb);
   transition: transform var(--duration-fast) var(--easing-standard);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ds-switch {
+    --ds-switch-thumb: var(--foreground);
+  }
+}
+
+[data-theme="dark"] .ds-switch {
+  --ds-switch-thumb: var(--foreground);
 }
 
 .ds-switch:checked {
@@ -77,6 +91,10 @@
 .ds-switch:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.ds-toggle-row:has(.ds-switch:disabled) {
+  cursor: default;
 }
 
 .ds-toggle-row:has(.ds-switch:disabled) .ds-toggle-row-label {
