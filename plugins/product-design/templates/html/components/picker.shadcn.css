@@ -60,7 +60,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 36px;
+  min-height: 44px;
   padding: var(--space-2);
   border-radius: var(--radius-sm);
   font: var(--font-subheadline);

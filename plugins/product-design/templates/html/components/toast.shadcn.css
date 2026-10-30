@@ -42,7 +42,7 @@
 }
 
 .ds-toast-action {
-  min-height: 32px;
+  min-height: 44px;
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
