@@ -8,7 +8,7 @@
     {
       "name": "japan-da-man-mods",
       "source": "./plugins/japan-da-man-mods",
-      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow, dev-extras, mod-dev, factory, design-system, product-design, feature-docs and observability"
+      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow, dev-extras, mod-dev, factory, design-system, product-design, feature-docs, observability, usable-ui and layered-review"
     },
     {
       "name": "todo-mod",
@@ -84,6 +84,11 @@
       "name": "usable-ui",
       "source": "./plugins/usable-ui",
       "description": "[skills] Take AI-made UI from \"operable\" to \"usable\": build fixes the main user, their goal and the product's priority before making a screen and builds in four checks (signifiers, feedback, UX writing, information architecture); review has a separate-context subagent check a screen against those four checks only, splitting must-fix items from polish and handing trade-offs back to people"
+    },
+    {
+      "name": "layered-review",
+      "source": "./plugins/layered-review",
+      "description": "[skills] Code review in layers instead of one gate, for repos where agents write much of the code: risk tiers decided by the change (not the author), verification before the PR, parallel bug hunters by perspective with a separate vote to drop false positives, Important / Nit / Pre-existing labels, a round limit with diff-only re-review so agent loops converge, and an eval that replays missed bugs from incidents and reverts to score every change to the reviewer. A dependency-free checker runs the risk tier and scoring in CI"
     }
   ]
 }

@@ -1,0 +1,26 @@
+name: layered-review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  risk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # 依存なしで動く（npm ci はいらない）。設定・eval のケース・対応結果の形を調べる
+      - run: node review/check.mjs
+      # 変更の中身からリスク段階を決めて、ジョブの要約に出す
+      - name: risk
+        env:
+          BASE: origin/${{ github.base_ref }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: node review/check.mjs risk --base "$BASE" --head HEAD --author "$AUTHOR" >> "$GITHUB_STEP_SUMMARY"
