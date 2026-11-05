@@ -1,0 +1,27 @@
+{
+  "id": "C-001",
+  "kind": "bug",
+  "title": "お気に入りの解除が他の端末に反映されない",
+  "source": {
+    "fix": "<直したコミットか PR>",
+    "revert": null,
+    "incident": "<インシデントの記録があれば>"
+  },
+  "introduced": {
+    "base": "<バグを入れたコミットの親の SHA>",
+    "head": "<バグを入れたコミットの SHA>"
+  },
+  "verified_by": "<場所と内容を確かめた人>",
+  "added": "2026-01-01",
+  "bugs": [
+    {
+      "id": "B1",
+      "path": "api/src/routes/favorites.ts",
+      "lines": [42, 48],
+      "severity": "high",
+      "class": "キャッシュの無効化漏れ",
+      "description": "解除のときに user ごとのキャッシュを消していない",
+      "trigger": "端末 A で解除したあと、端末 B で一覧を開くと、解除した項目が残る"
+    }
+  ]
+}
