@@ -1,0 +1,26 @@
+{
+  "description": "どのリポジトリでも止めたい操作（共通リスト）。リポジトリ固有の禁止操作は、適用先の harness/guards.json に書く。ここのルールを外したいリポジトリは、harness/guards.json の disable_defaults に id を書く。テストケースは guards.default.test.json。",
+  "rules": [
+    {
+      "id": "git-force-push",
+      "pattern": "\\bgit(?:\\s+(?:-[cC]\\s+\\S+|--?[\\w-]+(?:=\\S+)?))*\\s+push\\b.*(?:\\s--force(?![\\w-])|\\s-[a-zA-Z]*f[a-zA-Z]*(?:\\s|$)|\\s\\+[^\\s]+)",
+      "message": "git push --force（-f、+refspec）は止めています。リモートの履歴を上書きするためです。必要なら --force-with-lease を使うか、人に実行を頼んでください。"
+    },
+    {
+      "id": "git-no-verify",
+      "pattern": "\\bgit(?:\\s+(?:-[cC]\\s+\\S+|--?[\\w-]+(?:=\\S+)?))*\\s+(?:(?:commit|push|merge|rebase|am|cherry-pick)\\b.*\\s--no-verify(?:\\s|$)|commit\\b.*\\s-n(?:\\s|$))",
+      "message": "コミットやプッシュのフックを飛ばす --no-verify は止めています。フックが落ちる原因を直してください。どうしても必要なら、人に実行を頼んでください。"
+    },
+    {
+      "id": "env-file-write",
+      "path": "(?:^|/)\\.env(?:\\.[^/]+)?$",
+      "except": "\\.(?:example|sample|template|dist|defaults?)$",
+      "message": ".env は秘密の値を持つファイルなので、書き換えません。変数を足すときは .env.example に名前だけを書き、値の設定は人に頼んでください。"
+    },
+    {
+      "id": "rm-root-or-home",
+      "pattern": "\\brm\\s+(?:-\\S+\\s+)*?(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\\s+(?:-\\S+\\s+)*(?:--\\s+)?(?:/|~/?|\\$HOME/?|\\$\\{HOME\\}/?|/\\*|~/\\*|\\$HOME/\\*)(?:\\s|$)",
+      "message": "ルートやホームを丸ごと消す rm -r は止めています。消したいディレクトリを、具体的なパスで指定してください。"
+    }
+  ]
+}
