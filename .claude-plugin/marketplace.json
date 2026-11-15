@@ -8,7 +8,7 @@
     {
       "name": "japan-da-man-mods",
       "source": "./plugins/japan-da-man-mods",
-      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow, dev-extras, mod-dev, factory, design-system, product-design, feature-docs and observability"
+      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow, dev-extras, mod-dev, factory, design-system, product-design, feature-docs, observability, usable-ui and self-improve"
     },
     {
       "name": "todo-mod",
@@ -84,6 +84,11 @@
       "name": "usable-ui",
       "source": "./plugins/usable-ui",
       "description": "[skills] Take AI-made UI from \"operable\" to \"usable\": build fixes the main user, their goal and the product's priority before making a screen and builds in four checks (signifiers, feedback, UX writing, information architecture); review has a separate-context subagent check a screen against those four checks only, splitting must-fix items from polish and handing trade-offs back to people"
+    },
+    {
+      "name": "self-improve",
+      "source": "./plugins/self-improve",
+      "description": "[skills] [hooks] Self-improving harness so Claude Code does not repeat the same mistake: hooks log failure signals (tool failures, corrections, guard denials, failed verification), write episode notes and ask Claude for one-line improvement candidates at the end of a turn; a scheduled /self-improve:auto-improve turns causes seen in two or more sessions into trial rules and trial skills kept outside the repo and reports them at the next session start; people review, keep, remove or promote them with /self-improve:review and /self-improve:retro. Guards forbidden operations and asks before harness files change. Node.js only, no network"
     }
   ]
 }
