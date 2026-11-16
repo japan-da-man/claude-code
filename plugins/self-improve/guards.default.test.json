@@ -64,5 +64,14 @@
   {"name": "--session=… の形で名乗っても止める", "tool": "Bash", "input": {"command": "harness-note trial add --session=someone-else --key some-key --text \"x\""}, "expect": "deny"},
   {"name": "データの置き場所を差し替えた harness-note を止める", "tool": "Bash", "input": {"command": "HARNESS_DATA_DIR=/tmp/elsewhere harness-note trial add --key some-key --text \"x\""}, "expect": "deny"},
   {"name": "関係のないツール（Read）は通す", "tool": "Read", "input": {"file_path": "harness/config.json"}, "expect": "allow"},
-  {"name": "MCP のツールは、ふだんのセッションでは通す", "tool": "mcp__filesystem__write_file", "input": {"path": "x"}, "expect": "allow"}
+  {"name": "MCP のツールは、ふだんのセッションでは通す", "tool": "mcp__filesystem__write_file", "input": {"path": "x"}, "expect": "allow"},
+  {"name": "git commit -nS（n を含む短いオプションのまとまり）を止める", "tool": "Bash", "input": {"command": "git commit -nS -m x"}, "expect": "deny"},
+  {"name": "git commit -vn を止める", "tool": "Bash", "input": {"command": "git commit -vn -m 'fix the route'"}, "expect": "deny"},
+  {"name": "git commit -uno（untracked-files=no）は通す", "tool": "Bash", "input": {"command": "git commit -uno -m x"}, "expect": "allow"},
+  {"name": "git commit -S（署名）は通す", "tool": "Bash", "input": {"command": "git commit -S -m x"}, "expect": "allow"},
+  {"name": ".env.qa（一覧にない環境名）への追記は確認を挟む", "tool": "Bash", "input": {"command": "echo A=1 >> .env.qa"}, "expect": "ask"},
+  {"name": ".env.production.local への Write は確認を挟む", "tool": "Write", "input": {"file_path": ".env.production.local"}, "expect": "ask"},
+  {"name": ".env.local.example への Write は通す", "tool": "Write", "input": {"file_path": ".env.local.example"}, "expect": "allow"},
+  {"name": ".env.template への Write は通す", "tool": "Write", "input": {"file_path": "apps/api/.env.template"}, "expect": "allow"},
+  {"name": ".envrc への Write は通す（別のファイル）", "tool": "Write", "input": {"file_path": ".envrc"}, "expect": "allow"}
 ]
