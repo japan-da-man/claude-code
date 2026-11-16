@@ -12,9 +12,11 @@ export const INCIDENT_STATUSES = ['open', 'trial', 'converted', 'wontfix', 'reti
 
 // リモートの URL から、認証情報を取り除く。
 //   https://user:token@host/org/repo.git?access_token=…#x  →  https://host/org/repo.git
+//   https://host/org/repo.git;token=…                       →  https://host/org/repo.git（; のパラメーターも落とす）
 //   git@host:org/repo.git                                   →  git@host:org/repo.git（git は利用者名で、認証情報ではない）
-//   token@host:org/repo.git                                 →  host:org/repo.git
+//   token@host:org/repo.git、user:token@host:org/repo.git   →  host:org/repo.git（:// のない形も、最後の @ までを落とす）
 // ローカルのパス（/path/to/repo、file://…）は、記録しない（マシンの中のパスを残さないため）。
+const cutParams = (part) => part.replace(/[;?#].*$/s, '')
 export function sanitizeRemote(raw) {
   const url = String(raw ?? '').trim()
   if (!url || /\s/.test(url)) return null
@@ -23,13 +25,18 @@ export function sanitizeRemote(raw) {
     const scheme = withScheme[1].toLowerCase()
     if (scheme === 'file') return null
     // 利用者名とパスワード（@ を含むパスワードでも、最後の @ までを取り除く）。
-    const host = withScheme[2].slice(withScheme[2].lastIndexOf('@') + 1)
+    const host = cutParams(withScheme[2].slice(withScheme[2].lastIndexOf('@') + 1))
     if (!host) return null
-    return `${scheme}://${host}${withScheme[3]}`
+    return `${scheme}://${host}${cutParams(withScheme[3])}`
   }
-  const scp = /^(?:([^@/:\s]+)@)?([^@/:\s]+):(?!\/)([^?#]+)/.exec(url)
-  if (scp && !/^[A-Za-z]$/.test(scp[2])) return `${scp[1] === 'git' ? 'git@' : ''}${scp[2]}:${scp[3]}`
-  return null
+  // :// のない形（scp の形）。@ を含めば、最後の @ までを落とす（user:token@host:… の token を残さない）。
+  const at = url.lastIndexOf('@')
+  const user = at >= 0 ? url.slice(0, at) : null
+  const scp = /^([^@/:\s]+):(?!\/)(.+)$/.exec(url.slice(at + 1))
+  if (!scp || /^[A-Za-z]$/.test(scp[1])) return null
+  const path = cutParams(scp[2])
+  if (!path) return null
+  return `${user === 'git' ? 'git@' : ''}${scp[1]}:${path}`
 }
 
 // リポジトリのリモートの URL（origin。なければ最初のリモート）。git の設定ファイルを読む。git コマンドは呼ばない。

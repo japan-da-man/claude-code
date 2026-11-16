@@ -813,13 +813,15 @@ function cmdIncident(ctx, positional, flags) {
         lines.push(`試用ルール ${rule.cause_key} の失敗票 ID を ${moved.id} に付け替えました`)
       }
     }
+    // 取り込み元のリポジトリを、どの出力にも書く（他人のリポジトリの票が、user 全体の票に混ざっていないかを確かめられるように）。
+    const from = `リポジトリ ${ctx.repo.name} の harness/incidents/`
     if (result.imported.length) {
-      lines.unshift(`失敗票を ${result.imported.length} 件取り込みました（${tildePath(ctx.user.incidents)}）：${result.imported.map((i) => (i.from === i.id ? i.id : `${i.from} → ${i.id}`)).join('、')}`)
+      lines.unshift(`失敗票を ${result.imported.length} 件取り込みました（取り込み元：${from}、取り込み先：${tildePath(ctx.user.incidents)}）：${result.imported.map((i) => (i.from === i.id ? i.id : `${i.from} → ${i.id}`)).join('、')}`)
       lines.push('もとのファイル（harness/incidents/）は消していません。取り込んだ内容を確かめてから、リポジトリから消してください。')
       if (renamed.length) lines.push('番号を振り直した票があります（ほかのリポジトリの票と番号が重なったため）。リポジトリのファイルに古い ID を書いていれば、直してください。')
     }
-    if (result.skipped.length) lines.push(`取り込み済みなので飛ばしました：${result.skipped.map((i) => i.from).join('、')}`)
-    if (!result.imported.length && !result.skipped.length && !result.errors.length) lines.push('取り込む失敗票はありません（harness/incidents/ に INC-YYYY-NNNN.md がありません）。')
+    if (result.skipped.length) lines.push(`取り込み済みなので飛ばしました（${from}）：${result.skipped.map((i) => i.from).join('、')}`)
+    if (!result.imported.length && !result.skipped.length && !result.errors.length) lines.push(`取り込む失敗票はありません（${from} に INC-YYYY-NNNN.md がありません）。`)
     if (lines.length) out(lines.join('\n'))
     return result.errors.length ? fail(result.errors) : 0
   }

@@ -74,6 +74,15 @@ test('リモートの URL から、認証情報を取り除く（漏れがない
     ['git@github.com:acme/app.git', 'git@github.com:acme/app.git'],
     ['ghp_tokenvalue@github.com:acme/app.git', 'github.com:acme/app.git'],
     ['github.com:acme/app.git', 'github.com:acme/app.git'],
+    // :// のない形でも、@ を含めば、最後の @ までを落とす（利用者名:トークン@ の形）
+    ['user:ghp_tokenvalue@github.com:acme/app.git', 'github.com:acme/app.git'],
+    ['git:secret@github.com:acme/app.git', 'github.com:acme/app.git'],
+    ['a@b@github.com:acme/app.git', 'github.com:acme/app.git'],
+    // ; のパラメーター、クエリ、フラグメントも落とす
+    ['https://example.com/acme/app.git;token=abc', 'https://example.com/acme/app.git'],
+    ['https://example.com;token=abc/acme/app.git', 'https://example.com/acme/app.git'],
+    ['git@github.com:acme/app.git;token=abc', 'git@github.com:acme/app.git'],
+    ['github.com:acme/app.git?token=abc#x', 'github.com:acme/app.git'],
     // ローカルのパス（マシンの中のパスを残さない）と、読めないもの
     ['/srv/git/app.git', null], ['../app.git', null], ['file:///srv/git/app.git', null], ['C:/repos/app.git', null], ['', null], ['https://user:pass@', null],
   ]
@@ -205,7 +214,8 @@ test('incident import: 1.x の失敗票（harness/incidents/）を user 側へ�
   const run = note(t, ['incident', 'import', '--session', 'human-1'])
   assert.equal(run.status, 1)
   // 空いている番号はそのまま。重なる番号は、その年の次の番号に振り直す
-  assert.match(run.stdout, /失敗票を 3 件取り込みました（~\/\.claude\/self-improve\/incidents）：INC-2025-0007、INC-2026-0001 → INC-2026-0004、INC-2026-0002 → INC-2026-0005/)
+  // 取り込み元のリポジトリの名前を出す（他人のリポジトリの票が、user 全体の票に混ざっていないかを確かめられるように）
+  assert.match(run.stdout, /失敗票を 3 件取り込みました（取り込み元：リポジトリ demo-app の harness\/incidents\/、取り込み先：~\/\.claude\/self-improve\/incidents）：INC-2025-0007、INC-2026-0001 → INC-2026-0004、INC-2026-0002 → INC-2026-0005/)
   assert.match(run.stdout, /試用ルール route-placement の失敗票 ID を INC-2026-0005 に付け替えました/)
   assert.match(run.stdout, /もとのファイル（harness\/incidents\/）は消していません/)
   assert.match(run.stderr, /harness\/incidents\/INC-2026-0009\.md を読めません/)
@@ -229,10 +239,10 @@ test('incident import: 1.x の失敗票（harness/incidents/）を user 側へ�
 
   // もう一度実行しても、増えない
   const again = note(t, ['incident', 'import', '--session', 'human-1'])
-  assert.match(again.stdout, /取り込み済みなので飛ばしました：INC-2025-0007、INC-2026-0001、INC-2026-0002/)
+  assert.match(again.stdout, /取り込み済みなので飛ばしました（リポジトリ demo-app の harness\/incidents\/）：INC-2025-0007、INC-2026-0001、INC-2026-0002/)
   assert.equal(note(t, ['incident', 'list', '--all', '--json']).json.length, 6)
   // 人だけの操作。失敗票のないリポジトリでは、何もしない
   note(t, ['lock', '--session', 'auto-1'], { now: at(60) })
   assert.match(note(t, ['incident', 'import', '--session', 'auto-1'], { now: at(61) }).stdout, /^見送り：/)
-  assert.match(note(other, ['incident', 'import', '--session', 'human-2']).stdout, /取り込む失敗票はありません/)
+  assert.match(note(other, ['incident', 'import', '--session', 'human-2']).stdout, /取り込む失敗票はありません（リポジトリ other-app の harness\/incidents\/ に/)
 })
