@@ -90,8 +90,10 @@ export async function onStop(input) {
   let unverifiedFailure = null
 
   // 1. 検証。そのターンでファイルの変更があったときだけ。検証が通ったあとに変更がなければ、繰り返さない。
+  //    人が許可した中身（harness-note verify trust）と一致するときだけ実行する。許可されていなければ、実行しない
+  //    （セッション開始時に、許可の仕方を知らせている）。クローンしただけのリポジトリのコマンドを、同意なしに走らせないため。
   const unverified = changes.filter((c) => !state.verified_at || c.ts > state.verified_at)
-  if (unverified.length && ctx.config.verify.length) {
+  if (unverified.length && ctx.config.verify.length && ctx.config.verify_trust.trusted) {
     const result = await verifyTurn(ctx, { promptId })
     if (result.ok) {
       state.verified_at = iso()

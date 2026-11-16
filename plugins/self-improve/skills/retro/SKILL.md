@@ -91,7 +91,7 @@ harness-note incident add --key <原因キー> --root-cause <分類> --category 
 | :- | :- |
 | 文章ルール（試用） | `harness-note trial add --key <原因キー> --text '<命令形の 1 行>' --ref <INC-ID>`。次のセッション開始時から読み込まれる。続けて `harness-note incident set <INC-ID> --status trial --control trial:rules/<原因キー>`。試用ルールは、誰が入れたものでも、人が確認するまで「未確認」として数えられる（出力に変更 ID が出る）。この場で文言を見せて承認を得ているなら、続けて `harness-note review done <変更ID> --decision keep --incident <INC-ID>` で確認済みにする。承認を得ていなければ、そのままにする（次のセッション開始時に 1 行出て、`/self-improve:review` で確認できる） |
 | ガード | 選んだ置き場所の `guards.json`（なければ `${CLAUDE_PLUGIN_ROOT}/templates/guards.json` をもとに作る）の `rules` に `{ "id", "pattern" または "path", "message" }` を足す。**message には直し方を 1 行**書く（例：`routes から db を直接 import しています。services/ 経由にしてください`）。同じ場所の `guards.test.json` に「止めるべき入力」と「止めてはいけない入力」を 1 件ずつ足し、`node ${CLAUDE_PLUGIN_ROOT}/scripts/test-guards.mjs` が通ることを確かめる。自分専用のガードの message には、失敗票 ID を付けてよい。チームのガード（`harness/guards.json`）には付けない |
-| 検証コマンド | `harness/config.json` の `verify` に `{ "name", "run" }` を足す（ファイルがなければ `${CLAUDE_PLUGIN_ROOT}/templates/repo-config.json` をもとに作る。このファイルに書けるのは `verify` だけ）。足す前に、問題のある状態で `node ${CLAUDE_PLUGIN_ROOT}/scripts/verify.mjs` を 1 回実行し、実際に失敗することを見る |
+| 検証コマンド | `harness/config.json` の `verify` に `{ "name", "run" }` を足す（ファイルがなければ `${CLAUDE_PLUGIN_ROOT}/templates/repo-config.json` をもとに作る。このファイルに書けるのは `verify` だけ）。足したら `harness-note verify trust --session ${CLAUDE_SESSION_ID}` で実行の許可を記録する（確認が出て、実行されるコマンドの一覧が表示される。許可していない中身は実行されない）。そのうえで、問題のある状態で `node ${CLAUDE_PLUGIN_ROOT}/scripts/verify.mjs` を 1 回実行し、実際に失敗することを見る |
 | Skill | 自分専用は `~/.claude/skills/<リポジトリ名>-<名前>/SKILL.md`（description に、どのリポジトリの、どんな作業のときに使うかを書く）、チームは `.claude/skills/<名前>/SKILL.md` に手順を書く。スクリプト化は、人が承認してから |
 | カスタム lint | リポジトリのリンター設定に足し、検証コマンドから実行されるようにする。エラー文に直し方を書く |
 

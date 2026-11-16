@@ -72,7 +72,7 @@ harness-note incident add --from-draft --key <原因キー>
 
 - **承認**：案を反映する。
   - ガード：自分専用か、チームかを尋ねる（おすすめは自分専用）。自分専用は `~/.claude/self-improve/repos/<名前>/guards.json`（全リポジトリに効かせるなら `~/.claude/self-improve/guards.json`）、チームはリポジトリの `harness/guards.json`。ファイルがなければ `${CLAUDE_PLUGIN_ROOT}/templates/guards.json` をもとに作る。同じ場所の `guards.test.json` に「止めるべき入力」と「止めてはいけない入力」を 1 件ずつ足して、`node ${CLAUDE_PLUGIN_ROOT}/scripts/test-guards.mjs` を通す。`<名前>` を含む実際のパスは、`harness-note status` の「リポジトリごとの置き場所」。
-  - 検証コマンド：リポジトリの `harness/config.json` の `verify` に足し（なければ `${CLAUDE_PLUGIN_ROOT}/templates/repo-config.json` をもとに作る）、問題のある状態で `node ${CLAUDE_PLUGIN_ROOT}/scripts/verify.mjs` が失敗することを見る。
+  - 検証コマンド：リポジトリの `harness/config.json` の `verify` に足し（なければ `${CLAUDE_PLUGIN_ROOT}/templates/repo-config.json` をもとに作る）、`harness-note verify trust --session ${CLAUDE_SESSION_ID}` で実行の許可を記録する（確認が出て、実行されるコマンドの一覧が表示される。許可していない中身は実行されない）。そのうえで、問題のある状態で `node ${CLAUDE_PLUGIN_ROOT}/scripts/verify.mjs` が失敗することを見る。
   - 起票して、記録する：`harness-note incident add --from-draft --key <原因キー> --status converted --control <足した制御の場所>`、続けて `harness-note review done <変更ID> --decision apply --incident <INC-ID>`。`control` は、リポジトリのファイルならリポジトリの根からのパス、user 側のファイルなら `personal:<パス>`。
 - **却下**：`harness-note review done <変更ID> --decision dismiss`（下書きを捨て、その原因を「断られた」と記録する）。
 

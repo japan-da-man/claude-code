@@ -18,6 +18,7 @@
 //   harness-note incident add --from-draft --key K     下書きから起票する（下書きの値を引き継ぐ）
 //   harness-note incident list [--all] | show <ID> | set <ID> --status S [--control C] | import
 //   harness-note promote --key K --to personal|team [--path <移した先>] [--incident INC-..]
+//   harness-note verify [show] | verify trust     リポジトリの検証コマンド（harness/config.json の verify）の一覧と、実行の許可
 //   harness-note targets | status | review | review done <変更ID> --decision keep|edit|remove|apply|dismiss [--incident INC-..]
 //
 //   harness-note report close            セッション開始時の知らせ（報告の 1 行など）を閉じる
@@ -27,8 +28,8 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  activeLock, dayOf, daysBetween, inactiveReason, iso, isKnownSession, isLocked, listFiles, makeContext, parseFrontmatter, readStdin, safeId,
-  sessionLock, tildePath,
+  activeLock, dayOf, daysBetween, inactiveReason, iso, isKnownSession, isLocked, listFiles, makeContext, parseFrontmatter, readStdin,
+  recordVerifyTrust, safeId, sessionLock, tildePath, verifyTrustFile,
 } from './lib/core.mjs'
 import { UsageError, parseArgs } from './lib/args.mjs'
 import { TEXT_MAX, addCandidate, loadCandidates, markCandidates, rekey, summarizeKeys, validKey } from './lib/candidates.mjs'
@@ -693,6 +694,8 @@ function cmdStatus(ctx, flags) {
     recording: ctx.recording,
     config_files: Object.fromEntries(Object.entries(ctx.config.files).map(([k, f]) => [k, { path: k === 'repo' ? 'harness/config.json' : tildePath(f), exists: existsSync(f) }])),
     config_errors: ctx.config.errors,
+    // リポジトリの検証コマンドの件数と、実行を許可しているか（harness-note verify trust）。
+    verify: { count: ctx.config.verify.length, trusted: ctx.config.verify_trust.trusted, changed: ctx.config.verify_trust.changed },
     config_notes: ctx.config.notes,
     guard_files: guardFiles(ctx).map((g) => ({ source: g.source, path: g.label, exists: existsSync(g.file) })),
     // ロックの ID は全文では出さない（ほかのセッションが名乗れないように）。
@@ -713,6 +716,7 @@ function cmdStatus(ctx, flags) {
     `自動改善：${value.interval.enabled ? `間隔 ${ctx.config.auto.interval_days} 日、前回 ${value.interval.last_run_at ?? 'なし'}${value.interval.next_run_from ? `、次に実行できるのは ${value.interval.next_run_from} 以降` : ''}` : '停止中（interval_days が 0）'}`,
     `設定：${Object.values(value.config_files).filter((f) => f.exists).map((f) => f.path).join('、') || 'なし（初期値で動いています）'}。リポジトリごとの置き場所：${value.repo_dir}`,
     `ガードの定義：${value.guard_files.filter((g) => g.exists).map((g) => g.path).join('、')}`,
+    `検証コマンド：${value.verify.count ? `${value.verify.count} 件、${value.verify.trusted ? '許可済み' : `${value.verify.changed ? '中身が変わったので' : ''}許可待ち（実行していません。harness-note verify で中身を確かめ、verify trust で許可します）`}` : 'なし'}`,
     `未確認の自動変更 ${value.gates.unreviewed}/${value.gates.max_unreviewed} 件、試用ルール ${value.gates.trial_rules}/${value.gates.max_trial_rules} 件、試用Skill ${value.gates.trial_skills}/${value.gates.max_trial_skills} 件、読み込ませるルール（試用＋自分専用）${value.gates.rule_lines}/${value.gates.rule_limit} 行`,
     ...(value.gates.blocked.length && value.interval.enabled ? [`自動改善は、いま試用を追加しません：${value.gates.blocked.join('。')}`] : []),
     `new の改善候補 ${value.candidates.new} 件、対象になる原因キー：${value.targets.join('、') || 'なし'}`,
@@ -881,6 +885,51 @@ function cmdIncident(ctx, positional, flags) {
   return 0
 }
 
+// ---- 検証コマンドの許可 ----
+
+// リポジトリの harness/config.json の verify は、人が許可した中身と一致するときだけ実行する。
+//   harness-note verify          いまの検証コマンドの一覧と、許可されているか
+//   harness-note verify trust    一覧を出してから、いまの中身を許可したと記録する（人だけの操作）
+function describeVerify(ctx) {
+  return ctx.config.verify.map((v, i) => `${i + 1}. ${v.name}：${v.run}（制限時間 ${v.timeout_sec} 秒）`)
+}
+function cmdVerify(ctx, positional, flags) {
+  const sub = positional[0] ?? 'show'
+  const trust = ctx.config.verify_trust
+  if (sub === 'show') {
+    makeReader(flags, [])
+    const value = { verify: ctx.config.verify, trusted: trust.trusted, changed: trust.changed, hash: trust.hash, trust_file: tildePath(verifyTrustFile(ctx.repo)) }
+    if (flags.json) return json(value), 0
+    if (!ctx.config.verify.length) return out('検証コマンドは設定されていません（harness/config.json の verify が空か、ファイルがありません）。'), 0
+    out([
+      `harness/config.json の検証コマンド（リポジトリの根で、上から順に実行します）：`,
+      ...describeVerify(ctx),
+      trust.trusted
+        ? '許可済みです。変更のあったターンの終わりに実行します。'
+        : `${trust.changed ? '前に許可したときから中身が変わっています。' : 'まだ許可されていません。'}実行していません。許可するには harness-note verify trust を実行します。`,
+    ].join('\n'))
+    return 0
+  }
+  if (sub !== 'trust') throw new UsageError('使い方：harness-note verify [show] | verify trust')
+  makeReader(flags, [])
+  if (!ctx.config.verify.length) return refuse('許可するものはありません（harness/config.json の verify が空か、ファイルがありません）。')
+  // 人だけの操作。自動改善のセッション、lock を試みたセッション、自動改善の実行中は、見送る。
+  const writer = writerSession(ctx, flags)
+  const refusal = humanOnlyRefusal(ctx, writer)
+  if (refusal) return refuse(refusal)
+  // セッションを確かめられないとき（ID が推定）は、自動改善のセッションかどうかを見分けられないので、記録しない。
+  if (estimated(writer.session)) return refuse('見送り：どのセッションからの操作かを確かめられないので、許可は記録しません。harness-note verify trust --session <セッションID> の形で呼んでください。')
+  const lines = ['次の検証コマンドを、変更のあったターンの終わりに実行します（リポジトリの根で、上から順に）：', ...describeVerify(ctx)]
+  if (trust.trusted) {
+    lines.push('この中身は、すでに許可済みです。')
+  } else {
+    const file = recordVerifyTrust(ctx)
+    lines.push(`この中身を許可したと記録しました（${tildePath(file)}）。harness/config.json の verify が変わったときは、もう一度許可が要ります。`)
+  }
+  out(lines.join('\n'))
+  return 0
+}
+
 // ---- 昇格 ----
 
 // 試用を、自分専用（personal）かチーム（team）へ昇格する。人だけの操作。未確認の変更があれば、確認済みにもなる。
@@ -909,6 +958,7 @@ const USAGE = `harness-note <サブコマンド>
   pending add|list|show|remove          失敗票の下書き
   incident add|list|show|set|import     失敗票（全リポジトリの分を user 側に置く。import は 1.x の票の取り込み）
   promote                               試用を、自分専用かチームへ昇格する
+  verify [show] | verify trust          リポジトリの検証コマンドの一覧と、実行の許可（許可は人だけの操作）
   report write|list|show|close          自動改善の記録、知らせを閉じる
   lock / unlock / targets / status      自動改善のセッション
   review / review done                  未確認の自動変更`
@@ -942,6 +992,7 @@ function main(argv) {
       case 'report': return cmdReport(ctx, positional, flags)
       case 'incident': return cmdIncident(ctx, positional, flags)
       case 'promote': return cmdPromote(ctx, flags)
+      case 'verify': return cmdVerify(ctx, positional, flags)
       case 'lock': return cmdLock(ctx, flags)
       case 'unlock': return cmdUnlock(ctx, flags)
       case 'targets': return cmdTargets(ctx, flags)

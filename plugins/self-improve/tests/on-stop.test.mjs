@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ROOT, at, dataFiles, decisionOf, events, guardRun, makeEnv, note, readData, repoId, session, writeFiles } from './helpers.mjs'
+import { ROOT, at, dataFiles, decisionOf, events, guardRun, makeEnv, note, readData, repoId, session, trustVerifyOf, writeFiles } from './helpers.mjs'
 
 // 失敗の信号（ツールの失敗）。改善候補の確認は、信号があったターンだけ頼む。
 const signal = (s, promptId, minute = 1) => s.failed(promptId, 'Bash', { command: 'npm test' }, 'Exit code 1', { now: at(minute) })
@@ -14,6 +14,11 @@ const outcome = (run) => (run.status === 2 ? 'verify' : ask(run) ? 'ask' : run.j
 const counter = (t) => join(t.base, 'verify-runs.txt')
 const runs = (t) => (existsSync(counter(t)) ? readFileSync(counter(t), 'utf8').trim().split('\n').length : 0)
 // 走った回数を数え、リポジトリに ok.txt があれば通る検証コマンド
+// 検証コマンドを置き、人が許可した状態にする（許可されていない検証コマンドは実行しない）。
+const useVerify = (t, config) => {
+  writeFiles(t.repo, { 'harness/config.json': config })
+  trustVerifyOf(t, config.verify)
+}
 const verifyConfig = (t) => ({ verify: [{ name: 'typecheck', run: `echo run >> "${counter(t)}" && test -f ok.txt || { echo "src/a.ts(3,1): error TS2322 INC-2026-0012 を見てください"; exit 1; }` }] })
 
 test('質問に答えただけのターン（信号も変更もない）では、何も起きない', () => {
@@ -95,7 +100,7 @@ test('変更があっただけのターン（失敗の信号がない）では�
 
 test('harness-note だけ・読むだけのコマンドだけのターンでは、確認を頼まず、検証も走らせない', () => {
   const t = makeEnv()
-  writeFiles(t.repo, { 'harness/config.json': verifyConfig(t) })
+  useVerify(t, verifyConfig(t))
   const s = session(t)
   s.prompt('p1', '改善候補を見せて', { now: at(0) })
   s.used('p1', 'Bash', { command: 'harness-note list' }, { now: at(1) })
@@ -165,7 +170,7 @@ test('人の訂正：直前のターンの依頼文と応答を、訂正の内�
 
 test('検証：変更があったターンだけ走らせる。失敗したら検証の結果だけを返し、通ったあとの Stop で候補の確認を頼む', () => {
   const t = makeEnv()
-  writeFiles(t.repo, { 'harness/config.json': verifyConfig(t) })
+  useVerify(t, verifyConfig(t))
   const s = session(t)
   s.prompt('p1', '型を直して', { now: at(0) })
   write(t, s, 'p1')
@@ -204,7 +209,7 @@ test('検証：変更があったターンだけ走らせる。失敗したら�
 
 test('検証の失敗が連続 3 回で打ち切り、人に知らせる（Claude には続けさせない）', () => {
   const t = makeEnv()
-  writeFiles(t.repo, { 'harness/config.json': verifyConfig(t) })
+  useVerify(t, verifyConfig(t))
   const s = session(t)
   s.prompt('p1', '型を直して', { now: at(0) })
   write(t, s, 'p1')
@@ -261,7 +266,7 @@ const childPid = (t) => Number(readFileSync(join(t.base, 'child.pid'), 'utf8').t
 
 test('検証のタイムアウト：シェルだけでなく、その先で動いている子孫のプロセスも止める', { skip: process.platform === 'win32' }, async () => {
   const t = makeEnv()
-  writeFiles(t.repo, { 'harness/config.json': slowVerify(t, 1) })
+  useVerify(t, slowVerify(t, 1))
   const s = session(t)
   s.prompt('p1', 'テストを直して', { now: at(0) })
   write(t, s, 'p1')
@@ -274,7 +279,7 @@ test('検証のタイムアウト：シェルだけでなく、その先で動�
 
 test('hook 自身が止められたときも、検証コマンドを残さない', { skip: process.platform === 'win32' }, async () => {
   const t = makeEnv()
-  writeFiles(t.repo, { 'harness/config.json': slowVerify(t, 240) })
+  useVerify(t, slowVerify(t, 240))
   const s = session(t)
   s.prompt('p1', 'テストを直して', { now: at(0) })
   write(t, s, 'p1')
@@ -291,7 +296,7 @@ test('hook 自身が止められたときも、検証コマンドを残さない
 
 test('1 ターンのあいだに続けさせる回数には、万一の上限がある', () => {
   const t = makeEnv()
-  writeFiles(t.repo, { 'harness/config.json': verifyConfig(t) })
+  useVerify(t, verifyConfig(t))
   const s = session(t)
   const ok = join(t.repo, 'ok.txt')
   let minute = 0
@@ -340,7 +345,7 @@ test('そのセッションの候補が上限（3 件）に達していれば、
 
 test('自動改善のセッションでは、検証も事象メモも候補の確認も動かさない', () => {
   const t = makeEnv({ config: { auto: { interval_days: 7 } } })
-  writeFiles(t.repo, { 'harness/config.json': verifyConfig(t) })
+  useVerify(t, verifyConfig(t))
   // ロックの前に記録された変更があっても（ロックの前のプロンプトなど）、ロック中は動かさない
   const s = session(t, 'auto-1')
   s.prompt('p1', 'auto-improve を実行して', { now: at(0) })

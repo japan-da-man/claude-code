@@ -1,10 +1,11 @@
 // リポジトリの harness/config.json の verify（検証コマンド）を実行する。リポジトリのこのファイルから読むのは、verify だけ。
+// 実行するのは、人が harness-note verify trust で許可した中身と一致するときだけ（呼び出し側が確かめる）。
 // on-stop.mjs から呼ばれる（verifyTurn）。直接実行すれば、検証コマンドを 1 回走らせて結果を見られる：
-//   node verify.mjs [リポジトリのパス]     失敗があれば終了コード 1
+//   node verify.mjs [リポジトリのパス]     失敗があれば終了コード 1。許可されていなければ実行せず、終了コード 1
 import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { inactiveReason, isMain, iso, logEvent, makeContext, readJson, sessionDir, writeJson } from './lib/core.mjs'
+import { inactiveReason, isMain, iso, logEvent, makeContext, readJson, sessionDir, untrustedVerifyMessage, writeJson } from './lib/core.mjs'
 
 // 検証の失敗が続いたら、ここで打ち切って人に知らせる。
 // 公式の連続 8 回の上限は、Claude がツールを呼ぶたびにリセットされるので、止め役にならない。
@@ -159,6 +160,9 @@ if (isMain(import.meta.url)) {
     process.exitCode = 1
   } else if (!ctx.config.verify.length) {
     process.stdout.write('検証コマンドは設定されていません（harness/config.json の verify が空）。\n')
+  } else if (!ctx.config.verify_trust.trusted) {
+    process.stderr.write(`${untrustedVerifyMessage(ctx)}\n`)
+    process.exitCode = 1
   } else {
     const { ok, results } = await runVerify(ctx)
     for (const r of results) {

@@ -12,7 +12,7 @@ allowed-tools: Bash(harness-note *)
 
 - **使うツールは、Read・Grep・Glob と、Bash の `harness-note` だけ。** `lock` のあと、このセッションでは、それ以外のツール（Write・Edit、`harness-note` 以外の Bash、MCP のツール、サブエージェントの起動、Web の取得、ほかのスキルの呼び出しなど）は拒否される。ファイルを読むのは Read・Grep・Glob（`cat`・`ls`・`git log` などの Bash も通らない）。
 - **書き込みは `harness-note` コマンドだけ。** 1 回の Bash では `harness-note` だけを呼ぶ。パイプ、変数（`$X`）、`$(…)`、ファイルへのリダイレクト、環境変数の前置き、`command` や `env` で包んだ呼び出しは使わない（付いていると拒否される）。引数の文は、引用符で囲む。引用の外に `{ } * ? [ ] ~` があるものも拒否されるので、これらや `$`・バッククォートを含む文は、単一引用符（`'…'`）で囲む。長い文は、下の例のように `<<'EOF'`（区切りを引用符で囲む）で渡す。
-- **コミットもプッシュもしない。** git 管理下のファイル（`.claude/rules/`、CLAUDE.md、`harness/`、ソースコード）は変えない。user 側のファイル（`~/.claude/self-improve/` の下の設定・ガード・失敗票・自分専用のルール、`~/.claude/CLAUDE.md`）も変えない。変えたいときは、案として報告に載せる。失敗票の起票（`harness-note incident add`）と昇格（`harness-note promote`）は人だけの操作で、このスキルからは「見送り」になる。作るのは下書きまで。
+- **コミットもプッシュもしない。** git 管理下のファイル（`.claude/rules/`、CLAUDE.md、`harness/`、ソースコード）は変えない。user 側のファイル（`~/.claude/self-improve/` の下の設定・ガード・失敗票・自分専用のルール、`~/.claude/CLAUDE.md`）も変えない。変えたいときは、案として報告に載せる。失敗票の起票（`harness-note incident add`）、昇格（`harness-note promote`）、検証コマンドの実行の許可（`harness-note verify trust`）は人だけの操作で、このスキルからは「見送り」になる。作るのは下書きまで。
 - **`harness-note` には、毎回 `--session ${CLAUDE_SESSION_ID}` をちょうど 1 つ付ける**（一覧を読むだけのときも）。ガードが、このセッションの本物の ID と照らして、合うものだけを通す。ほかの値に変えない。
 - **対象はスクリプトが選ぶ。** `harness-note lock` が返した原因キー以外は扱わない。件数や順番を自分で変えない。
 - **`harness-note` が「見送り」と返したら、それに従う。** 言い換えて通そうとしない。理由を報告に書く。中身の検査で断られたとき（終了コード 1）だけ、表現を 1 回だけ直してよい。

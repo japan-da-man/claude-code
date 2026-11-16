@@ -251,13 +251,7 @@ export function loadConfig(repo, user = readUserConfig()) {
   const categories = Array.isArray(raw.candidates?.categories) && raw.candidates.categories.every((c) => typeof c === 'string' && c)
     ? raw.candidates.categories
     : d.candidates.categories
-  const verify = Array.isArray(repoFile.raw.verify)
-    ? repoFile.raw.verify.filter((v) => v && typeof v.run === 'string' && v.run.trim()).map((v, i) => ({
-      name: typeof v.name === 'string' && v.name ? v.name : `verify-${i + 1}`,
-      run: v.run,
-      timeout_sec: count(v.timeout_sec, 240) || 240,
-    }))
-    : []
+  const verify = normalizeVerify(repoFile.raw.verify)
   return {
     errors,
     notes,
@@ -283,7 +277,61 @@ export function loadConfig(repo, user = readUserConfig()) {
     prune: { interval_days: count(raw.prune?.interval_days, d.prune.interval_days) },
     correction_words: Array.isArray(raw.correction_words) ? raw.correction_words.filter((w) => typeof w === 'string' && w) : [],
     verify,
+    // 検証コマンドを実行してよいか（人が harness-note verify trust で許可した中身と一致するか）。
+    verify_trust: verifyTrustState(repo, verify),
   }
+}
+
+// ---- 検証コマンドの許可 ----
+// リポジトリの harness/config.json の verify は、クローンしただけのリポジトリにもありうる。初めて見る中身は実行せず、
+// 人が harness-note verify trust で許可したとき、その中身（正規化した JSON）のハッシュを user 側に記録する。
+// 記録と一致するときだけ実行する。プルなどで中身が変われば、もう一度許可が要る。
+// 記録の置き場所は ~/.claude/self-improve/repos/<名前>/verify-trust.json。同じ名前のリポジトリが置き場所を共有しても
+// 混ざらないよう、リポジトリ ID ごとに持つ（リポジトリを移すと ID が変わり、もう一度許可が要る）。
+
+// 実行する形にそろえた検証コマンドの一覧（name、run、timeout_sec）。
+export function normalizeVerify(raw) {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((v) => v && typeof v.run === 'string' && v.run.trim()).map((v, i) => ({
+    name: typeof v.name === 'string' && v.name ? v.name : `verify-${i + 1}`,
+    run: v.run,
+    timeout_sec: count(v.timeout_sec, 240) || 240,
+  }))
+}
+export function verifyHash(verify) {
+  return sha(JSON.stringify(verify.map(({ name, run, timeout_sec }) => ({ name, run, timeout_sec }))), 64)
+}
+export function verifyTrustFile(repo) {
+  return join(userRepoDir(repo), 'verify-trust.json')
+}
+function readVerifyTrust(repo) {
+  const record = readJson(verifyTrustFile(repo), null)?.repos?.[repo.id]
+  return isObject(record) && typeof record.hash === 'string' ? record : null
+}
+//   hash     いまの中身のハッシュ（検証コマンドがなければ null）
+//   trusted  許可した中身と一致する
+//   changed  許可した記録はあるが、中身が変わっている
+function verifyTrustState(repo, verify) {
+  if (!verify.length) return { hash: null, trusted: false, changed: false }
+  const hash = verifyHash(verify)
+  const record = readVerifyTrust(repo)
+  return { hash, trusted: record?.hash === hash, changed: Boolean(record) && record.hash !== hash }
+}
+// いまの中身を許可したと記録する（harness-note verify trust。人だけの操作）。
+export function recordVerifyTrust(ctx) {
+  const file = verifyTrustFile(ctx.repo)
+  const current = readJson(file, null)
+  const repos = isObject(current?.repos) ? current.repos : {}
+  repos[ctx.repo.id] = { hash: verifyHash(ctx.config.verify), trusted_at: iso(), repo: ctx.repo.name, verify: ctx.config.verify }
+  writeJson(file, { repos })
+  return file
+}
+
+// 許可されていない検証コマンドの知らせ（セッション開始時と、直接実行したとき）。
+export function untrustedVerifyMessage(ctx) {
+  const list = ctx.config.verify.map((v) => v.name).join('、')
+  const why = ctx.config.verify_trust.changed ? '前に許可したときから中身が変わっているので' : 'まだ許可されていないので'
+  return `このリポジトリの harness/config.json に検証コマンド（${ctx.config.verify.length} 件：${list}）がありますが、${why}、実行していません。中身を確かめて、実行してよければ、Claude に「検証コマンドを許可して」と頼んでください（harness-note verify trust。実行するコマンドの一覧を見せてから記録します）。`
 }
 
 // ---- データ領域 ----

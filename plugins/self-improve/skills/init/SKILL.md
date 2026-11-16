@@ -1,6 +1,6 @@
 ---
 name: init
-description: self-improve（自己改善ハーネス）の、user 単位の初期設定。user の設定（~/.claude/self-improve/config.json）を作り、harness-note コマンドの許可ルールを ~/.claude/settings.json に足し、止めたいリポジトリを除外に入れる。検証コマンドを使うと答えたときだけ、いまのリポジトリに harness/config.json を作る。「self-improve を入れて」「ハーネスを初期化して」「self-improve の設定をして」「このリポジトリでは self-improve を止めて」「/self-improve:init」と言われたときに使う。1 人につき 1 回でよい（self-improve は、init しなくても、すべての git リポジトリで動く）。
+description: self-improve（自己改善ハーネス）の、user 単位の初期設定。user の設定（~/.claude/self-improve/config.json）を作り、harness-note コマンドの許可ルールを ~/.claude/settings.json に足し、止めたいリポジトリを除外に入れる。検証コマンドを使うと答えたときだけ、いまのリポジトリに harness/config.json を作り、中身を見せて実行の許可を記録する。「self-improve を入れて」「ハーネスを初期化して」「self-improve の設定をして」「このリポジトリでは self-improve を止めて」「/self-improve:init」と言われたときに使う。1 人につき 1 回でよい（self-improve は、init しなくても、すべての git リポジトリで動く）。
 allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/init.mjs *) Bash(harness-note *) Bash(git rev-parse *) Bash(git status*)
 ---
 
@@ -38,8 +38,20 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/init.mjs
 
 `repo.verify_config_exists` が false なら、「このリポジトリで、ターンの終わりに検証コマンド（型チェックやリントなど）を走らせますか」と尋ねる。おすすめは「いまは使わない」（壊れたまま完了と報告する失敗が起きてから、`/self-improve:retro` で 1 行ずつ足せる）。
 
-- **使う**：`repo.verify_template`（中身は `{ "verify": [] }`）をもとに、リポジトリの `harness/config.json` を作る。最初の検証コマンドを尋ね、あれば `verify` に `{ "name": "<名前>", "run": "<コマンド>" }` を足す。この書き込みには確認が出る。このファイルはリポジトリのファイルなので、コミットするかどうかも尋ねる（コミットすると、self-improve を入れているチームの全員に効く）。
+- **使う**：`repo.verify_template`（中身は `{ "verify": [] }`）をもとに、リポジトリの `harness/config.json` を作る。最初の検証コマンドを尋ね、あれば `verify` に `{ "name": "<名前>", "run": "<コマンド>" }` を足す。この書き込みには確認が出る。続けて、その場で実行の許可を記録する（下の「許可を記録する」）。このファイルはリポジトリのファイルなので、コミットするかどうかも尋ねる（コミットすると、self-improve を入れているチームの全員に効く。許可は人ごとなので、ほかの人は、それぞれ許可する）。
 - **使わない**：何も作らない。
+
+`repo.verify_config_exists` が true（1.x から上げたリポジトリ、クローンしたリポジトリなど）なら、`harness-note verify --session ${CLAUDE_SESSION_ID}` で中身と、許可されているかを見る。「まだ許可されていません」「中身が変わっています」と出たら、中身（実行されるコマンド）をそのまま見せて、実行してよいかを尋ねる。おすすめは、中身を読んで分かるものだけ許可すること。
+
+**許可を記録する**：
+
+```bash
+harness-note verify trust --session ${CLAUDE_SESSION_ID}
+```
+
+- 検証コマンドは、人が許可した中身と一致するときだけ、変更のあったターンの終わりに実行される。許可していないもの、許可したあとで中身が変わったもの（プルなど）は、実行されない（セッション開始時に知らせが出る）。
+- このコマンドには確認が出る（実行されるコマンドの一覧が表示される）。一覧を見て、承認してもらう。出力にも一覧が出てから、「許可したと記録しました」と出る。
+- 許可は、自動改善のセッションからは記録できない（「見送り」と返る）。
 
 リポジトリの `harness/config.json` から読むのは `verify` だけ。ほかの設定をここに書いても、読まれない。
 
@@ -61,6 +73,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/init.mjs
 | 名残 | すること |
 | :- | :- |
 | `legacy.incidents` が 1 以上（`harness/incidents/` に失敗票がある） | `harness-note incident import` で user 側へ取り込む（番号がほかのリポジトリの票と重なれば、振り直される）。取り込んだ内容を確かめてから、`harness/incidents/` をリポジトリから消すかどうかを尋ねる |
+| `harness/config.json` に `verify` がある | 2.x では、許可するまで実行されない。上の 3 の「許可を記録する」で、中身を見せて許可するかを尋ねる（上げた直後に一度だけ） |
 | `legacy.config_keys` がある（`harness/config.json` に `verify` 以外の項目がある） | もう読まれない。全リポジトリで同じでよい値は `~/.claude/self-improve/config.json` へ、このリポジトリだけの値は `repo.override_dir` の `config.json` へ移し、`harness/config.json` からは消す（`verify` だけを残す。`verify` も空なら、ファイルごと消してよい） |
 | `legacy.allow_rule` が true（`.claude/settings.local.json` に許可ルールがある） | 2 で user の設定に足したなら、要らない。消すかどうかを尋ねる（残しても害はない） |
 
@@ -76,12 +89,14 @@ harness-note status
 - 「ここでは使えません」と返ったら、その理由（git リポジトリではない、除外してある）を伝える。
 - `command not found` のときは、プラグインの `bin/` がまだ PATH に入っていない。`/reload-plugins` か、Claude Code の起動し直しを頼む。
 - 「データの置き場所」が「既定のパスの計算」と出たときは、セッション開始時の hook がまだ動いていない。次のセッションから引き渡される。
+- 「検証コマンド：… 許可待ち」と出たら、3 の「許可を記録する」を案内する。
 - 「警告：」の行が出たら、そこに書かれたファイルの書き間違いを直す（`~/.claude/self-improve/config.json` が読めないあいだは、ガードは効いたまま、記録と掃除が止まる）。「注意：」の行（`exclude` に書いたパスが見つからない、など）も伝える。
 
 ## 7. 伝える
 
 最後に、次のことを短く伝える。
 
+- リポジトリの `harness/config.json` の検証コマンドは、許可したもの（中身が変わっていないもの）だけが実行される。
 - すべての git リポジトリで、自動で起きること：ツールの失敗や訂正の記録、禁止操作（`git push --force`、`git commit --no-verify` など）の拒否、`.env` と、ハーネスのファイル（`~/.claude/self-improve/` の下、`~/.claude/CLAUDE.md`、リポジトリの `harness/`、`.claude/rules/`、CLAUDE.md など）を書き換えるときの確認、失敗の信号（ツールの失敗、訂正、ガードの拒否、検証の失敗）があったターンの終わりの「気づきがあれば記録する」確認。
 - 失敗票、設定、自分専用のルールは、すべて `~/.claude/self-improve/` の下に置かれる。リポジトリには置かれない（チームのリポジトリに、個人の記録が混ざらない）。
 - 自動改善はリポジトリごとで、止めてある。同じ原因の候補が、異なるセッションで 2 件たまると、セッション開始時に知らせる（`/self-improve:review` を開くか、知らせを閉じるまで。閉じなくても 7 日で出なくなる）。

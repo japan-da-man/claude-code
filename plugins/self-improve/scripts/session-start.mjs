@@ -12,7 +12,8 @@
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  dayOf, daysBetween, hookContext, isLocked, isMain, iso, readHookInput, readJson, sessionDir, sha, tildePath, writeHandoff, writeJson,
+  dayOf, daysBetween, hookContext, isLocked, isMain, iso, readHookInput, readJson, sessionDir, sha, tildePath, untrustedVerifyMessage, writeHandoff,
+  writeJson,
 } from './lib/core.mjs'
 import { validKey } from './lib/candidates.mjs'
 import { INCIDENT_REF, validateRuleText } from './lib/content.mjs'
@@ -192,6 +193,11 @@ function startupNotices(ctx, recording) {
   const others = check.warnings.filter((w) => w.rule !== 'guards_unreadable' && w.rule !== 'config')
   if (others.length) {
     once(`check:${sha(others.map((w) => w.message).join('\n'), 8)}`, `ハーネスの整合・行数の警告が${others.length}件あります（例：${others[0].message}）。作業は止めません。`)
+  }
+  // 許可されていない検証コマンド（クローンしたばかりのリポジトリ、プルで中身が変わったとき、1.x から上げた直後）。
+  // 中身ごとに 1 回きりの知らせにする（閉じるか 7 日で消える。中身が変われば、また出る）。
+  if (ctx.config.verify.length && !ctx.config.verify_trust.trusted) {
+    once(`verify_untrusted:${ctx.config.verify_trust.hash.slice(0, 12)}`, untrustedVerifyMessage(ctx))
   }
   // 設定の注意（exclude に書いたパスが見つからない、読まない項目がある、など）。
   if (ctx.config.notes.length) {

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpath
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findRepo } from '../scripts/lib/core.mjs'
+import { findRepo, normalizeVerify, verifyHash } from '../scripts/lib/core.mjs'
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url))
 export const NOTE = join(ROOT, 'bin', 'harness-note')
@@ -29,7 +29,9 @@ export function writeFiles(dir, files) {
 //   files      リポジトリに置くファイル
 //   userFiles  user 側（~/.claude/self-improve/）に置くファイル
 //   git        false なら、git リポジトリにしない（self-improve が動かない場所）
-export function makeEnv({ config = {}, files = {}, userFiles = {}, git = true, name = 'demo-app' } = {}) {
+//   trustVerify  config で verify を渡したとき、人が harness-note verify trust で許可した状態にしておくか（既定は true。
+//              許可されていない verify は実行されない。許可のないときの動きを確かめるテストでは false にする）
+export function makeEnv({ config = {}, files = {}, userFiles = {}, git = true, name = 'demo-app', trustVerify = true } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'self-improve-test-')))
   const repo = join(base, name)
   const data = join(base, 'data')
@@ -43,12 +45,21 @@ export function makeEnv({ config = {}, files = {}, userFiles = {}, git = true, n
   if (verify) writeFiles(repo, { 'harness/config.json': { verify } })
   writeFiles(repo, files)
   writeFiles(user, userFiles)
+  if (verify && trustVerify && git) trustVerifyOf({ repo, user }, verify)
   // 親プロセスの CLAUDE_* や HARNESS_* は引き継がない（テストの外の状態に左右されないように）。
   // 日付の表示は現地時刻なので、テストでは UTC に固定する。
   // HARNESS_TEST=1 のときだけ、HARNESS_NOW で時刻を固定できる。時刻を渡さない呼び出しも、基準の時刻で動かす
   // （実際の時計で動かすと、テストを走らせる時刻によって、ロックの失効などの結果が変わる）。
   const env = { PATH: process.env.PATH, HOME: home, TZ: 'UTC', HARNESS_TEST: '1', HARNESS_NOW: at(0), HARNESS_DATA_DIR: data, HARNESS_CLAUDE_HOME: claudeHome }
   return { base, repo, data, home, claudeHome, user, env, name }
+}
+
+// 検証コマンドを、人が許可した状態にする（harness-note verify trust が書くものと同じ記録）。
+export function trustVerifyOf(t, verify) {
+  const found = findRepo(t.repo)
+  writeFiles(join(t.user, 'repos', found.name), {
+    'verify-trust.json': { repos: { [found.id]: { hash: verifyHash(normalizeVerify(verify)), trusted_at: at(0), repo: found.name } } },
+  })
 }
 
 export function runHook(file, input, t, { env = {}, now = null } = {}) {
