@@ -31,6 +31,24 @@ test('共通の禁止リスト：guards.default.test.json のテストケース�
   assert.deepEqual(events(t), [])
 })
 
+test('共通の禁止リスト：誤検知と取りこぼしを直した入力（.env は確認、rm -r は引数のどれか、commit の -nm）', () => {
+  const t = makeEnv()
+  const expectations = [
+    // .env：拒否ではなく確認。対象は .env と .env.<環境名> だけ
+    ['cp .env.example .env', 'ask'], ['echo NEXT_PUBLIC_X=1 >> .env.local', 'ask'], ['touch .env.test', 'ask'],
+    ['chmod 600 .env', 'allow'], ['rm .env.bak', 'allow'], ['cat .env', 'allow'],
+    // rm -r：ルートやホームが最初の引数でなくても止める
+    ['rm -rf build ~', 'deny'], ['rm -rf node_modules $HOME/', 'deny'], ['rm -rf build dist', 'allow'],
+    // --no-verify：まとめた短いオプションも止める。メッセージの中身は見ない
+    ['git commit -nm msg', 'deny'], ['git commit -anm msg', 'deny'], ['git commit -m "-n"', 'allow'], ['git commit -am "fix"', 'allow'],
+  ]
+  for (const [command, expected] of expectations) assert.equal(decision(bash(t, command)), expected, command)
+  assert.equal(decision(pre(t, 'Write', { file_path: join(t.repo, 'config/.env.test') })), 'ask')
+  assert.equal(decision(pre(t, 'Write', { file_path: join(t.repo, 'docs/.env.md') })), 'allow')
+  assert.equal(decision(pre(t, 'Write', { file_path: join(t.repo, '.env.example') })), 'allow')
+  assert.match(pre(t, 'Write', { file_path: join(t.repo, '.env') }).json.hookSpecificOutput.permissionDecisionReason, /\.env は秘密の値を持つファイルです.*ルール：env-file-write/)
+})
+
 test('読み取りのずれで、禁止リストが隠れない（引用の中の <<EOF、区切りが単純でないヒアドキュメント、$\'…\'）', () => {
   const t = makeEnv()
   for (const command of [
