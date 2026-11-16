@@ -82,3 +82,23 @@ test('templates: user の設定のひな形は初期値どおり（exclude つ�
   }
   for (const heading of ['## 何を頼んだか', '## 期待した結果', '## 実際の結果', '## 根拠']) assert.ok(incident.includes(heading))
 })
+
+test('init: 1.x の名残（harness/incidents/ の失敗票、harness/config.json の verify 以外の項目、settings.local.json の許可ルール）を知らせる。何も書き換えない', () => {
+  const clean = makeEnv()
+  assert.deepEqual(init(clean).json.repo.legacy, { incidents: 0, config_keys: [], allow_rule: false })
+
+  const t = makeEnv({
+    files: {
+      'harness/config.json': { trial_review_days: 30, auto: { interval_days: 7 }, verify: [{ name: 'typecheck', run: 'true' }] },
+      'harness/incidents/INC-2026-0001.md': '---\nid: INC-2026-0001\ncause_key: route-placement\n---\n',
+      'harness/incidents/INC-2026-0002.md': '---\nid: INC-2026-0002\ncause_key: route-placement\n---\n',
+      'harness/incidents/notes.md': 'メモ',
+      '.claude/settings.local.json': { permissions: { allow: ['Bash(npm test)', 'Bash(harness-note *)'] } },
+    },
+  })
+  const before = readdirSync(t.repo, { recursive: true }).map(String).sort()
+  const run = init(t)
+  assert.deepEqual(run.json.repo.legacy, { incidents: 2, config_keys: ['trial_review_days', 'auto'], allow_rule: true })
+  assert.deepEqual(readdirSync(t.repo, { recursive: true }).map(String).sort(), before)
+  assert.deepEqual(JSON.parse(readFileSync(join(t.repo, 'harness/config.json'), 'utf8')).auto, { interval_days: 7 })
+})

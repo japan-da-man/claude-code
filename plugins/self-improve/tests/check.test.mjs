@@ -129,3 +129,17 @@ test('読めないガードの定義は警告する（黙ってそのファイ�
   const fixed = makeEnv({ files: { 'harness/guards.json': { rules: [{ id: 'no-psql', pattern: '\\bpsql\\b', message: '本番の DB に直接つながない' }] } } })
   assert.deepEqual(check(fixed).json.warnings, [])
 })
+
+test('人が user 側に足したガードや Skill を指す control（personal:~/…）は、そのファイルがあれば見つかる', () => {
+  const t = makeEnv({ userFiles: { 'repos/demo-app/guards.json': { rules: [] } } })
+  const add = (key, control) => note(t, ['incident', 'add', '--session', 'human-1', '--key', key, '--root-cause', 'forbidden', '--category', 'dev/mistake',
+    '--asked', 'a', '--expected', 'b', '--actual', 'c', '--status', 'converted', '--control', control])
+  assert.equal(add('generated-edit', 'personal:~/.claude/self-improve/repos/demo-app/guards.json').status, 0)
+  assert.equal(add('missing-guard', 'personal:~/.claude/self-improve/repos/demo-app/missing.json').status, 0)
+  assert.equal(add('outside-home', 'personal:/etc/hosts').status, 0)
+  const run = spawnSync(process.execPath, [script('check.mjs'), t.repo, '--json'], { encoding: 'utf8', env: t.env })
+  const messages = JSON.parse(run.stdout).warnings.map((w) => w.message)
+  assert.equal(messages.length, 2, messages.join('\n'))
+  assert.match(messages[0], /INC-2026-0002：control（personal:~\/\.claude\/self-improve\/repos\/demo-app\/missing\.json）が見つかりません/)
+  assert.match(messages[1], /INC-2026-0003：control（personal:\/etc\/hosts）が見つかりません/)
+})

@@ -41,6 +41,10 @@ test('好みの候補は user 単位で保存し、全リポジトリで数え�
   }
   // 好みは、自動改善の対象にしない
   assert.deepEqual(note(a, ['targets', '--json']).json.targets, [])
+  // 採否も user 単位：どのリポジトリで決めても、全リポジトリの分にまとめて付く
+  assert.equal(note(b, ['mark', '--key', 'prefers-short-answers', '--status', 'consumed', '--session', 'human-1']).status, 0)
+  assert.deepEqual(note(a, ['list', '--status', 'consumed', '--json']).json.map((c) => c.repo).sort(), ['demo-app', 'other-app', 'other-app'])
+  assert.deepEqual(note(a, ['review', '--json', '--session', 'human-1']).json.preferences, [])
 })
 
 test('好みの候補の知らせは、リポジトリごとではなく、user 単位で 1 つ（1 回閉じれば、ほかのリポジトリでも出ない）', () => {
@@ -108,6 +112,27 @@ test('掃除は 1 日 1 回。データ領域にある全リポジトリの分�
   assert.deepEqual(dataFiles(a, 'candidates'), [])
 })
 
+test('1.x がリポジトリごとに記録した好みの候補は、掃除のときに user 単位の場所へ移し、全リポジトリで数える', () => {
+  const a = makeEnv()
+  const b = secondRepo(a, 'other-app')
+  const legacy = (t, id, session) => ({
+    [`candidates/${idOf(t)}/${id}.json`]: { id, at: at(0), session_id: session, category: 'behavior/preference', cause_key: 'prefers-short-answers', text: '短い答えを好む', status: 'new', episode: null },
+  })
+  writeFiles(a.data, { ...legacy(a, 'c-20261101-000000-aaaa', 'old-1'), ...legacy(a, 'c-20261102-000000-bbbb', 'old-2'), ...legacy(b, 'c-20261103-000000-cccc', 'old-3') })
+  writeFiles(a.data, { [`candidates/${idOf(a)}/c-20261104-000000-dddd.json`]: { id: 'c-20261104-000000-dddd', at: at(0), session_id: 'old-1', category: 'dev/mistake', cause_key: 'route-placement', text: 'ルート', status: 'new', episode: null } })
+  // 移す前は、数えない（リポジトリごとの場所にある好みは、読まない）
+  assert.deepEqual(note(a, ['list', '--category', 'behavior/preference', '--json']).json, [])
+  startup(a, 'a1', at(10))
+  // 1 回の掃除で、全リポジトリの分を移す。どのリポジトリで出たかを足す
+  const prefs = note(b, ['list', '--category', 'behavior/preference', '--json']).json
+  assert.deepEqual(prefs.map((c) => [c.id, c.repo_id]), [['c-20261101-000000-aaaa', idOf(a)], ['c-20261102-000000-bbbb', idOf(a)], ['c-20261103-000000-cccc', idOf(b)]])
+  assert.equal(prefs[0].repo, 'demo-app')
+  assert.deepEqual(dataFiles(a, 'candidates').map((f) => f.split('/')[0]), ['_user', '_user', '_user', idOf(a)])
+  // 好み以外の候補は、もとの場所のまま
+  assert.deepEqual(note(a, ['list', '--category', 'dev/mistake', '--json']).json.map((c) => c.id), ['c-20261104-000000-dddd'])
+  assert.deepEqual(note(a, ['review', '--json', '--session', 'human-1'], { now: at(11) }).json.preferences.map((p) => [p.cause_key, p.sessions]), [['prefers-short-answers', 3]])
+})
+
 test('掃除は startup のときだけ。resume・compact では行わない', () => {
   const t = makeEnv({ config: { episode_retention_days: 10 } })
   note(t, ['add', '--session', 's1', '--category', 'dev/mistake', '--key', 'old-key', '--text', '古い候補'], { now: at(0) })
@@ -158,7 +183,7 @@ test('test-guards: user 側に置いたガード（全リポジトリ用、リ�
 })
 
 test('test-guards: user 側で共通リストのルールを外していても、共通リストのテストは通る（空の設定で確かめるため）', () => {
-  const t = makeEnv({ userFiles: { 'guards.json': { disable_defaults: ['no-verify', 'force-push'], rules: [] }, 'config.json': { exclude: [] } } })
+  const t = makeEnv({ userFiles: { 'guards.json': { disable_defaults: ['git-no-verify', 'git-force-push'], rules: [] }, 'config.json': { exclude: [] } } })
   const run = spawnSync(process.execPath, [script('test-guards.mjs'), t.repo, '--json'], { encoding: 'utf8', env: t.env })
   assert.equal(run.status, 0, run.stdout.slice(-600))
   // 除外したリポジトリや、git リポジトリでない場所から実行しても、共通リストは確かめられる

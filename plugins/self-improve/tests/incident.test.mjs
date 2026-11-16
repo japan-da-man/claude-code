@@ -180,3 +180,59 @@ test('incident add / set: 項目を検査する。人だけの操作（自動改
   // 読むだけなら、自動改善のセッションからでも使える
   assert.equal(note(t, ['incident', 'list', '--session', 'auto-1']).status, 0)
 })
+
+test('incident import: 1.x の失敗票（harness/incidents/）を user 側へ取り込む。番号が重なれば振り直し、何度実行しても増えない', () => {
+  const v1 = (id, key, extra = '') => `---\nid: ${id}\ndate: 2026-05-01\narea: backend\ncategory: dev/mistake\nsignal: human_correction\nroot_cause: knowledge\ncause_key: ${key}\nrelated: []\nseverity: normal\nstatus: trial\ncontrol: trial:rules/${key}\napplied_by: human\ntrial_started_at: 2026-05-01\npromoted_at: null\n${extra}---\n\n## 何を頼んだか\n\n${key} の依頼\n\n## 期待した結果\n\nA\n\n## 実際の結果\n\nB\n\n## 根拠\n\n- コミット：abc123\n`
+  const t = makeEnv({
+    files: {
+      'harness/incidents/INC-2026-0001.md': v1('INC-2026-0001', 'route-placement'),
+      'harness/incidents/INC-2026-0002.md': v1('INC-2026-0002', 'route-placement').replace('related: []', 'related: [INC-2026-0001]'),
+      'harness/incidents/INC-2025-0007.md': v1('INC-2025-0007', 'migration-forgotten').replace('status: trial', 'status: converted').replace('control: trial:rules/migration-forgotten', 'control: harness/guards.json'),
+      'harness/incidents/README.md': 'メモ',
+      'harness/incidents/INC-2026-0009.md': '設定欄のないファイル\n',
+    },
+  })
+  gitConfig(t, 'https://token@example.com/acme/demo-app.git')
+  // ほかのリポジトリの票が、すでに INC-2026-0001 と 0003 を使っている
+  const other = secondRepo(t, 'other-app')
+  note(other, [...ADD])
+  note(other, [...ADD])
+  note(other, [...ADD])
+  assert.equal(note(other, ['incident', 'list', '--json']).json.length, 3)
+  // 取り込む前に、古い ID を指す試用ルールがある
+  note(t, ['trial', 'add', '--session', 'human-1', '--key', 'route-placement', '--text', 'ルート定義は src/routes/ に置く', '--ref', 'INC-2026-0002'])
+
+  const run = note(t, ['incident', 'import', '--session', 'human-1'])
+  assert.equal(run.status, 1)
+  // 空いている番号はそのまま。重なる番号は、その年の次の番号に振り直す
+  assert.match(run.stdout, /失敗票を 3 件取り込みました（~\/\.claude\/self-improve\/incidents）：INC-2025-0007、INC-2026-0001 → INC-2026-0004、INC-2026-0002 → INC-2026-0005/)
+  assert.match(run.stdout, /試用ルール route-placement の失敗票 ID を INC-2026-0005 に付け替えました/)
+  assert.match(run.stdout, /もとのファイル（harness\/incidents\/）は消していません/)
+  assert.match(run.stderr, /harness\/incidents\/INC-2026-0009\.md を読めません/)
+  const mine = note(t, ['incident', 'list', '--json']).json
+  assert.deepEqual(mine.map((i) => [i.id, i.cause_key, i.status, i.control]), [
+    ['INC-2025-0007', 'migration-forgotten', 'converted', 'harness/guards.json'],
+    ['INC-2026-0004', 'route-placement', 'trial', 'trial:rules/route-placement'],
+    ['INC-2026-0005', 'route-placement', 'trial', 'trial:rules/route-placement'],
+  ])
+  const text = incidentText(t, 'INC-2026-0005')
+  for (const line of ['id: INC-2026-0005', 'date: 2026-05-01', 'repo: demo-app', `repo_id: ${repoId(t)}`, 'remote: https://example.com/acme/demo-app.git', 'area: backend', 'signal: human_correction', 'related: [INC-2026-0004]', 'trial_started_at: 2026-05-01', 'imported_from: INC-2026-0002']) {
+    assert.match(text, new RegExp(`^${line.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`, 'm'), line)
+  }
+  assert.match(text, /## 何を頼んだか\n\nroute-placement の依頼\n\n## 期待した結果\n\nA\n\n## 実際の結果\n\nB\n\n## 根拠\n\n- コミット：abc123\n$/)
+  assert.deepEqual(note(t, ['trial', 'list', '--json']).json.map((r) => r.ref), ['INC-2026-0005'])
+  // ほかのリポジトリの票と、もとのファイルは、そのまま
+  assert.match(incidentText(t, 'INC-2026-0001'), /^repo: other-app$/m)
+  assert.equal(readdirSync(join(t.repo, 'harness/incidents')).length, 5)
+  // check は、取り込んだ票と試用ルールの対応を問題にしない
+  assert.deepEqual(note(t, ['incident', 'show', 'INC-2026-0004']).status, 0)
+
+  // もう一度実行しても、増えない
+  const again = note(t, ['incident', 'import', '--session', 'human-1'])
+  assert.match(again.stdout, /取り込み済みなので飛ばしました：INC-2025-0007、INC-2026-0001、INC-2026-0002/)
+  assert.equal(note(t, ['incident', 'list', '--all', '--json']).json.length, 6)
+  // 人だけの操作。失敗票のないリポジトリでは、何もしない
+  note(t, ['lock', '--session', 'auto-1'], { now: at(60) })
+  assert.match(note(t, ['incident', 'import', '--session', 'auto-1'], { now: at(61) }).stdout, /^見送り：/)
+  assert.match(note(other, ['incident', 'import', '--session', 'human-2']).stdout, /取り込む失敗票はありません/)
+})

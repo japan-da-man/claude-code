@@ -7,6 +7,7 @@
 // あわせて、設定とガードの定義（4 か所）が読めるかも見る（読めないファイルを、黙って無効にしない）。
 // リポジトリの CLAUDE.md や .claude/rules/ は調べない（チームのもので、self-improve が足したものではないため）。
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { inactiveReason, isMain, makeContext, tildePath } from './lib/core.mjs'
 import { INCIDENT_STATUSES, repoIncidents } from './lib/incidents.mjs'
@@ -62,7 +63,12 @@ export function runCheck(ctx) {
       if (value.startsWith('trial:rules/')) exists = trialRules.has(value.slice('trial:rules/'.length))
       else if (value.startsWith('skill:')) exists = trialSkills.has(value.slice('skill:'.length))
       // 自分専用に昇格したもの：ルールは rules.md、Skill は ~/.claude/skills/ の下。
-      else if (value.startsWith('personal:')) exists = value.slice('personal:'.length) === personalFile ? personal.length > 0 : personalSkills.has(value.slice('personal:'.length))
+      // 人が user 側に足したガードや Skill（personal:~/.claude/self-improve/repos/<名前>/guards.json など）は、そのファイルがあるかを見る。
+      else if (value.startsWith('personal:')) {
+        const target = value.slice('personal:'.length).split('#')[0]
+        if (target === personalFile) exists = personal.length > 0
+        else exists = personalSkills.has(target) || (/^~\//.test(target) && existsSync(join(homedir(), target.slice(2))))
+      }
       else exists = existsSync(join(root, value.split('#')[0]))
       if (!exists) warn('incident_control', `${incident.id}：control（${value}）が見つかりません。消したなら status を直してください`, incident.id)
       if (status === 'converted' && (value.startsWith('trial:') || value.startsWith('skill:'))) {

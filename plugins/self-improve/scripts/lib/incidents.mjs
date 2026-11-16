@@ -96,6 +96,8 @@ function renderFrontmatter(fields) {
     if (Array.isArray(value)) lines.push(`${key}: [${value.map(clean).join(', ')}]`)
     else lines.push(`${key}: ${value === null || value === undefined || value === '' ? 'null' : clean(value)}`)
   }
+  // 1.x から取り込んだ票には、もとの ID を残す（harness-note incident import）。
+  if (fields.imported_from) lines.push(`imported_from: ${clean(fields.imported_from)}`)
   lines.push('---', '')
   return lines.join('\n')
 }
@@ -150,6 +152,67 @@ export function updateIncident(ctx, id, changes) {
   }
   writeFileAtomic(incident.file, text)
   return { ok: true, id, file: incident.file }
+}
+
+// 1.x の失敗票（リポジトリの harness/incidents/）を、user 側へ取り込む。
+//   - ID は、空いていればそのまま使う。ほかのリポジトリの票とぶつかるときは、その年の次の番号を振り直す
+//   - どのリポジトリのものか（repo、repo_id、remote）を足し、もとの ID を imported_from に残す
+//   - すでに取り込んだ票（同じリポジトリで、imported_from が同じ）は、飛ばす。何度実行しても増えない
+//   - もとのファイルは消さない（リポジトリのファイルなので、消すかどうかは人が決める）
+export function importIncidents(ctx) {
+  const source = join(ctx.repo.root, 'harness', 'incidents')
+  const files = listFiles(source, (f) => /^INC-\d{4}-\d{4}\.md$/.test(f)).sort()
+  if (!files.length) return { ok: true, imported: [], skipped: [], errors: [] }
+  mkdirSync(ctx.user.incidents, { recursive: true })
+  return withLock(ctx.user.incidents, () => {
+    const all = listIncidents(ctx)
+    const taken = new Set(all.map((i) => i.id))
+    const done = new Map(all.filter((i) => i.data.repo_id === ctx.repo.id && i.data.imported_from).map((i) => [String(i.data.imported_from), i.id]))
+    const plan = []
+    const errors = []
+    for (const file of files) {
+      const from = file.replace(/\.md$/, '')
+      let parsed = null
+      try {
+        parsed = parseFrontmatter(readFileSync(join(source, file), 'utf8'))
+      } catch {
+        // 下で、読めないものとして扱う
+      }
+      if (!parsed?.data || typeof parsed.data.cause_key !== 'string') {
+        errors.push(`harness/incidents/${file} を読めません（先頭の設定欄に cause_key がありません）。取り込みませんでした`)
+        continue
+      }
+      if (done.has(from)) {
+        plan.push({ from, id: done.get(from), parsed, skip: true })
+        continue
+      }
+      let id = from
+      if (taken.has(id)) {
+        const year = from.slice(4, 8)
+        const numbers = [...taken].filter((t) => t.startsWith(`INC-${year}-`)).map((t) => Number(t.slice(-4)))
+        id = `INC-${year}-${String(Math.max(0, ...numbers) + 1).padStart(4, '0')}`
+      }
+      taken.add(id)
+      plan.push({ from, id, parsed, skip: false })
+    }
+    const mapped = new Map(plan.map((p) => [p.from, p.id]))
+    const imported = []
+    for (const item of plan.filter((p) => !p.skip)) {
+      const d = item.parsed.data
+      const keep = Object.fromEntries(FIELD_ORDER.filter((k) => d[k] !== undefined).map((k) => [k, d[k]]))
+      const related = (Array.isArray(d.related) ? d.related : []).map((r) => mapped.get(String(r)) ?? String(r)).filter((r) => INCIDENT_ID.test(r))
+      const text = `${renderFrontmatter({
+        ...keep, id: item.id, repo: ctx.repo.name, repo_id: ctx.repo.id, remote: remoteOf(ctx.repo), related, imported_from: item.from,
+      })}\n${String(item.parsed.body ?? '').trim()}\n`
+      try {
+        writeFileSync(join(ctx.user.incidents, `${item.id}.md`), text, { flag: 'wx' })
+        imported.push({ from: item.from, id: item.id })
+      } catch (e) {
+        errors.push(`${item.from} を取り込めません（${e?.code === 'EEXIST' ? `${item.id} が、すでにあります` : e.message}）`)
+      }
+    }
+    return { ok: errors.length === 0, imported, skipped: plan.filter((p) => p.skip).map((p) => ({ from: p.from, id: p.id })), errors }
+  })
 }
 
 export const displayIncidentPath = (file) => tildePath(file)

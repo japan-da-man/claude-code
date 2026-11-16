@@ -7,12 +7,36 @@
 // 次のものは、ここでは書かない（Claude が、人の確認を通して足す）：
 //   - ~/.claude/settings.json の許可ルール（harness-note を確認なしで呼べるようにする）
 //   - リポジトリの harness/config.json（検証コマンドを使うと答えたときだけ）
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { PLUGIN_ROOT, claudeHome, findRepo, inactiveReason, isMain, tildePath, userDir, userRepoDir } from './lib/core.mjs'
 
 const TEMPLATES = join(PLUGIN_ROOT, 'templates')
 export const ALLOW_RULE = 'Bash(harness-note *)'
+
+// 1.x（リポジトリごとに init していた版）の名残を調べる。何も書き換えない。
+//   incidents    harness/incidents/ にある失敗票の件数（harness-note incident import で取り込める）
+//   config_keys  harness/config.json にある、verify 以外の項目（読まれない。user 側へ移す）
+//   allow_rule   .claude/settings.local.json に、許可ルールがあるか（user の設定に足せば、要らない）
+function legacyOf(root) {
+  const incidents = existsSync(join(root, 'harness', 'incidents'))
+    ? readdirSync(join(root, 'harness', 'incidents')).filter((f) => /^INC-\d{4}-\d{4}\.md$/.test(f)).length
+    : 0
+  let configKeys = []
+  let allowRule = false
+  try {
+    const raw = JSON.parse(readFileSync(join(root, 'harness', 'config.json'), 'utf8'))
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) configKeys = Object.keys(raw).filter((k) => k !== 'verify')
+  } catch {
+    // なければ、名残もない
+  }
+  try {
+    allowRule = JSON.parse(readFileSync(join(root, '.claude', 'settings.local.json'), 'utf8')).permissions?.allow?.includes(ALLOW_RULE) ?? false
+  } catch {
+    // なければ、名残もない
+  }
+  return { incidents, config_keys: configKeys, allow_rule: allowRule }
+}
 
 export function init(start) {
   const created = []
@@ -54,6 +78,8 @@ export function init(start) {
         verify_config_exists: existsSync(join(repo.root, 'harness', 'config.json')),
         verify_template: join(TEMPLATES, 'repo-config.json'),
         override_dir: tildePath(userRepoDir(repo)),
+        // 1.x の名残（あれば、移行を案内する）。
+        legacy: legacyOf(repo.root),
       }
       : null,
     templates: { guards: join(TEMPLATES, 'guards.json'), guards_test: join(TEMPLATES, 'guards.test.json'), incident: join(TEMPLATES, 'incident.md') },

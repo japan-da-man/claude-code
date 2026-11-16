@@ -5,7 +5,7 @@ import { rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { DAY_MS, DEFAULT_CONFIG, USER_SCOPE, dayOf, dirsFor, listFiles, loadConfig, now, readJson } from './core.mjs'
 import { readUserConfig } from './scope.mjs'
-import { pruneCandidatesIn } from './candidates.mjs'
+import { adoptLegacyPreferences, pruneCandidatesIn } from './candidates.mjs'
 import { loadUserState, updateUserState } from './auto.mjs'
 import { pruneRecords } from '../episode.mjs'
 
@@ -51,6 +51,8 @@ export function cleanupDaily(ctx) {
   }
   for (const id of ids) {
     const dirs = dirsFor(ctx.data, id)
+    // 1.x がリポジトリごとに記録した好みの候補を、user 単位の場所へ移す（移したあとは、何もしない）。
+    adoptLegacyPreferences(dirs.candidates, ctx.dirs.prefs, { id, name: readJson(dirs.repoInfo)?.name ?? null })
     const days = retentionOf(dirs, user)
     pruneRecords(dirs, days)
     pruneCandidatesIn(dirs.candidates, days)

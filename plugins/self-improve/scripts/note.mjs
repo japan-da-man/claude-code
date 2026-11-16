@@ -14,7 +14,11 @@
 //   harness-note pending list | show <K> | remove <K>
 //   harness-note report write --body <本文|-> | report list | report show [名前]
 //   harness-note lock --session <ID> | unlock [--session <ID>]
-//   harness-note targets | status | review | review done <変更ID> --decision keep|edit|remove|promote|apply|dismiss [--incident INC-..] [--path P]
+//   harness-note incident add --key K --root-cause R --asked .. --expected .. --actual .. [--evidence ..] [--status S --control C]
+//   harness-note incident add --from-draft --key K     下書きから起票する（下書きの値を引き継ぐ）
+//   harness-note incident list [--all] | show <ID> | set <ID> --status S [--control C] | import
+//   harness-note promote --key K --to personal|team [--path <移した先>] [--incident INC-..]
+//   harness-note targets | status | review | review done <変更ID> --decision keep|edit|remove|apply|dismiss [--incident INC-..]
 //
 //   harness-note report close            セッション開始時の知らせ（報告の 1 行など）を閉じる
 //
@@ -28,7 +32,7 @@ import {
 } from './lib/core.mjs'
 import { UsageError, parseArgs } from './lib/args.mjs'
 import { TEXT_MAX, addCandidate, loadCandidates, markCandidates, rekey, summarizeKeys, validKey } from './lib/candidates.mjs'
-import { INCIDENT_ID, INCIDENT_STATUSES, addIncident, getIncident, listIncidents, repoIncidents, updateIncident } from './lib/incidents.mjs'
+import { INCIDENT_ID, INCIDENT_STATUSES, addIncident, getIncident, importIncidents, listIncidents, repoIncidents, updateIncident } from './lib/incidents.mjs'
 import { guardFiles } from './lib/guard.mjs'
 import {
   addRule, addSkill, editRule, listRules, listSkills, measureAlwaysLoaded, parseSkillMarkdown, readSkill, removeRule,
@@ -431,7 +435,7 @@ function cmdSkill(ctx, positional, flags) {
     const r = makeReader(flags, ['key', 'name', 'description', 'body', 'file'])
     const key = requireKey(r.required('key'))
     if (!locked) {
-      return refuse('見送り：試用 Skill を置けるのは、自動改善のセッションだけです。人が始める振り返りでは、Skill は .claude/skills/ に、差分の承認を通して置いてください。')
+      return refuse('見送り：試用 Skill を置けるのは、自動改善のセッションだけです。人が始める振り返りでは、Skill は、自分専用なら ~/.claude/skills/ に、チームで使うならリポジトリの .claude/skills/ に、差分の承認を通して置いてください。')
     }
     let input
     if (r.has('file')) {
@@ -789,7 +793,33 @@ function cmdIncident(ctx, positional, flags) {
     out(`失敗票 ${id} を更新しました（${Object.entries(changes).map(([k, v]) => `${k}: ${v}`).join('、')}）。`)
     return 0
   }
-  if (sub !== 'add') throw new UsageError('使い方：harness-note incident add|list|show|set')
+  if (sub === 'import') {
+    // 1.x の失敗票（リポジトリの harness/incidents/）を、user 側へ取り込む。
+    makeReader(flags, [])
+    const refusal = humanOnlyRefusal(ctx, writerSession(ctx, flags))
+    if (refusal) return refuse(refusal)
+    const result = importIncidents(ctx)
+    const lines = []
+    const renamed = result.imported.filter((i) => i.from !== i.id)
+    // 番号を振り直した票を指している試用ルールは、新しい ID に付け替える。
+    for (const rule of listRules(ctx)) {
+      const moved = renamed.find((i) => i.from === rule.ref)
+      if (moved) {
+        editRule(ctx, { key: rule.cause_key, text: null, ref: moved.id, by: rule.by })
+        lines.push(`試用ルール ${rule.cause_key} の失敗票 ID を ${moved.id} に付け替えました`)
+      }
+    }
+    if (result.imported.length) {
+      lines.unshift(`失敗票を ${result.imported.length} 件取り込みました（${tildePath(ctx.user.incidents)}）：${result.imported.map((i) => (i.from === i.id ? i.id : `${i.from} → ${i.id}`)).join('、')}`)
+      lines.push('もとのファイル（harness/incidents/）は消していません。取り込んだ内容を確かめてから、リポジトリから消してください。')
+      if (renamed.length) lines.push('番号を振り直した票があります（ほかのリポジトリの票と番号が重なったため）。リポジトリのファイルに古い ID を書いていれば、直してください。')
+    }
+    if (result.skipped.length) lines.push(`取り込み済みなので飛ばしました：${result.skipped.map((i) => i.from).join('、')}`)
+    if (!result.imported.length && !result.skipped.length && !result.errors.length) lines.push('取り込む失敗票はありません（harness/incidents/ に INC-YYYY-NNNN.md がありません）。')
+    if (lines.length) out(lines.join('\n'))
+    return result.errors.length ? fail(result.errors) : 0
+  }
+  if (sub !== 'add') throw new UsageError('使い方：harness-note incident add|list|show|set|import')
 
   const r = makeReader(flags, ['key', 'from-draft', 'status', 'control', 'root-cause', 'category', 'signal', 'severity', 'area', 'asked', 'expected', 'actual', 'evidence'])
   const key = requireKey(r.required('key'))
@@ -877,7 +907,7 @@ const USAGE = `harness-note <サブコマンド>
   trial add|edit|remove|list            試用ルール
   skill add|remove|list                 試用 Skill
   pending add|list|show|remove          失敗票の下書き
-  incident add|list|show|set            失敗票（全リポジトリの分を user 側に置く）
+  incident add|list|show|set|import     失敗票（全リポジトリの分を user 側に置く。import は 1.x の票の取り込み）
   promote                               試用を、自分専用かチームへ昇格する
   report write|list|show|close          自動改善の記録、知らせを閉じる
   lock / unlock / targets / status      自動改善のセッション
