@@ -112,14 +112,57 @@ test('データの置き場所：環境変数 → SessionStart が引き渡し�
   assert.equal(viaHandoff.json.data_dir_source, 'handoff')
 })
 
-test('セッション ID：--session → 環境変数 → 直近のセッション → 不明、の順に解決する', () => {
+test('セッション ID：--session → 環境変数 → 直近のセッション → 不明、の順に解決する。食い違う名乗りは拒否する', () => {
   const t = makeEnv()
-  assert.equal(note(t, ['status', '--json', '--session', 'flag-1'], { env: { HARNESS_SESSION_ID: 'env-1' } }).json.session.id, 'flag-1')
+  assert.deepEqual(note(t, ['status', '--json', '--session', 'flag-1']).json.session, { id: 'flag-1', source: 'flag' })
+  // --session と環境変数が食い違うときは、どちらも信じない（別のセッションを名乗れないように）
+  const mismatch = note(t, ['status', '--json', '--session', 'flag-1'], { env: { HARNESS_SESSION_ID: 'env-1' } })
+  assert.equal(mismatch.status, 1)
+  assert.match(mismatch.stderr, /^harness-note: .*--session/)
+  assert.equal(note(t, ['status', '--json', '--session', 'env-1'], { env: { HARNESS_SESSION_ID: 'env-1' } }).json.session.id, 'env-1')
+  // --session を 2 つ付けて、違う ID を名乗ることもできない
+  assert.equal(note(t, ['status', '--json', '--session', 'a-1', '--session', 'b-1']).status, 1)
+  assert.equal(note(t, ['status', '--json', '--session=a-1', '--session', 'a-1']).json.session.id, 'a-1')
   assert.deepEqual(note(t, ['status', '--json'], { env: { HARNESS_SESSION_ID: 'env-1' } }).json.session, { id: 'env-1', source: 'env' })
   assert.deepEqual(note(t, ['status', '--json'], { env: { CLAUDE_CODE_SESSION_ID: 'cc-1' } }).json.session, { id: 'cc-1', source: 'env' })
   const unknown = note(t, ['status', '--json']).json.session
   assert.equal(unknown.source, 'unknown')
   assert.match(unknown.id, /^unknown-\d{4}-\d{2}-\d{2}$/)
+})
+
+test('現在時刻の固定（HARNESS_NOW）は、テスト用の印（HARNESS_TEST=1）があるときだけ効く', () => {
+  const t = makeEnv()
+  const old = '2001-02-03T04:05:06.000Z'
+  const add = (key, env) => note(t, ['add', '--session', 's1', '--category', 'dev/mistake', '--key', key, '--text', `${key} の気づき`], { now: old, env })
+  const recordedAt = (key) => note(t, ['list', '--status', 'all', '--json']).json.find((c) => c.cause_key === key).at
+  add('fixed-clock', {})
+  assert.equal(recordedAt('fixed-clock'), old)
+  // 印がなければ無視する（環境変数を 1 つ置くだけで、間隔や失効の判定をずらせないように）
+  add('real-clock', { HARNESS_TEST: '' })
+  assert.ok(Math.abs(Date.parse(recordedAt('real-clock')) - Date.now()) < 60_000)
+})
+
+test('リポジトリの特定：CLAUDE_PROJECT_DIR を先に見る（入れ子のリポジトリへ cd しても、もとのリポジトリのまま）。worktree は cwd の側を使う', () => {
+  const t = makeEnv()
+  const inner = join(t.repo, 'vendor/inner')
+  mkdirSync(join(inner, '.git'), { recursive: true })
+  const root = (cwd, env = {}) => note(t, ['status', '--json', '--session', 's1'], { cwd, env }).json?.repo.root
+  // 入れ子のリポジトリは init していない：cwd だけなら「使えない」。プロジェクトのディレクトリが分かれば、そちらを使う
+  assert.equal(note(t, ['status', '--json'], { cwd: inner }).status, 1)
+  assert.equal(root(inner, { CLAUDE_PROJECT_DIR: t.repo }), realpathSync(t.repo))
+  // 入れ子の側も init してあっても、プロジェクトのディレクトリの側を使う
+  writeFiles(inner, { 'harness/config.json': {} })
+  assert.equal(root(inner), realpathSync(inner))
+  assert.equal(root(inner, { CLAUDE_PROJECT_DIR: t.repo }), realpathSync(t.repo))
+  // 同じリポジトリの worktree にいるときは、いまいる側のファイルを見る（ID は同じ）
+  const worktree = join(t.base, 'wt')
+  mkdirSync(join(t.repo, '.git/worktrees/wt'), { recursive: true })
+  writeFileSync(join(t.repo, '.git/worktrees/wt/commondir'), '../..\n')
+  mkdirSync(worktree)
+  writeFileSync(join(worktree, '.git'), `gitdir: ${join(t.repo, '.git/worktrees/wt')}\n`)
+  writeFiles(worktree, { 'harness/config.json': {} })
+  const viaWorktree = note(t, ['status', '--json', '--session', 's1'], { cwd: worktree, env: { CLAUDE_PROJECT_DIR: t.repo } }).json.repo
+  assert.deepEqual([viaWorktree.root, viaWorktree.id], [realpathSync(worktree), findRepo(t.repo).id])
 })
 
 test('harness-note: init していないリポジトリでは使えない', () => {

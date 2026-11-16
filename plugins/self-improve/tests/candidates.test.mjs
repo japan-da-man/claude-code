@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { isSimilarKey } from '../scripts/lib/candidates.mjs'
-import { at, dataFiles, makeEnv, note, seedCandidates } from './helpers.mjs'
+import { at, dataFiles, knownSession, makeEnv, note, script, seedCandidates, session } from './helpers.mjs'
 
 const add = (t, session, key, text, opts = {}, category = 'dev/mistake') =>
   note(t, ['add', '--session', session, '--category', category, '--key', key, '--text', text], opts)
@@ -65,6 +66,42 @@ test('1 セッション 3 件まで。上限を超えた分は記録せず、終
   assert.equal(note(t, ['list', '--json']).json.length, 3)
   // 別のセッションは別に数える
   assert.match(add(t, 'sess-2', 'key-four', '別セッション', { now: at(6) }).stdout, /記録しました/)
+  // 上限は「直近 24 時間にそのセッションが記録した件数」。日をまたいで続くセッションは、また記録できる
+  assert.match(add(t, 'sess-1', 'key-five', '23 時間後', { now: at(0, 0.96) }).stdout, /記録しません：このセッションの上限/)
+  assert.match(add(t, 'sess-1', 'key-five', '翌日', { now: at(10, 1) }).stdout, /記録しました/)
+})
+
+test('add: 同時に呼ばれても、1 セッションの上限を超えて記録しない', async () => {
+  const t = makeEnv()
+  knownSession(t, 'sess-1')
+  const runs = await Promise.all(Array.from({ length: 12 }, (_, i) => new Promise((resolve) => {
+    execFile(process.execPath, [script('note.mjs'), 'add', '--session', 'sess-1', '--category', 'dev/mistake', '--key', `parallel-key-${String.fromCharCode(97 + i)}`, '--text', `並行の気づき ${i}`],
+      { cwd: t.repo, env: { ...t.env, HARNESS_NOW: at(i) } }, (error, stdout) => resolve(stdout))
+  })))
+  assert.equal(runs.filter((out) => /記録しました/.test(out)).length, 3)
+  assert.equal(runs.filter((out) => /記録しません：このセッションの上限/.test(out)).length, 9)
+  assert.equal(note(t, ['list', '--json']).json.length, 3)
+})
+
+test('add: hook が記録したセッションの ID だけを受け付ける（名乗っただけの ID では、異なるセッションの数を増やせない）', () => {
+  const t = makeEnv({ config: { auto: { interval_days: 7 } } })
+  const invented = add(t, 'invented-1', 'route-placement', '名乗っただけ', { now: at(0), known: false })
+  assert.equal(invented.status, 0)
+  assert.match(invented.stdout, /記録しません：セッション invented-1 は、このプラグインの hook に記録されていません/)
+  assert.deepEqual(dataFiles(t, 'candidates'), [])
+  // 1 つのセッションが 2 つの ID を名乗っても、対象（異なるセッションで 2 件）は作れない
+  session(t, 'real-1').start('startup', { now: at(1) })
+  assert.match(add(t, 'real-1', 'route-placement', '本物のセッション', { now: at(2), known: false }).stdout, /記録しました/)
+  assert.match(add(t, 'real-2', 'route-placement', '別の ID を名乗る', { now: at(20), known: false }).stdout, /記録しません/)
+  assert.deepEqual(note(t, ['targets', '--json']).json.targets, [])
+  // 環境変数の ID と --session が食い違う呼び出しは、エラーにする
+  const mismatch = add(t, 'real-9', 'route-placement', '食い違い', { now: at(21), env: { HARNESS_SESSION_ID: 'real-1' }, known: false })
+  assert.equal(mismatch.status, 1)
+  assert.match(mismatch.stderr, /--session/)
+  // hook が見た別のセッションなら、2 件目として数える
+  session(t, 'real-2').start('startup', { now: at(30) })
+  assert.match(add(t, 'real-2', 'route-placement', '別のセッション', { now: at(31), known: false }).stdout, /記録しました/)
+  assert.deepEqual(note(t, ['targets', '--json']).json.targets.map((x) => [x.key, x.sessions]), [['route-placement', 2]])
 })
 
 test('短時間の重複記録：同じセッション・同じキーの続けての記録は、二重に数えず、上限も消費しない', () => {

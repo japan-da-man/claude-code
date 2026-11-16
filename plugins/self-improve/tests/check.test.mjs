@@ -30,7 +30,9 @@ test('整合がとれていれば、警告はない', () => {
   const run = check(t)
   assert.deepEqual(run.json.warnings, [])
   assert.equal(run.json.incidents, 4)
-  assert.deepEqual([run.json.measure.claude_md, run.json.measure.unscoped_rules, run.json.measure.trial_rules, run.json.measure.total, run.json.measure.limit], [4, 0, 1, 5, 150])
+  const m = run.json.measure
+  // CLAUDE.md と、常時ロードのルール（paths なしのルール＋試用ルール）は、別々の目安で数える
+  assert.deepEqual([m.claude_md, m.claude_md_limit, m.unscoped_rules, m.trial_rules, m.rule_lines, m.rule_limit, m.total], [4, 100, 0, 1, 1, 50, 5])
   assert.match(check(t, []).stdout, /警告はありません/)
 })
 
@@ -87,4 +89,18 @@ test('init していないリポジトリでは、その旨を伝えて終わる
   assert.match(run.stdout, /self-improve:init/)
   const broken = makeEnv({ files: { 'harness/config.json': '{ nope' } })
   assert.match(check(broken).json.warnings[0].message, /harness\/config\.json を読めません/)
+})
+
+test('読めない harness/guards.json は警告する（黙ってリポジトリ固有のガードが外れないように）', () => {
+  // 末尾にカンマがあるだけで、JSON としては読めない
+  const t = makeEnv({ files: { 'harness/guards.json': '{"rules":[{"id":"no-psql","pattern":"\\\\bpsql\\\\b","message":"本番の DB に直接つながない"},]}' } })
+  const run = check(t)
+  assert.equal(run.status, 0)
+  assert.deepEqual(run.json.warnings.map((w) => w.rule), ['guards_unreadable'])
+  assert.match(run.json.warnings[0].message, /^harness\/guards\.json を読めません（.+）。このリポジトリのガードは、直すまで効きません$/)
+  assert.match(check(t, []).stdout, /harness\/guards\.json を読めません/)
+  assert.doesNotMatch(check(t, []).stdout, /警告はありません/)
+  // 直せば消える
+  const fixed = makeEnv({ files: { 'harness/guards.json': { rules: [{ id: 'no-psql', pattern: '\\bpsql\\b', message: '本番の DB に直接つながない' }] } } })
+  assert.deepEqual(check(fixed).json.warnings, [])
 })

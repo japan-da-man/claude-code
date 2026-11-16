@@ -5,6 +5,9 @@ import { join } from 'node:path'
 import { at, dataFiles, events, makeEnv, note, readData, repoId, session } from './helpers.mjs'
 
 const write = (t, s, promptId, file = 'src/a.ts', minute = 1) => s.used(promptId, 'Write', { file_path: join(t.repo, file), content: 'x' }, { now: at(minute) })
+// Stop の hook の結果：検証の失敗（終了コード 2）、候補の確認（additionalContext）、人への知らせ（systemMessage）、何もなし
+const ask = (run) => run.json?.hookSpecificOutput?.additionalContext ?? null
+const outcome = (run) => (run.status === 2 ? 'verify' : ask(run) ? 'ask' : run.json?.systemMessage ? 'notice' : run.status === 0 && !run.stdout && !run.stderr ? 'none' : 'error')
 const counter = (t) => join(t.base, 'verify-runs.txt')
 const runs = (t) => (existsSync(counter(t)) ? readFileSync(counter(t), 'utf8').trim().split('\n').length : 0)
 // 走った回数を数え、リポジトリに ok.txt があれば通る検証コマンド
@@ -19,20 +22,22 @@ test('質問に答えただけのターン（信号も変更もない）では�
   assert.deepEqual(dataFiles(t, 'episodes'), [])
 })
 
-test('変更があったターン：改善候補の確認を 1 回だけ頼む（終了コード 2）。同じターンの 2 回目の Stop では頼まない', () => {
+test('変更があったターン：改善候補の確認を 1 回だけ頼む（エラーではなく additionalContext で）。同じターンの 2 回目の Stop では頼まない', () => {
   const t = makeEnv()
   const s = session(t)
   s.prompt('p1', 'ユーザー一覧の API を足して', { now: at(0) })
   write(t, s, 'p1')
   const first = s.stop('p1', '足しました', { now: at(2) })
-  assert.equal(first.status, 2)
-  assert.equal(first.stdout, '')
-  assert.match(first.stderr, /ターン終了時の確認です（エラーではありません）/)
-  assert.match(first.stderr, /harness-note keys で既存の原因キーを確かめる/)
-  assert.match(first.stderr, /harness-note add --session sess-1 --category <カテゴリ> --key <原因キー> --text "<1行>"/)
-  assert.match(first.stderr, /dev\/bug \/ dev\/cause \/ dev\/mistake \/ dev\/other \/ behavior\/preference/)
-  assert.match(first.stderr, /あと 3 件/)
-  assert.match(first.stderr, /なければ何も記録せず/)
+  // 候補の確認は、エラー（終了コード 2）ではなく、hookSpecificOutput.additionalContext で頼む
+  assert.equal(first.status, 0)
+  assert.equal(first.stderr, '')
+  assert.deepEqual(first.json, { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: ask(first) } })
+  assert.match(ask(first), /ターン終了時の確認です/)
+  assert.match(ask(first), /harness-note keys で既存の原因キーを確かめる/)
+  assert.match(ask(first), /harness-note add --session sess-1 --category <カテゴリ> --key <原因キー> --text "<1行>"/)
+  assert.match(ask(first), /dev\/bug \/ dev\/cause \/ dev\/mistake \/ dev\/other \/ behavior\/preference/)
+  assert.match(ask(first), /あと 3 件/)
+  assert.match(ask(first), /なければ何も記録せず/)
   // 信号はないので、事象メモは作らない
   assert.deepEqual(dataFiles(t, 'episodes'), [])
 
@@ -42,14 +47,14 @@ test('変更があったターン：改善候補の確認を 1 回だけ頼む�
   const second = s.stop('p1', '記録しました', { now: at(4) }, { stop_hook_active: true })
   assert.deepEqual([second.status, second.stdout, second.stderr], [0, '', ''])
   // 何度止まっても、このターンではもう頼まない（stop_hook_active に頼らず、セッション ID とプロンプト ID の組で止める）
-  assert.equal(s.stop('p1', 'x', { now: at(5) }).status, 0)
+  assert.equal(outcome(s.stop('p1', 'x', { now: at(5) })), 'none')
   assert.equal(events(t).filter((e) => e.type === 'asked').length, 1)
 
   // 次のターンで変更があれば、また 1 回頼む。別のセッションは別に数える
   s.prompt('p2', '続けて', { now: at(10) })
   write(t, s, 'p2', 'src/b.ts', 11)
-  assert.equal(s.stop('p2', 'x', { now: at(12) }).status, 2)
-  assert.equal(s.stop('p2', 'x', { now: at(13) }).status, 0)
+  assert.equal(outcome(s.stop('p2', 'x', { now: at(12) })), 'ask')
+  assert.equal(outcome(s.stop('p2', 'x', { now: at(13) })), 'none')
 })
 
 test('harness-note だけ・読むだけのコマンドだけのターンでは、確認を頼まず、検証も走らせない', () => {
@@ -60,7 +65,7 @@ test('harness-note だけ・読むだけのコマンドだけのターンでは�
   s.used('p1', 'Bash', { command: 'harness-note list' }, { now: at(1) })
   s.used('p1', 'Bash', { command: 'git status && ls src' }, { now: at(1) })
   const run = s.stop('p1', '一覧です', { now: at(2) })
-  assert.deepEqual([run.status, run.stderr], [0, ''])
+  assert.equal(outcome(run), 'none')
   assert.equal(runs(t), 0)
 })
 
@@ -70,12 +75,12 @@ test('信号があったターン：事象メモを機械的に作り、確認�
   s.prompt('p1', 'テストを直して', { now: at(0) })
   s.failed('p1', 'Bash', { command: 'npm test' }, "Exit code 1\nError: Cannot find module 'express'", { now: at(1) })
   const run = s.stop('p1', '依存が足りないので、入れてから再実行します', { now: at(2) })
-  assert.equal(run.status, 2)
+  assert.equal(outcome(run), 'ask')
   const files = dataFiles(t, 'episodes')
   assert.equal(files.length, 1)
   const id = files[0].split('/')[1].replace('.md', '')
   assert.match(id, /^ep-20261116-090000-sess-1-[0-9a-f]{6}$/)
-  assert.match(run.stderr, new RegExp(`--text "<1行>" --episode ${id}`))
+  assert.match(ask(run), new RegExp(`--text "<1行>" --episode ${id}`))
 
   const memo = readData(t, 'episodes', files[0])
   assert.match(memo, /^session_id: sess-1$/m)
@@ -109,7 +114,7 @@ test('人の訂正：直前のターンの依頼文と応答を、訂正の内�
   s.prompt('p2', '違う、ルートは src/routes/ に置いて', { now: at(10) })
   write(t, s, 'p2', 'src/routes/users.ts', 11)
   const run = s.stop('p2', 'src/routes/users.ts に移しました', { now: at(12) })
-  assert.equal(run.status, 2)
+  assert.equal(outcome(run), 'ask')
   // 同じターンの 2 回目の Stop で書き直しても、直前のターンは残る
   s.stop('p2', 'src/routes/users.ts に移しました', { now: at(13) })
   const files = dataFiles(t, 'episodes')
@@ -135,6 +140,7 @@ test('検証：変更があったターンだけ走らせる。失敗したら�
   assert.match(failed.stderr, /関連する失敗票：INC-2026-0012/)
   // 検証が失敗したときは、候補の確認は頼まない
   assert.doesNotMatch(failed.stderr, /harness-note add/)
+  assert.equal(failed.stdout, '')
   assert.equal(events(t).filter((e) => e.type === 'asked').length, 0)
   // 検証の失敗は自分で記録し、事象メモにも入る
   const logged = events(t).find((e) => e.type === 'verify_failed')
@@ -145,12 +151,12 @@ test('検証：変更があったターンだけ走らせる。失敗したら�
   writeFileSync(join(t.repo, 'ok.txt'), '')
   write(t, s, 'p1', 'src/a.ts', 3)
   const passed = s.stop('p1', '直りました', { now: at(4) })
-  assert.equal(passed.status, 2)
-  assert.match(passed.stderr, /ターン終了時の確認です/)
+  assert.equal(outcome(passed), 'ask')
+  assert.match(ask(passed), /ターン終了時の確認です/)
   assert.equal(runs(t), 2)
   // 候補を記録して止まる。検証が通ったあとに変更はないので、検証は繰り返さない
   s.used('p1', 'Bash', { command: 'harness-note add --session sess-1 --category dev/mistake --key type-error --text "x"' }, { now: at(5) })
-  assert.equal(s.stop('p1', '記録しました', { now: at(6) }).status, 0)
+  assert.equal(outcome(s.stop('p1', '記録しました', { now: at(6) })), 'none')
   assert.equal(runs(t), 2)
 
   // 変更のないターン（ツールの失敗だけ）では、検証を走らせない
@@ -189,7 +195,7 @@ test('検証の失敗が連続 3 回で打ち切り、人に知らせる（Claud
   // 通れば 0 に戻る
   writeFileSync(join(t.repo, 'ok.txt'), '')
   write(t, s, 'p2', 'src/a.ts', 13)
-  assert.match(s.stop('p2', 'x', { now: at(14) }).stderr, /ターン終了時の確認です/)
+  assert.match(ask(s.stop('p2', 'x', { now: at(14) })), /ターン終了時の確認です/)
   rmSync(join(t.repo, 'ok.txt'))
   s.prompt('p3', 'さらに', { now: at(20) })
   write(t, s, 'p3', 'src/a.ts', 21)
@@ -210,17 +216,17 @@ test('1 ターンのあいだに続けさせる回数には、万一の上限が
   assert.equal(stopAfterChange().status, 2) // 失敗 1
   assert.equal(stopAfterChange().status, 2) // 失敗 2
   writeFileSync(ok, '')
-  assert.match(stopAfterChange().stderr, /ターン終了時の確認/) // 通って、確認を頼む（3）
+  assert.match(ask(stopAfterChange()), /ターン終了時の確認/) // 通って、確認を頼む（3）
   rmSync(ok)
   assert.equal(stopAfterChange().status, 2) // 4
   assert.equal(stopAfterChange().status, 2) // 5
   writeFileSync(ok, '')
-  assert.equal(stopAfterChange().status, 0) // 通る。確認は済んでいる
+  assert.equal(outcome(stopAfterChange()), 'none') // 通る。確認は済んでいる
   rmSync(ok)
   assert.equal(stopAfterChange().status, 2) // 6
   const last = stopAfterChange()
   assert.equal(last.status, 0)
-  assert.match(last.json.systemMessage, /繰り返されたので、このターンでは打ち切りました/)
+  assert.match(last.json.systemMessage, /検証「typecheck」.*このターンで続行が 6 回に達したので、打ち切りました。コードは検証が通っていない状態です/)
 })
 
 test('そのセッションの候補が上限（3 件）に達していれば、確認を頼まない', () => {
@@ -231,16 +237,20 @@ test('そのセッションの候補が上限（3 件）に達していれば、
   }
   s.prompt('p1', 'a', { now: at(10) })
   write(t, s, 'p1', 'src/a.ts', 11)
-  assert.match(s.stop('p1', 'x', { now: at(12) }).stderr, /あと 1 件/)
+  assert.match(ask(s.stop('p1', 'x', { now: at(12) })), /あと 1 件/)
   note(t, ['add', '--session', 'sess-1', '--category', 'dev/mistake', '--key', 'key-three', '--text', 'x'], { now: at(13) })
   s.prompt('p2', 'b', { now: at(20) })
   write(t, s, 'p2', 'src/a.ts', 21)
   const run = s.stop('p2', 'x', { now: at(22) })
-  assert.deepEqual([run.status, run.stderr], [0, ''])
+  assert.equal(outcome(run), 'none')
+  // 上限は、そのセッションが直近 24 時間に記録した件数で数える。日をまたいで使うセッションは、また頼まれる
+  s.prompt('p9', 'd', { now: at(0, 2) })
+  write(t, s, 'p9', 'src/a.ts', 60 * 24 * 2 + 1)
+  assert.match(ask(s.stop('p9', 'x', { now: at(2, 2) })), /あと 3 件/)
   // 信号があれば、事象メモは上限に関係なく作る
   s.prompt('p3', 'c', { now: at(30) })
   s.failed('p3', 'Bash', { command: 'npm test' }, 'Exit code 1', { now: at(31) })
-  assert.equal(s.stop('p3', 'x', { now: at(32) }).status, 0)
+  assert.equal(outcome(s.stop('p3', 'x', { now: at(32) })), 'none')
   assert.equal(dataFiles(t, 'episodes').length, 1)
 })
 
@@ -263,7 +273,7 @@ test('自動改善のセッションでは、検証も事象メモも候補の�
   const human = session(t, 'human-1')
   human.prompt('h1', '直して', { now: at(4) })
   write(t, human, 'h1', 'src/a.ts', 5)
-  assert.equal(human.stop('h1', 'x', { now: at(6) }).status, 2)
+  assert.equal(outcome(human.stop('h1', 'x', { now: at(6) })), 'verify')
   assert.equal(runs(t), 1)
 })
 
@@ -282,7 +292,7 @@ test('harness/config.json がないリポジトリと HARNESS_DISABLE=1 では�
   const disabled = s.stop('p1', 'x', { now: at(2), env: { HARNESS_DISABLE: '1' } })
   assert.deepEqual([disabled.status, disabled.stdout, disabled.stderr], [0, '', ''])
   // 止めていなければ頼む（同じ状態から）
-  assert.equal(s.stop('p1', 'x', { now: at(3) }).status, 2)
+  assert.equal(outcome(s.stop('p1', 'x', { now: at(3) })), 'ask')
 })
 
 test('prompt_id が渡らない版でも、ターンの始まりの時刻で区切って 1 回だけ頼む', () => {
@@ -290,13 +300,13 @@ test('prompt_id が渡らない版でも、ターンの始まりの時刻で区�
   const s = session(t)
   s.prompt(undefined, '最初の依頼', { now: at(0) })
   s.used(undefined, 'Write', { file_path: join(t.repo, 'a.ts') }, { now: at(1) })
-  assert.equal(s.stop(undefined, 'x', { now: at(2) }).status, 2)
-  assert.equal(s.stop(undefined, 'x', { now: at(3) }).status, 0)
+  assert.equal(outcome(s.stop(undefined, 'x', { now: at(2) })), 'ask')
+  assert.equal(outcome(s.stop(undefined, 'x', { now: at(3) })), 'none')
   // 次のターンに変更がなければ、前のターンの変更は数えない
   s.prompt(undefined, '質問だけ', { now: at(10) })
-  assert.equal(s.stop(undefined, 'x', { now: at(11) }).status, 0)
+  assert.equal(outcome(s.stop(undefined, 'x', { now: at(11) })), 'none')
   s.prompt(undefined, 'もう一度変更', { now: at(20) })
   s.used(undefined, 'Edit', { file_path: join(t.repo, 'a.ts') }, { now: at(21) })
-  assert.equal(s.stop(undefined, 'x', { now: at(22) }).status, 2)
+  assert.equal(outcome(s.stop(undefined, 'x', { now: at(22) })), 'ask')
   assert.ok(repoId(t))
 })

@@ -1,16 +1,17 @@
 // ターン終了時（Stop）に、検証 → 事象メモ → 改善候補の確認を、この順で動かす。
 // 同じイベントの hook は並列に走るので、別々の hook にせず、このスクリプトから順に呼ぶ。
 //
-// Claude に続けさせるのは 2 つの場合だけ。どちらも終了コード 2 で、理由を標準エラーに書く。
-//   - 検証が失敗したとき（検証の結果だけを返す。連続 3 回で打ち切って、人に知らせる）
-//   - 改善候補の確認を頼むとき（1 ターンに 1 回。セッション ID とプロンプト ID の組で記録して止める）
-import { mkdirSync, rmSync } from 'node:fs'
+// Claude に続けさせるのは 2 つの場合だけ。
+//   - 検証が失敗したとき：終了コード 2 で、検証の結果だけを標準エラーに返す（連続 3 回で打ち切って、人に知らせる）
+//   - 改善候補の確認を頼むとき：hookSpecificOutput.additionalContext で頼む。エラーではなく案内なので、
+//     「hook のエラー」ではなく「hook からのフィードバック」として表示される。1 ターンに 1 回
+//     （セッション ID とプロンプト ID の組で記録して止める）
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   DAY_MS, heartbeat, hookContext, isLocked, isMain, iso, logEvent, now, readEvents, readHookInput, readJson, sessionDir, writeJson,
 } from './lib/core.mjs'
-import { loadCandidates } from './lib/candidates.mjs'
-import { loadAuto, updateAuto } from './lib/auto.mjs'
+import { loadCandidates, sessionCount } from './lib/candidates.mjs'
 import { MAX_VERIFY_STREAK, describeFailure, verifyTurn } from './verify.mjs'
 import { writeEpisode } from './episode.mjs'
 
@@ -18,27 +19,11 @@ const SIGNALS = new Set(['tool_failure', 'human_correction', 'guard_denied', 've
 // 1 ターンのあいだに、この hook が Claude を続けさせる回数の上限（万一の歯止め）。
 const MAX_BLOCKS_PER_TURN = 6
 
-// セッション開始時に見せた報告を「報告済み」にする。人が最初のプロンプトを送ったあとの、最初の Stop で付ける。
-// 自動改善のセッション（lock を試みたセッション）では付けない。無人のまま報告が消えるのを防ぐため。
-function acknowledgeShown(ctx, dir) {
-  const file = join(dir, 'shown.json')
-  const shown = readJson(file)
-  if (!shown) return
-  if (loadAuto(ctx).auto_sessions[ctx.sessionId]) return
-  updateAuto(ctx, (state) => {
-    for (const report of state.reports) {
-      if ((shown.reports ?? []).includes(report.name) && !report.reported_at) report.reported_at = iso()
-    }
-    for (const notice of shown.notices ?? []) state.notified[notice] = iso()
-  })
-  rmSync(file, { force: true })
-}
-
 function askMessage(ctx, { remaining, episode }) {
   const categories = ctx.config.candidates.categories.join(' / ')
   const episodeFlag = episode ? ` --episode ${episode}` : ''
   return [
-    '[self-improve] ターン終了時の確認です（エラーではありません）。',
+    '[self-improve] ターン終了時の確認です。',
     'このターンで得た気づきのうち、次回以降の作業に効くもの（気づいたバグ、バグの原因、よくあるミス、ユーザーの好み）があれば、1 件 1 行で記録してください。',
     'なければ何も記録せず、説明も足さずに、そのまま終了してください。記録するのは、根拠がこのターンにあるものだけです。',
     '',
@@ -70,7 +55,6 @@ export function onStop(input) {
 
   const dir = sessionDir(ctx)
   mkdirSync(dir, { recursive: true })
-  acknowledgeShown(ctx, dir)
 
   const stopFile = join(dir, 'stop.json')
   const stop = readJson(stopFile, {}) || {}
@@ -96,7 +80,9 @@ export function onStop(input) {
   const changes = events.filter((e) => e.type === 'change')
 
   let block = null
+  let guide = null
   let notice = null
+  let unverifiedFailure = null
 
   // 1. 検証。そのターンでファイルの変更があったときだけ。検証が通ったあとに変更がなければ、繰り返さない。
   const unverified = changes.filter((c) => !state.verified_at || c.ts > state.verified_at)
@@ -106,6 +92,7 @@ export function onStop(input) {
       state.verified_at = iso()
     } else {
       signals.push(result.event)
+      unverifiedFailure = result.failure
       if (result.gaveUp) {
         notice = `[self-improve] ${describeFailure(result.failure)} ${MAX_VERIFY_STREAK} 回続けて失敗したので、検証を打ち切りました。コードは検証が通っていない状態です。harness/config.json の verify と、失敗の内容を確かめてください。`
       } else {
@@ -132,18 +119,23 @@ export function onStop(input) {
   // 3. 改善候補の確認。検証が失敗したときは、検証の結果だけを返す（確認は、検証が通ったあとの Stop で頼む）。
   if (!block && !notice && (signals.length || changes.length) && !state.asked) {
     const max = ctx.config.candidates.max_per_session
-    const recorded = loadCandidates(ctx).filter((c) => c.session_id === ctx.sessionId).length
+    // 上限は、そのセッションが直近 24 時間に記録した件数で数える。
+    const recorded = sessionCount(loadCandidates(ctx), ctx.sessionId)
     if (recorded < max) {
       state.asked = true
       logEvent(ctx, { type: 'asked', prompt_id: promptId })
-      block = askMessage(ctx, { remaining: max - recorded, episode: state.episode ?? null })
+      guide = askMessage(ctx, { remaining: max - recorded, episode: state.episode ?? null })
     }
   }
 
-  if (block) {
+  if (block || guide) {
     if (state.blocks >= MAX_BLOCKS_PER_TURN) {
-      notice = '[self-improve] ターン終了時の確認が繰り返されたので、このターンでは打ち切りました。'
+      // 検証が失敗したまま打ち切るときは、そう書く。
+      notice = unverifiedFailure
+        ? `[self-improve] ${describeFailure(unverifiedFailure)} このターンで続行が ${MAX_BLOCKS_PER_TURN} 回に達したので、打ち切りました。コードは検証が通っていない状態です。`
+        : `[self-improve] ターン終了時の確認が繰り返されたので、このターンでは打ち切りました（続行は ${MAX_BLOCKS_PER_TURN} 回まで）。`
       block = null
+      guide = null
     } else {
       state.blocks += 1
     }
@@ -156,6 +148,7 @@ export function onStop(input) {
   writeJson(stopFile, stop)
 
   if (block) return { code: 2, stderr: block }
+  if (guide) return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: guide } }) }
   if (notice) return { code: 0, stdout: JSON.stringify({ systemMessage: notice }) }
   return { code: 0 }
 }

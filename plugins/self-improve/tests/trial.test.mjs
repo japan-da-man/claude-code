@@ -130,10 +130,13 @@ test('trial edit / remove: 編集は履歴を残す。消すと、その原因�
 
 test('trial add（人）: 件数の上限では追加せず、行数の目安を超えるときは警告だけ出す', () => {
   const t = makeEnv({ config: { auto: { max_trial_rules: 2 }, budget: { claude_md_lines: 3, always_loaded_rule_lines: 1 } }, files: { 'CLAUDE.md': '# 地図\n\n- a\n- b\n' } })
+  // CLAUDE.md の行数は、ここでは数えない（常時ロードのルール＝paths なしのルール＋試用ルールだけを見る）
   const first = trialAdd(t, 'rule-one', 'ルール 1')
   assert.match(first.stdout, /追加しました/)
-  assert.match(first.stdout, /警告：常時ロードの行数が目安を超えます（5 行、目安 4 行）/)
-  trialAdd(t, 'rule-two', 'ルール 2')
+  assert.doesNotMatch(first.stdout, /警告/)
+  const second = trialAdd(t, 'rule-two', 'ルール 2')
+  assert.match(second.stdout, /追加しました/)
+  assert.match(second.stdout, /警告：常時ロードのルールが行数の目安を超えます（paths なしのルール 0 行＋試用ルール 1 行、目安 1 行）。人が入れる分は止めません/)
   const third = trialAdd(t, 'rule-three', 'ルール 3')
   assert.equal(third.status, 0)
   assert.match(third.stdout, /見送り：試用ルールが上限（2 件）/)

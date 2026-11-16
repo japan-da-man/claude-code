@@ -38,9 +38,10 @@ export const PREFERENCE_CATEGORY = 'behavior/preference'
 
 // ---- 時刻 ----
 
-// テストでは HARNESS_NOW（ISO 8601）で現在時刻を固定できる。
+// テストのとき（HARNESS_TEST=1）だけ、HARNESS_NOW（ISO 8601）で現在時刻を固定できる。
+// ふだんは読まない。時刻を偽って、間隔の判定やロックの失効を動かせないようにするため。
 export function now() {
-  const fixed = process.env.HARNESS_NOW
+  const fixed = process.env.HARNESS_TEST === '1' ? process.env.HARNESS_NOW : null
   if (fixed) {
     const d = new Date(fixed)
     if (!Number.isNaN(d.getTime())) return d
@@ -350,17 +351,32 @@ export function dirsFor(data, repoId) {
 }
 
 // hook と harness-note が共通で使う文脈。init していないリポジトリでは null。
+// リポジトリは、セッションを始めた場所（CLAUDE_PROJECT_DIR）を先に見る。cwd を先に見ると、
+// 入れ子の別のリポジトリへ cd しただけで、ロックや確認の対象から外れてしまうため。
+// ただし cwd が同じリポジトリの worktree なら、そちらの根を使う（検証は、変更のある側で走らせる）。
 export function makeContext(cwd, { sessionId = null } = {}) {
-  const starts = [cwd, process.env.CLAUDE_PROJECT_DIR, process.cwd()].filter(Boolean)
-  for (const start of starts) {
-    const repo = findRepo(start)
-    if (!repo) continue
-    const config = loadConfig(repo.root)
-    if (!config) continue
-    const data = resolveDataDir()
-    return { repo, config, data: data.dir, dataSource: data.source, dirs: dirsFor(data.dir, repo.id), sessionId: sessionId ? safeId(sessionId) : null }
+  const initialized = (start) => {
+    const repo = start ? findRepo(start) : null
+    const config = repo ? loadConfig(repo.root) : null
+    return config ? { repo, config } : null
   }
-  return null
+  let found = null
+  for (const start of [process.env.CLAUDE_PROJECT_DIR, cwd, process.cwd()]) {
+    found = initialized(start)
+    if (found) break
+  }
+  if (!found) return null
+  const here = initialized(cwd)
+  if (here && here.repo.id === found.repo.id) found = here
+  const data = resolveDataDir()
+  return {
+    repo: found.repo,
+    config: found.config,
+    data: data.dir,
+    dataSource: data.source,
+    dirs: dirsFor(data.dir, found.repo.id),
+    sessionId: sessionId ? safeId(sessionId) : null,
+  }
 }
 
 // hook 用。HARNESS_DISABLE=1 と、init していないリポジトリでは null（＝何もしない）。
@@ -452,17 +468,63 @@ export function heartbeat(ctx, kind) {
 
 // ---- 自動改善のロック ----
 
-// ロックはセッション単位。2 時間たったものは無効と見なす。
-export function activeLock(ctx) {
-  const lock = readJson(ctx.dirs.lock)
-  if (!lock || !lock.session_id || !lock.at) return null
-  if (now().getTime() - new Date(lock.at).getTime() > LOCK_TTL_MS) return null
-  return lock
+// ロックのファイルを読む。2 時間たったものは無効と見なす。
+// 読めないファイル（途中までの JSON など）は、更新から 2 時間のあいだ「誰かのロック」として扱う
+// （broken: true）。ロックがないことにすると、書き込みの拒否が外れるため、拒否の側に倒す。
+function readLockFile(file) {
+  let text
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch {
+    return null
+  }
+  let lock = null
+  try {
+    lock = JSON.parse(text)
+  } catch {
+    // 下で broken として扱う
+  }
+  const valid = lock && typeof lock === 'object' && typeof lock.session_id === 'string' && lock.session_id
+    && typeof lock.at === 'string' && !Number.isNaN(Date.parse(lock.at))
+  if (!valid) {
+    let mtime = 0
+    try {
+      mtime = statSync(file).mtimeMs
+    } catch {
+      return null
+    }
+    if (Date.now() - mtime > LOCK_TTL_MS) return null
+    return { broken: true, session_id: null, at: new Date(mtime).toISOString(), targets: [], done: {} }
+  }
+  if (now().getTime() - Date.parse(lock.at) > LOCK_TTL_MS) return null
+  return { targets: [], done: {}, ...lock }
 }
+
+// このリポジトリのロック（なければ null）。
+export function activeLock(ctx) {
+  return readLockFile(ctx.dirs.lock)
+}
+
+// そのセッションが持っているロックを、データ領域のすべてのリポジトリから探す。
+// ロックはセッション単位。別のリポジトリへ移っても、ロック中のセッションはロック中のまま。
+export function sessionLock(data, sessionId) {
+  if (!sessionId) return null
+  const sid = safeId(sessionId)
+  const base = join(data, 'state')
+  for (const repoId of listFiles(base)) {
+    const lock = readLockFile(join(base, repoId, 'lock.json'))
+    if (lock && !lock.broken && lock.session_id === sid) return { repoId, lock }
+  }
+  return null
+}
+
 export function isLocked(ctx, sessionId = ctx.sessionId) {
-  if (!sessionId) return false
-  const lock = activeLock(ctx)
-  return Boolean(lock && lock.session_id === safeId(sessionId))
+  return Boolean(sessionLock(ctx.data, sessionId))
+}
+
+// hook がそのセッションを記録しているか（SessionStart か UserPromptSubmit が状態を残している）。
+export function isKnownSession(ctx, sessionId) {
+  return Boolean(sessionId) && existsSync(join(ctx.dirs.sessions, safeId(sessionId)))
 }
 
 // ---- frontmatter ----

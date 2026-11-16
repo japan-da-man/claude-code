@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { at, dataFiles, draft, makeEnv, note, readData, repoId, seedCandidates, startAuto, writeFiles } from './helpers.mjs'
+import { at, dataFiles, draft, finishAuto, knownSession, makeEnv, note, readData, repoId, seedCandidates, startAuto, writeFiles } from './helpers.mjs'
 
 const AUTO = { auto: { interval_days: 7 } }
 const trialAdd = (t, key, opts = {}, text = `${key} の決まりを守る`) =>
@@ -18,24 +18,44 @@ test('lock: interval_days が 0 なら停止。何もせず終了するよう返
   assert.equal(note(t, ['lock', '--session', 'auto-1', '--json'], { now: at(60) }).json.reason, 'disabled')
 })
 
-test('lock: 前回の実行から間隔がたっていなければ何もしない。追いかけの実行と手動の実行が重なっても二重に動かない', () => {
+test('lock: 前回の実行から間隔の半分がたっていなければ何もしない。追いかけの実行と手動の実行が重なっても二重に動かない', () => {
   const t = makeEnv({ config: AUTO })
   seedCandidates(t, 'route-placement', ['s1', 's2'])
   assert.match(note(t, ['lock', '--session', 'auto-1'], { now: at(60) }).stdout, /自動改善を開始しました/)
-  note(t, ['unlock', '--session', 'auto-1'], { now: at(70) })
+  finishAuto(t, { now: at(70) })
 
-  // 3 日後の手動実行：間隔がたっていない
-  const early = note(t, ['lock', '--session', 'manual-1'], { now: at(0, 3) })
-  assert.match(early.stdout, /前回の実行（2026-11-16）から間隔がたっていません。何もせず終了してください/)
-  assert.equal(note(t, ['status', '--json', '--session', 'manual-1'], { now: at(0, 3) }).json.lock, null)
+  // 直後の追いかけの実行や、3 日後の手動実行：間隔（7 日）の半分がたっていない
+  for (const [session, now] of [['auto-2', at(75)], ['manual-1', at(0, 3)]]) {
+    const early = note(t, ['lock', '--session', session], { now })
+    assert.match(early.stdout, /前回の実行（2026-11-16）から間隔がたっていません。何もせず終了してください/)
+    assert.equal(note(t, ['status', '--json', '--session', session], { now }).json.lock, null)
+  }
   // 間隔がたっていないセッションでは、書き込みも「自動」にならない（ロックがないので skill add は見送り）
   assert.match(note(t, ['skill', 'add', '--session', 'manual-1', '--key', 'route-placement', '--name', 'x', '--description', 'demo-app', '--body', 'b'], { now: at(1, 3) }).stdout, /見送り/)
+  // 半分を過ぎれば動く
+  assert.match(note(t, ['lock', '--session', 'auto-3'], { now: at(0, 4) }).stdout, /自動改善を開始しました/)
+})
 
-  // 予定の時刻は数分ずれるので、7 日に少し足りなくても動く
-  assert.match(note(t, ['lock', '--session', 'auto-2'], { now: at(50, 7) }).stdout, /自動改善を開始しました/)
-  note(t, ['unlock', '--session', 'auto-2'], { now: at(55, 7) })
-  // 直後の追いかけの実行は動かない
-  assert.match(note(t, ['lock', '--session', 'auto-3'], { now: at(58, 7) }).stdout, /間隔がたっていません/)
+test('追いかけの実行のあとでも、翌週の定時の実行は飛ばない（毎週月曜 9 時・間隔 7 日の想定）', () => {
+  const t = makeEnv({ config: AUTO })
+  seedCandidates(t, 'route-placement', ['s1', 's2'], { now: at(0) })
+  const monday = (week) => at(0, 7 * week) // 2026-11-16 は月曜。9 時（UTC）
+  const interval = (now) => note(t, ['status', '--json', '--session', 'x'], { now }).json.interval
+  // 1 週目：月曜 9 時を逃し、火曜 20 時に追いかけて実行された
+  const tuesdayNight = at(35 * 60, 0)
+  assert.match(note(t, ['lock', '--session', 'week-1'], { now: tuesdayNight }).stdout, /自動改善を開始しました/)
+  finishAuto(t, { session: 'week-1', now: at(35 * 60 + 5, 0) })
+  // 2 週目：月曜 9 時の定時の実行は、飛ばずに動く（前回から 5 日半。間隔の半分は過ぎている）
+  assert.match(note(t, ['lock', '--session', 'week-2'], { now: monday(1) }).stdout, /自動改善を開始しました/)
+  finishAuto(t, { session: 'week-2', now: at(5, 7) })
+  // その週の水曜：「実行されていません」にはならない
+  assert.deepEqual([interval(at(0, 9)).due, interval(at(0, 9)).overdue], [false, false])
+  // 3 週目も定時に動く
+  assert.match(note(t, ['lock', '--session', 'week-3'], { now: monday(2) }).stdout, /自動改善を開始しました/)
+  finishAuto(t, { session: 'week-3', now: at(5, 14) })
+  // 実行されないまま間隔（7 日）を過ぎたら、overdue
+  assert.equal(interval(at(0, 21)).overdue, false)
+  assert.equal(interval(at(10, 21)).overdue, true)
 })
 
 test('lock: セッション単位。別のセッションは実行中なら入れず、2 時間で失効する', () => {
@@ -44,6 +64,13 @@ test('lock: セッション単位。別のセッションは実行中なら入�
   assert.equal(note(t, ['lock', '--session', 'auto-1', '--json'], { now: at(1) }).json.resumed, true)
   assert.equal(note(t, ['lock', '--session', 'auto-2', '--json'], { now: at(2) }).json.reason, 'locked')
   assert.match(note(t, ['unlock', '--session', 'auto-2'], { now: at(3) }).stdout, /別のセッションのロック/)
+  // ロックの ID は、全文では出さない（ほかのセッションが名乗れないように）
+  const shown = note(t, ['status', '--json', '--session', 'auto-2'], { now: at(4) })
+  assert.deepEqual([shown.json.lock.session, shown.json.lock.mine], ['auto-1', false])
+  const t3 = makeEnv({ config: AUTO })
+  note(t3, ['lock', '--session', 'a-very-long-session-identifier-0001'], { now: at(0) })
+  assert.doesNotMatch(note(t3, ['status', '--json', '--session', 'other'], { now: at(1) }).stdout, /a-very-long-session-identifier-0001/)
+  assert.doesNotMatch(note(t3, ['status', '--session', 'other'], { now: at(1) }).stdout, /a-very-long-session-identifier-0001/)
   assert.equal(note(t, ['status', '--json', '--session', 'auto-1'], { now: at(119) }).json.lock.mine, true)
   assert.equal(note(t, ['status', '--json', '--session', 'auto-1'], { now: at(121) }).json.lock, null)
   // セッション ID が分からないまま lock はしない（人のセッションを巻き込まないため）
@@ -52,6 +79,27 @@ test('lock: セッション単位。別のセッションは実行中なら入�
   assert.equal(blind.status, 1)
   assert.match(blind.stderr, /--session/)
   assert.match(note(t2, ['lock'], { env: { HARNESS_SESSION_ID: 'from-env' } }).stdout, /開始しました/)
+})
+
+test('unlock: 外せるのは、ロックしたセッション自身が、実行の記録（report write）を書いたあとだけ', () => {
+  const t = makeEnv({ config: AUTO })
+  startAuto(t, ['route-placement'])
+  const early = note(t, ['unlock', '--session', 'auto-1'], { now: at(61) })
+  assert.equal(early.status, 0)
+  assert.match(early.stdout, /見送り：先に harness-note report write で実行の記録を書いてください/)
+  assert.equal(note(t, ['status', '--json', '--session', 'auto-1'], { now: at(62) }).json.lock.mine, true)
+  // セッション ID を推定で決めた unlock は受け付けない（別のセッションが、自動改善のロックを外してしまうのを防ぐ）
+  const guessed = note(t, ['unlock'], { now: at(62) })
+  assert.equal(guessed.status, 1)
+  assert.match(guessed.stderr, /セッション ID が分かりません/)
+  assert.match(note(t, ['unlock', '--session', 'someone-else'], { now: at(62) }).stdout, /別のセッションのロックなので、解除しません/)
+  assert.equal(note(t, ['status', '--json', '--session', 'auto-1'], { now: at(62) }).json.lock.mine, true)
+
+  note(t, ['report', 'write', '--session', 'auto-1', '--body', '何もしなかった'], { now: at(63) })
+  const done = note(t, ['unlock', '--session', 'auto-1'], { now: at(64) })
+  assert.match(done.stdout, /自動改善のロックを解除しました。このセッションでは、このあとも書き込みに確認が挟まります/)
+  assert.equal(note(t, ['status', '--json', '--session', 'auto-1'], { now: at(65) }).json.lock, null)
+  assert.equal(note(t, ['status', '--json', '--session', 'auto-1'], { now: at(65) }).json.auto_session, true)
 })
 
 test('自動改善の実行中は、セッションを確かめられない書き込みを受け付けない（歯止めのすり抜けを防ぐ）', () => {
@@ -69,8 +117,65 @@ test('自動改善の実行中は、セッションを確かめられない書�
   assert.match(note(t, ['trial', 'add', '--key', 'route-placement', '--text', 'ルートは src/routes/ に置く'], { now: at(63), env: { HARNESS_SESSION_ID: 'auto-1' } }).stdout, /追加しました/)
   assert.equal(note(t, ['trial', 'list', '--json']).json[0].by, 'auto')
   // ロックが外れれば、--session なしでも人の書き込みとして受け付ける
-  note(t, ['unlock', '--session', 'auto-1'], { now: at(64) })
+  finishAuto(t, { now: at(64) })
   assert.match(note(t, ['trial', 'add', '--key', 'human-rule', '--text', '人が足したルール'], { now: at(65) }).stdout, /追加しました/)
+})
+
+test('--session は自己申告。hook が引き渡した ID と食い違えば受け付けず、実行中に入った試用は名乗りにかかわらず人の確認に回す', () => {
+  const t = makeEnv({ config: AUTO })
+  startAuto(t, ['route-placement'])
+  draft(t, 'route-placement')
+  // ロック中のセッション（hook が HARNESS_SESSION_ID=auto-1 を引き渡している）が、別の ID を名乗る
+  const handed = { HARNESS_SESSION_ID: 'auto-1' }
+  for (const args of [
+    ['trial', 'add', '--session', 'not-auto', '--key', 'any-key', '--text', '好きな 1 行'],
+    ['trial', 'add', '--session=not-auto', '--key', 'any-key', '--text', '好きな 1 行'],
+    ['mark', '--key', 'route-placement', '--status', 'rejected', '--session', 'zzz'],
+    ['rekey', 'route-placement', 'other-key', '--session', 'zzz'],
+    ['pending', 'remove', 'route-placement', '--session', 'zzz'],
+    ['add', '--session', 'zzz', '--category', 'dev/mistake', '--key', 'some-key', '--text', 'x'],
+    ['unlock', '--session', 'zzz'],
+    ['trial', 'add', '--session', 'auto-1', '--session', 'zzz', '--key', 'any-key', '--text', 'x'],
+  ]) {
+    const run = note(t, args, { now: at(62), env: handed, known: false })
+    assert.equal(run.status, 1, args.join(' '))
+    assert.match(run.stderr, /ほかのセッションを名乗ることはできません|値が食い違っています/)
+  }
+  assert.deepEqual(dataFiles(t, 'trial'), [])
+  assert.equal(note(t, ['list', '--key', 'route-placement', '--status', 'consumed', '--json']).json.length, 2)
+
+  // 環境変数が渡らない場合（引き渡しが効かない環境）でも、実行中に入った試用は未確認として登録され、review に出る
+  const claimed = note(t, ['trial', 'add', '--session', 'not-auto', '--key', 'any-key', '--text', '好きな 1 行'], { now: at(63) })
+  assert.match(claimed.stdout, /自動改善の実行中に入った変更なので、未確認の自動変更として登録しました/)
+  const items = note(t, ['review', '--session', 'human-1'], { now: at(64) }).json.unreviewed
+  const mine = items.find((i) => i.cause_key === 'any-key')
+  assert.equal(mine.kind, 'trial_add')
+  assert.match(mine.note, /ロックしたセッション以外から入った変更/)
+  // 正しい ID なら、対象の外には書けない
+  assert.match(note(t, ['trial', 'add', '--session', 'auto-1', '--key', 'other-key', '--text', 'x'], { now: at(65) }).stdout, /今回の対象ではありません/)
+})
+
+test('1 つのセッションが 2 つの ID を名乗って、自動改善の対象を作ることはできない', () => {
+  const t = makeEnv()
+  const add = (session, opts = {}) => note(t, ['add', '--session', session, '--category', 'dev/mistake', '--key', 'planted-key', '--text', `${session} の気づき`], { known: false, ...opts })
+  // hook が記録していないセッションの ID は受け付けない
+  for (const fake of ['fake-a', 'fake-b']) {
+    const run = add(fake)
+    assert.equal(run.status, 0)
+    assert.match(run.stdout, /記録しません：セッション fake-. は、このプラグインの hook に記録されていません/)
+  }
+  assert.deepEqual(dataFiles(t, 'candidates'), [])
+  // 実在する別のセッションの ID を名乗っても、hook が引き渡した自分の ID と食い違うので受け付けない
+  knownSession(t, 'real-1')
+  knownSession(t, 'real-2')
+  const impersonated = add('real-2', { env: { HARNESS_SESSION_ID: 'real-1' } })
+  assert.equal(impersonated.status, 1)
+  assert.match(impersonated.stderr, /ほかのセッションを名乗ることはできません/)
+  // 自分の ID では 1 セッション分にしかならない
+  assert.match(add('real-1', { env: { HARNESS_SESSION_ID: 'real-1' } }).stdout, /記録しました/)
+  assert.match(note(t, ['add', '--category', 'dev/mistake', '--key', 'planted-key', '--text', '別の言い方'], { env: { HARNESS_SESSION_ID: 'real-1' }, now: at(0, 1) }).stdout, /記録しました/)
+  assert.equal(note(t, ['keys', '--json']).json[0].sessions, 1)
+  assert.deepEqual(note(t, ['targets', '--json']).json.targets, [])
 })
 
 test('1 回 3 件まで：対象はスクリプトが選び、それ以外の原因キーには書き込めない', () => {
@@ -162,7 +267,7 @@ test('未確認の上限：達したら、追加も編集も下書きもやめ�
   assert.match(draft(t, 'key-ccc', { session: 'auto-2', now: at(3, 8) }).stdout, /下書きを書きました/)
 })
 
-test('試用ルール・試用Skill の上限と、行数の目安：超えるときは追加しない', () => {
+test('試用ルール・試用Skill の上限：実行の途中で達したら、それ以上は追加しない', () => {
   const t = makeEnv({ config: { auto: { interval_days: 7, max_trial_rules: 1, max_trial_skills: 1 } } })
   startAuto(t, ['key-aaa', 'key-bbb', 'key-ccc'])
   for (const key of ['key-aaa', 'key-bbb', 'key-ccc']) draft(t, key)
@@ -172,23 +277,54 @@ test('試用ルール・試用Skill の上限と、行数の目安：超える�
   assert.match(skill('key-bbb', 'skill-b').stdout, /試用 Skill を追加しました/)
   assert.match(skill('key-ccc', 'skill-c').stdout, /見送り：試用 Skill が上限（1 件）に達しています/)
   assert.equal(note(t, ['status', '--json']).json.gates.trial_skills, 1)
+})
 
-  // 行数：CLAUDE.md 149 行＋paths なしのルール 1 行＝150 行（目安の合計 100＋50）。試用ルールを足すと超える
-  const full = makeEnv({
+test('行数の歯止め：見るのは「paths なしのルール＋試用ルール」だけ。CLAUDE.md が長くても、自動改善は止まらない', () => {
+  const t = makeEnv({
     config: AUTO,
     files: {
-      'CLAUDE.md': Array.from({ length: 149 }, (_, i) => `- 行 ${i}`).join('\n'),
+      'CLAUDE.md': Array.from({ length: 160 }, (_, i) => `- 行 ${i}`).join('\n'),
       '.claude/rules/always.md': '- いつも読むルール\n',
-      '.claude/rules/scoped.md': `---\npaths:\n  - "src/**"\n---\n${'- 絞ったルール\n'.repeat(30)}`,
+      '.claude/rules/scoped.md': `---\npaths:\n  - "src/**"\n---\n${'- 絞ったルール\n'.repeat(60)}`,
     },
   })
-  startAuto(full, ['key-aaa'])
-  draft(full, 'key-aaa')
-  const over = trialAdd(full, 'key-aaa')
-  assert.match(over.stdout, /見送り：常時ロードの行数が目安を超えます（いま 150 行、目安 150 行）/)
-  assert.deepEqual(dataFiles(full, 'trial'), [])
-  // paths 付きのルールは常時ロードに数えない
-  assert.equal(note(full, ['status', '--json']).json.gates.always_loaded_lines, 150)
+  const lock = startAuto(t, ['route-placement'])
+  assert.match(lock.stdout, /常時ロードのルール 1\/50 行/)
+  draft(t, 'route-placement')
+  assert.match(trialAdd(t, 'route-placement').stdout, /追加しました/)
+  // paths 付きのルールと CLAUDE.md は、歯止めの行数に数えない
+  const gates = note(t, ['status', '--json']).json.gates
+  assert.deepEqual([gates.rule_lines, gates.rule_limit, gates.claude_md_lines, gates.claude_md_limit], [2, 50, 160, 100])
+})
+
+test('行数の歯止めに掛かる対象は、lock の時点で「追加できない」と分かり、下書きで候補を消費しない', () => {
+  const t = makeEnv({
+    config: { auto: { interval_days: 7, max_trial_skills: 0 }, budget: { always_loaded_rule_lines: 3 } },
+    files: { '.claude/rules/always.md': '- a\n- b\n- c\n' },
+  })
+  const lock = startAuto(t, ['route-placement'])
+  assert.match(lock.stdout, /route-placement（dev\/mistake、2 セッション）— 新規。ただし、いまは追加できません（常時ロードのルールが行数の目安を超えます（paths なしのルール 3 行＋試用ルール 0 行、目安 3 行）/)
+  const target = note(t, ['lock', '--session', 'auto-1', '--json'], { now: at(61) }).json.lock.targets[0]
+  assert.deepEqual([target.allowed, Boolean(target.blocked)], [[], true])
+
+  // 下書きを作らせない。候補は new のまま残る
+  const refused = draft(t, 'route-placement')
+  assert.match(refused.stdout, /見送り：route-placement には、いま試用を追加できません.*下書きは作らず、候補は残します/)
+  assert.deepEqual(dataFiles(t, 'pending'), [])
+  assert.equal(note(t, ['list', '--key', 'route-placement', '--json']).json.length, 2)
+  assert.equal(note(t, ['status', '--json']).json.gates.unreviewed, 0)
+  // 案を載せるとき（ガードや検証コマンドへ移す案）と、対策を入れない記録は、歯止めに関係なく作れる
+  assert.match(draft(t, 'route-placement', { extra: ['--proposal-kind', 'guard', '--proposal', 'src/api/ への Write を止める'] }).stdout, /承認待ちの案として登録しました/)
+  finishAuto(t)
+  // 理由は記録にも残る
+  assert.match(note(t, ['report', 'show']).stdout, /route-placement（dev\/mistake、2 セッション、追加できない：常時ロードのルールが行数の目安を超えます/)
+
+  // 試用ルールは足せないが、試用 Skill は足せる場合：skill add だけを案内する
+  const t2 = makeEnv({ config: { auto: { interval_days: 7 }, budget: { always_loaded_rule_lines: 3 } }, files: { '.claude/rules/always.md': '- a\n- b\n- c\n' } })
+  const lock2 = startAuto(t2, ['migration-forgotten'])
+  assert.match(lock2.stdout, /新規。skill add だけ（常時ロードのルールが行数の目安を超えます/)
+  assert.match(draft(t2, 'migration-forgotten').stdout, /下書きを書きました/)
+  assert.match(trialAdd(t2, 'migration-forgotten').stdout, /見送り：常時ロードのルールが行数の目安を超えます/)
 })
 
 test('再発：1 回目だけ試用ルールを編集してよい。2 回目以降は編集せず、案だけ。再発は編集したかにかかわらず数える', () => {
@@ -196,7 +332,11 @@ test('再発：1 回目だけ試用ルールを編集してよい。2 回目以�
   startAuto(t, ['route-placement'])
   draft(t, 'route-placement')
   trialAdd(t, 'route-placement', {}, 'ルート定義は src/routes/ に置く')
-  note(t, ['unlock', '--session', 'auto-1'], { now: at(70) })
+  // 同じ実行で、試用を入れたあとに案を足しても、再発には数えない
+  const sameRun = draft(t, 'route-placement', { now: at(63), extra: ['--proposal-kind', 'guard', '--proposal', 'src/api/ への Write を止める'] })
+  assert.doesNotMatch(sameRun.stdout, /再発として数えました/)
+  assert.match(readData(t, 'pending', repoId(t), 'route-placement.md'), /# 追記（2026-11-16）/)
+  finishAuto(t, { now: at(70) })
 
   // 試用中に、同じ原因がまた 2 セッションで出た → 再発の 1 回目
   seedCandidates(t, 'route-placement', ['r1', 'r2'], { now: at(0, 3) })
@@ -204,14 +344,16 @@ test('再発：1 回目だけ試用ルールを編集してよい。2 回目以�
   assert.deepEqual(second.lock.targets.map((x) => [x.key, x.mode, x.recurrence_no, x.allowed]), [['route-placement', 'recurrence', 1, ['trial edit']]])
   const d2 = draft(t, 'route-placement', { session: 'auto-2', now: at(1, 8) })
   assert.match(d2.stdout, /試用中の原因の再発として数えました（1 回目）/)
+  // 同じ実行で下書きを 2 回書いても、再発は 1 回分
+  assert.doesNotMatch(draft(t, 'route-placement', { session: 'auto-2', now: at(1, 8) }).stdout, /再発として数えました/)
   assert.match(trialAdd(t, 'route-placement', { session: 'auto-2', now: at(2, 8) }).stdout, /見送り：route-placement は試用中の原因の再発（1 回目）です。再発の 1 回目なので、trial edit で文言を直せます/)
   const edited = note(t, ['trial', 'edit', '--session', 'auto-2', '--key', 'route-placement', '--text', 'Hono のルート定義は、必ず src/routes/ の下に置く'], { now: at(3, 8) })
   assert.match(edited.stdout, /更新しました/)
   assert.match(readData(t, 'pending', repoId(t), 'route-placement.md'), /# 再発（2026-11-24）/)
   note(t, ['report', 'write', '--session', 'auto-2', '--body', '再発・編集'], { now: at(4, 8) })
-  note(t, ['unlock', '--session', 'auto-2'], { now: at(5, 8) })
   assert.match(note(t, ['report', 'show']).stdout, /自動改善（11\/24）：1件を編集。/)
   assert.match(note(t, ['report', 'show']).stdout, /試用ルールを編集（route-placement、再発）/)
+  assert.match(note(t, ['unlock', '--session', 'auto-2'], { now: at(5, 8) }).stdout, /解除しました/)
 
   // さらにまた出た → 2 回目。編集しない
   seedCandidates(t, 'route-placement', ['r3', 'r4'], { now: at(0, 10) })
@@ -262,7 +404,7 @@ test('report write: lock したセッションだけが書ける。報告に載�
   assert.match(report, /その他の気づき（dev\/other）：1 件/)
   assert.match(report, /確認したい好みの候補（3 セッション以上）：1 件\n {2}- prefers-pnpm（3 セッション）/)
   assert.doesNotMatch(report, /prefers-tabs/)
-  assert.deepEqual(note(t, ['report', 'list', '--json']).json.map((r) => [r.name, r.counts.trial_add, r.counts.skill_add, r.reported_at]), [['auto-2026-11-16', 1, 1, null]])
+  assert.deepEqual(note(t, ['report', 'list', '--json']).json.map((r) => [r.name, r.counts.trial_add, r.counts.skill_add, r.closed_at]), [['auto-2026-11-16', 1, 1, null]])
 })
 
 test('review: 未確認の自動変更を中身つきで並べ、残す・消す・昇格するを記録する', () => {

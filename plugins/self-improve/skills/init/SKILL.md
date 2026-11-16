@@ -49,8 +49,8 @@ harness-note status
 
 最後に、次のことを短く伝える。
 
-- これから自動で起きること：ツールの失敗や訂正の記録、禁止操作（`git push --force`、`.env` の書き換えなど）の拒否、ハーネスのファイル（`harness/config.json`、`.claude/rules/`、CLAUDE.md など）を書き換えるときの確認、変更や信号があったターンの終わりの「気づきがあれば記録する」確認。
+- これから自動で起きること：ツールの失敗や訂正の記録、禁止操作（`git push --force`、`git commit --no-verify` など）の拒否、`.env` と、ハーネスのファイル（`harness/config.json`、`.claude/rules/`、CLAUDE.md など）を書き換えるときの確認、変更や信号があったターンの終わりの「気づきがあれば記録する」確認。
 - 検証コマンドは空で始める。「壊れたまま完了と報告した」失敗が起きたときに、`/self-improve:retro` で 1 行ずつ足す。
-- 自動改善は止めてある。同じ原因の候補が、異なるセッションで 2 件たまると、セッション開始時に 1 回だけ知らせる。
+- 自動改善は止めてある。同じ原因の候補が、異なるセッションで 2 件たまると、セッション開始時に知らせる（`/self-improve:review` を開くか、知らせを閉じるまで。閉じなくても 7 日で出なくなる）。
 - 邪魔になったら `HARNESS_DISABLE=1 claude` で起動すれば、hook がすべて止まる。
 - `harness/` はコミットしておく（`.claude/settings.local.json` は git の管理外）。コミットしてよいか尋ね、よければ `harness/` と `.gitignore` だけをコミットする。

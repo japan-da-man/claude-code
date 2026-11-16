@@ -1,15 +1,19 @@
-// 自動改善の状態：ロック、対象の選び方、歯止め、失敗票の下書き、実行の記録、未確認の自動変更。
+// 自動改善の状態：ロック、対象の選び方、歯止め、失敗票の下書き、実行の記録、未確認の自動変更、セッション開始時の知らせ。
 // 対象の並べ替えと歯止めは、ここで機械的に決める（LLM には選ばせない）。
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  BUG_CATEGORY, DAY_MS, OTHER_CATEGORY, PREFERENCE_CATEGORY, dayOf, daysBetween, iso, listFiles, now, parseFrontmatter,
-  activeLock, readJson, safeId, withLock, writeFileAtomic, writeJson,
+  BUG_CATEGORY, DAY_MS, OTHER_CATEGORY, PREFERENCE_CATEGORY, activeLock, dayOf, daysBetween, isKnownSession, iso, listFiles, now,
+  parseFrontmatter, readJson, safeId, withLock, writeFileAtomic, writeJson,
 } from './core.mjs'
 import { loadCandidates, markCandidates, rankTargets, summarizeKeys } from './candidates.mjs'
-import { getRule, listRules, listSkills, measureAlwaysLoaded, readSkill, removeRule, removeSkill, renderRule } from './trial.mjs'
+import {
+  getRule, listRules, listSkills, measureAlwaysLoaded, readSkill, removeRule, removeSkill, renderRule, ruleCapacity, skillCapacity,
+} from './trial.mjs'
 
-const EMPTY = { last_run_at: null, changes: [], rejected: {}, recurrences: {}, promoted: {}, reports: [], notified: {}, auto_sessions: {} }
+const EMPTY = { last_run_at: null, changes: [], rejected: {}, recurrences: {}, promoted: {}, reports: [], notices: {}, auto_sessions: {} }
+// セッション開始時の知らせ（報告の 1 行と、1 回きりの知らせ）を出し続ける日数。
+export const NOTICE_DAYS = 7
 
 export function loadAuto(ctx) {
   const raw = readJson(ctx.dirs.auto, {}) || {}
@@ -28,20 +32,34 @@ export function updateAuto(ctx, fn) {
 
 export const unreviewed = (state) => state.changes.filter((c) => !c.reviewed_at)
 
+// lock を試みたセッション（実行できたかどうかは問わない）。
+export function isAutoSession(ctx, sessionId = ctx.sessionId) {
+  return Boolean(sessionId) && Boolean(loadAuto(ctx).auto_sessions[safeId(sessionId)])
+}
+
 // ---- 対象 ----
 
 export function computeTargets(ctx, state = loadAuto(ctx)) {
   const rules = new Map(listRules(ctx).map((r) => [r.cause_key, r]))
   const skills = new Map(listSkills(ctx).map((s) => [s.cause_key, s]))
+  // 追加できるかどうかは、対象を決める時点で分かる。追加できない対象は、下書きで候補を消費させない。
+  const rule = ruleCapacity(ctx)
+  const skill = skillCapacity(ctx)
   return rankTargets(loadCandidates(ctx), ctx.config, { rejected: state.rejected }).map((entry) => {
-    const rule = rules.get(entry.key) ?? null
-    const skill = skills.get(entry.key) ?? null
+    const trialRule = rules.get(entry.key) ?? null
+    const trialSkill = skills.get(entry.key) ?? null
     const promoted = state.promoted[entry.key] ?? null
-    const recurrence = rule || skill || promoted
+    const recurrence = trialRule || trialSkill || promoted
     const no = recurrence ? (state.recurrences[entry.key]?.count ?? 0) + 1 : 0
-    // 再発の 1 回目だけ、試用ルールを編集してよい。2 回目以降と、昇格済み・Skill の再発は案だけ。
-    let allowed = ['trial add', 'skill add']
-    if (recurrence) allowed = rule && !promoted && no === 1 ? ['trial edit'] : []
+    let allowed
+    let blocked = null
+    if (recurrence) {
+      // 再発の 1 回目だけ、試用ルールを編集してよい。2 回目以降と、昇格済み・Skill の再発は案だけ。
+      allowed = trialRule && !promoted && no === 1 ? ['trial edit'] : []
+    } else {
+      allowed = [rule.ok ? 'trial add' : null, skill.ok ? 'skill add' : null].filter(Boolean)
+      if (!allowed.length) blocked = `${rule.reason}。${skill.reason}`
+    }
     return {
       key: entry.key,
       category: entry.category,
@@ -49,28 +67,52 @@ export function computeTargets(ctx, state = loadAuto(ctx)) {
       latest: entry.latest,
       mode: recurrence ? 'recurrence' : 'new',
       recurrence_no: no,
-      trial: rule ? 'rule' : skill ? 'skill' : promoted ? 'promoted' : null,
+      trial: trialRule ? 'rule' : trialSkill ? 'skill' : promoted ? 'promoted' : null,
       allowed,
+      blocked,
+      limits: recurrence ? null : { rule: rule.reason, skill: skill.reason },
     }
   })
 }
 
-// 実行の間隔。予定の時刻は数分ずれるので、少しだけ余裕を見る。
+// 実行の間隔。日時はスケジュール済みタスクの側で決めるので、interval_days は 2 つの意味で使う。
+//   due      前回から interval_days の半分がたっている（これより短い間隔では動かさない。二重実行を防ぐ）
+//   overdue  前回から interval_days を過ぎている（実行されていないと知らせる）
+// 追いかけの実行（月曜の予定が火曜の夜に動く、など）のあとでも、翌週の定時の実行が飛ばないよう、
+// 動かさない間隔は短くしてある。
 export function intervalState(ctx, state = loadAuto(ctx)) {
   const days = ctx.config.auto.interval_days
-  if (!days) return { enabled: false, due: false, overdue: false, last_run_at: state.last_run_at }
+  if (!days) return { enabled: false, due: false, overdue: false, last_run_at: state.last_run_at, next_run_from: null }
   const interval = days * DAY_MS
-  const slack = Math.min(12 * 60 * 60 * 1000, interval / 4)
   const last = state.last_run_at ? new Date(state.last_run_at).getTime() : null
   const elapsed = last === null ? Infinity : now().getTime() - last
-  return { enabled: true, due: elapsed >= interval - slack, overdue: elapsed >= interval + DAY_MS, last_run_at: state.last_run_at }
+  // 二重実行を防ぐ最小の間隔は、間隔の半分。追いかけ実行や手動の実行のあとでも、次の定時の実行は飛ばない。
+  // 「実行されていません」と知らせるのは、間隔を過ぎたとき。
+  return {
+    enabled: true,
+    due: elapsed >= interval / 2,
+    overdue: elapsed > interval,
+    last_run_at: state.last_run_at,
+    next_run_from: last === null ? null : new Date(last + interval / 2).toISOString(),
+  }
+}
+
+// 自動改善が追加をやめている理由（セッション開始時と lock のときに知らせる）。
+export function blockedReasons(ctx, state = loadAuto(ctx)) {
+  const reasons = []
+  const max = ctx.config.auto.max_unreviewed
+  const pending = unreviewed(state).length
+  if (max > 0 && pending >= max) reasons.push(`未確認の自動変更が上限（${max}件）に達している`)
+  const rule = ruleCapacity(ctx)
+  if (!rule.ok) reasons.push(rule.reason)
+  return reasons
 }
 
 // ---- ロック ----
 
 // 自動改善のセッションを登録する。間隔がたっていなければ登録せず、何もしないよう伝える。
 // 登録を試みたセッションは、成否にかかわらず「自動改善のセッション」として覚えておく
-// （無人のセッションが、セッション開始時の報告を「報告済み」にしてしまわないため）。
+// （ロックが外れたあと・始まらなかったあとも、ガードが書き込みに確認を挟むため）。
 export function acquireLock(ctx, sessionId) {
   const sid = safeId(sessionId)
   return updateAuto(ctx, (state) => {
@@ -81,6 +123,7 @@ export function acquireLock(ctx, sessionId) {
     state.auto_sessions[sid] = iso()
 
     const existing = activeLock(ctx)
+    if (existing?.broken) return { run: false, reason: 'broken', message: 'ロックのファイル（lock.json）を読めません。何もせず終了してください。' }
     if (existing && existing.session_id === sid) return { run: true, resumed: true, lock: existing }
     if (existing) return { run: false, reason: 'locked', message: '別のセッションが自動改善を実行中です。何もせず終了してください。' }
 
@@ -93,7 +136,7 @@ export function acquireLock(ctx, sessionId) {
     }
     // このセッションを hook が見ていること（SessionStart か UserPromptSubmit が記録を残していること）を確かめる。
     // hook が動いていない、またはセッション ID が hook の見ているものと違うと、書き込みの拒否が効かないため。
-    if (!existsSync(join(ctx.dirs.sessions, sid))) {
+    if (!isKnownSession(ctx, sid)) {
       return {
         run: false,
         reason: 'unknown_session',
@@ -101,26 +144,37 @@ export function acquireLock(ctx, sessionId) {
       }
     }
     const targets = computeTargets(ctx, state).slice(0, ctx.config.auto.max_per_run)
-    const lock = { session_id: sid, at: iso(), targets, done: {} }
+    const lock = { session_id: sid, at: iso(), targets, done: {}, counted: {}, report: null }
     writeJson(ctx.dirs.lock, lock)
     state.last_run_at = lock.at
     return { run: true, resumed: false, lock }
   })
 }
 
+// ロックを外す。外せるのは、ロックしたセッション自身が、実行の記録（report write）を書いたあとだけ。
 export function releaseLock(ctx, sessionId) {
-  const lock = readJson(ctx.dirs.lock)
+  const lock = activeLock(ctx)
   if (!lock) return { released: false, reason: 'none' }
-  if (sessionId && lock.session_id !== safeId(sessionId) && activeLock(ctx)) return { released: false, reason: 'other' }
+  if (lock.broken || lock.session_id !== safeId(sessionId)) return { released: false, reason: 'other' }
+  if (!lock.report) return { released: false, reason: 'no_report' }
   rmSync(ctx.dirs.lock, { force: true })
   return { released: true, lock }
 }
 
+function updateLock(ctx, lock, fn) {
+  const current = readJson(ctx.dirs.lock)
+  if (!current || current.session_id !== lock.session_id) return
+  fn(current)
+  writeJson(ctx.dirs.lock, current)
+}
+
 // ---- 歯止め ----
+
+const NO_CONVERSION = ['environment', 'one_off']
 
 // 自動改善のセッションでの書き込みを、その場の状態で判定する。
 // op は 'pending add' | 'trial add' | 'trial edit' | 'skill add'。
-export function autoGate(ctx, lock, op, key) {
+export function autoGate(ctx, lock, op, key, { proposal = false, rootCause = null } = {}) {
   const target = lock.targets.find((t) => t.key === key)
   if (!target) {
     const keys = lock.targets.map((t) => t.key).join('、') || 'なし'
@@ -133,7 +187,14 @@ export function autoGate(ctx, lock, op, key) {
   if (pendingReview >= max) {
     return { ok: false, reason: `未確認の自動変更が ${pendingReview} 件あります（上限 ${max} 件）。追加も編集もせず、報告だけにしてください。` }
   }
-  if (op === 'pending add') return { ok: true, target }
+  if (op === 'pending add') {
+    // 追加できない対象は、下書きを作らせない（候補だけが消費されて、毎回同じ見送りになるのを防ぐ）。
+    // 案を載せるとき（--proposal-kind）と、対策を入れない記録（環境が原因、再現しない）は別。
+    if (target.blocked && !proposal && !NO_CONVERSION.includes(rootCause)) {
+      return { ok: false, reason: `${key} には、いま試用を追加できません（${target.blocked}）。下書きは作らず、候補は残します。追加できない理由を報告に書いてください。` }
+    }
+    return { ok: true, target }
+  }
 
   if (lock.done[key]) {
     return { ok: false, reason: `${key} には、この実行ですでに対策を入れました（${lock.done[key]}）。1 つの原因につき、変換は 1 つです。` }
@@ -145,26 +206,21 @@ export function autoGate(ctx, lock, op, key) {
         : '再発の 2 回目以降（または昇格済み・Skill の再発）なので、編集しません。ガードや検証コマンドへ移す案を pending add --proposal-kind で報告に載せてください。'
       return { ok: false, reason: `${key} は試用中の原因の再発（${target.recurrence_no} 回目）です。${hint}` }
     }
+    if (op === 'trial add' && target.limits?.rule) return { ok: false, reason: `${target.limits.rule}。追加せず、報告に書いてください。` }
+    if (op === 'skill add' && target.limits?.skill) return { ok: false, reason: `${target.limits.skill}。追加せず、報告に書いてください。` }
     return { ok: false, reason: `${key} には試用がまだありません。trial add か skill add を使ってください。` }
   }
   if (!existsSync(pendingFile(ctx, key))) {
     return { ok: false, reason: `先に pending add で ${key} の失敗票の下書きを作ってください。` }
   }
+  // この実行の途中で上限に達することもあるので、追加の直前にも確かめる。
   if (op === 'trial add') {
-    const count = listRules(ctx).length
-    if (count >= ctx.config.auto.max_trial_rules) {
-      return { ok: false, reason: `試用ルールが上限（${ctx.config.auto.max_trial_rules} 件）に達しています。追加せず、報告に書いてください。` }
-    }
-    const measure = measureAlwaysLoaded(ctx)
-    if (measure.total + 1 > measure.limit) {
-      return { ok: false, reason: `常時ロードの行数が目安を超えます（いま ${measure.total} 行、目安 ${measure.limit} 行）。追加せず、棚卸しを勧める旨を報告に書いてください。` }
-    }
+    const rule = ruleCapacity(ctx)
+    if (!rule.ok) return { ok: false, reason: `${rule.reason}。追加せず、報告に書いてください。` }
   }
   if (op === 'skill add') {
-    const count = listSkills(ctx).length
-    if (count >= ctx.config.auto.max_trial_skills) {
-      return { ok: false, reason: `試用 Skill が上限（${ctx.config.auto.max_trial_skills} 件）に達しています。追加せず、報告に書いてください。` }
-    }
+    const skill = skillCapacity(ctx)
+    if (!skill.ok) return { ok: false, reason: `${skill.reason}。追加せず、報告に書いてください。` }
   }
   return { ok: true, target }
 }
@@ -195,13 +251,23 @@ export function registerChange(ctx, lock, { kind, key, ref }) {
     return created
   })
   if (CONVERSIONS.includes(kind)) {
-    const current = readJson(ctx.dirs.lock)
-    if (current && current.session_id === lock.session_id) {
+    updateLock(ctx, lock, (current) => {
       current.done[key] = kind
-      writeJson(ctx.dirs.lock, current)
-    }
+    })
   }
   return change
+}
+
+// 自動改善の実行中に、ロックしたセッション以外から入った試用。名乗ったセッションが本当かどうかは
+// harness-note からは確かめきれないので、人の確認に回す（未確認の自動変更として登録する）。
+export function registerDuringLock(ctx, { kind, key, ref, session }) {
+  return updateAuto(ctx, (state) => {
+    const created = {
+      id: `a-${safeId(key)}-${Date.now().toString(36)}x`, kind, cause_key: key, ref, at: iso(), session_id: session, during_lock: true, report: null, reviewed_at: null, decision: null,
+    }
+    state.changes.push(created)
+    return created
+  })
 }
 
 // ---- 失敗票の下書き ----
@@ -250,7 +316,8 @@ export function nextIncidentId(root) {
 const one = (value) => String(value ?? '').replace(/\r\n/g, '\n').trim()
 
 // 下書きを作り、材料にした候補を consumed にする。試用中の原因なら、再発として数える。
-export function addPending(ctx, input) {
+// lock は、自動改善のセッションから呼ばれたときのロック（人が呼んだときは null）。
+export function addPending(ctx, input, lock = null) {
   const { key, category, signal, rootCause, severity, area, asked, expected, actual, evidence, proposalKind, proposal, by } = input
   const candidates = loadCandidates(ctx).filter((c) => c.cause_key === key && c.status === 'new')
   const related = incidentFiles(ctx.repo.root).filter((i) => i.data.cause_key === key).map((i) => i.id)
@@ -273,9 +340,12 @@ export function addPending(ctx, input) {
   }
   const file = pendingFile(ctx, key)
   const existing = readPending(ctx, key)
+  // 同じ実行の 2 回目（試用を入れたあとに案を足す、など）は、再発ではない。
+  const sameRun = Boolean(lock && (lock.done?.[key] || lock.counted?.[key] || lock.drafted?.[key]))
   let text
   if (existing) {
-    text = `${existing.replace(/\s+$/, '')}\n\n---\n\n# 再発（${dayOf()}）\n\n${sections.join('\n')}`
+    const heading = sameRun ? `# 追記（${dayOf()}）` : `# 再発（${dayOf()}）`
+    text = `${existing.replace(/\s+$/, '')}\n\n---\n\n${heading}\n\n${sections.join('\n')}`
   } else {
     const frontmatter = [
       '---',
@@ -304,13 +374,19 @@ export function addPending(ctx, input) {
 
   let recurrence = null
   const trial = getRule(ctx, key) || listSkills(ctx).find((s) => s.cause_key === key) || loadAuto(ctx).promoted[key]
-  if (trial) {
+  if (trial && !sameRun) {
     recurrence = updateAuto(ctx, (state) => {
       const entry = state.recurrences[key] ?? { count: 0, at: [] }
       entry.count += 1
       entry.at = [...entry.at, iso()].slice(-10)
       state.recurrences[key] = entry
       return entry.count
+    })
+  }
+  if (lock) {
+    updateLock(ctx, lock, (current) => {
+      current.drafted = { ...(current.drafted ?? {}), [key]: true }
+      if (recurrence) current.counted = { ...(current.counted ?? {}), [key]: true }
     })
   }
   return { file, consumed, related, recurrence }
@@ -405,13 +481,13 @@ export function reportExtras(ctx, state = loadAuto(ctx)) {
 
 export function writeReport(ctx, lock, body) {
   const state = loadAuto(ctx)
-  const mine = state.changes.filter((c) => c.session_id === lock.session_id && !c.report)
+  const mine = state.changes.filter((c) => c.session_id === lock.session_id && !c.report && !c.during_lock)
   const counts = countChanges(mine)
   const extras = reportExtras(ctx, state)
   const day = dayOf(new Date(lock.at))
   let name = `auto-${day}`
   for (let n = 2; existsSync(join(ctx.dirs.reports, `${name}.md`)); n++) name = `auto-${day}-${n}`
-  const report = { name, at: lock.at, session_id: lock.session_id, counts, bugs: extras.bugs.length, preferences: extras.preferences.length, reported_at: null }
+  const report = { name, at: lock.at, session_id: lock.session_id, counts, bugs: extras.bugs.length, preferences: extras.preferences.length, closed_at: null }
 
   const rules = new Map(listRules(ctx).map((r) => [r.cause_key, r]))
   const describe = (c) => {
@@ -421,13 +497,16 @@ export function writeReport(ctx, lock, body) {
     if (c.kind === 'draft') return `- 対策を入れなかった記録（${c.cause_key}）：下書きは harness-note pending show ${c.cause_key}`
     return `- 承認待ちの案（${c.cause_key}）：下書きは harness-note pending show ${c.cause_key}`
   }
+  const describeTarget = (t) => {
+    const note = t.mode === 'recurrence' ? `、再発 ${t.recurrence_no} 回目` : t.blocked ? `、追加できない：${t.blocked}` : ''
+    return `- ${t.key}（${t.category}、${t.sessions} セッション${note}）`
+  }
+  const m = measureAlwaysLoaded(ctx)
   const lines = [
     `# 自動改善の記録（${day}）`, '',
     summaryLine(report), '',
     '## 今回の対象（スクリプトが選んだもの）', '',
-    ...(lock.targets.length
-      ? lock.targets.map((t) => `- ${t.key}（${t.category}、${t.sessions} セッション${t.mode === 'recurrence' ? `、再発 ${t.recurrence_no} 回目` : ''}）`)
-      : ['- なし']),
+    ...(lock.targets.length ? lock.targets.map(describeTarget) : ['- なし']),
     '',
     '## 自動で入れた変更', '',
     ...(mine.length ? mine.map(describe) : ['- なし']),
@@ -445,13 +524,18 @@ export function writeReport(ctx, lock, body) {
     `- 再発した原因：${extras.recurrences.length} 件`,
     ...extras.recurrences.map((r) => `  - ${r.key}（${r.count} 回）`),
     `- 未確認の自動変更：${unreviewed(state).length} 件（上限 ${ctx.config.auto.max_unreviewed} 件）`,
+    `- 常時ロードのルール：${m.rule_lines} 行（目安 ${m.rule_limit} 行）。CLAUDE.md：${m.claude_md} 行（目安 ${m.claude_md_limit} 行）`,
     '',
   ]
   mkdirSync(ctx.dirs.reports, { recursive: true })
   writeFileAtomic(join(ctx.dirs.reports, `${name}.md`), lines.join('\n'))
   updateAuto(ctx, (next) => {
-    for (const c of next.changes) if (c.session_id === lock.session_id && !c.report) c.report = name
+    for (const c of next.changes) if (c.session_id === lock.session_id && !c.report && !c.during_lock) c.report = name
     next.reports = [...next.reports, report].slice(-50)
+  })
+  // 実行の記録を書いたことを、ロックに残す（unlock は、このあとでだけ受け付ける）。
+  updateLock(ctx, lock, (current) => {
+    current.report = name
   })
   return { name, file: join(ctx.dirs.reports, `${name}.md`), report }
 }
@@ -464,6 +548,53 @@ export function readReport(ctx, name) {
   }
 }
 
+// ---- セッション開始時の知らせ ----
+
+// 「人が見た」ことを hook からは知れないので、推定しない。
+// 報告の 1 行と 1 回きりの知らせは、review を開くか、明示的に閉じる（harness-note report close）まで、
+// または 7 日たつまで、セッション開始時に出し続ける。
+export const reportOpen = (report) => !report.closed_at && daysBetween(report.at) < NOTICE_DAYS
+
+export function noticeOpen(state, key) {
+  const entry = state.notices[key]
+  if (!entry) return true
+  return !entry.closed_at && daysBetween(entry.first_shown_at) < NOTICE_DAYS
+}
+
+// 初めて出した知らせに、出し始めた時刻を記録する（7 日を数えるため）。
+export function recordShown(ctx, keys) {
+  const state = loadAuto(ctx)
+  const fresh = keys.filter((k) => !state.notices[k])
+  const stale = Object.entries(state.notices).some(([, n]) => daysBetween(n.first_shown_at) >= 60)
+  if (!fresh.length && !stale) return
+  updateAuto(ctx, (next) => {
+    for (const key of fresh) next.notices[key] ??= { first_shown_at: iso(), closed_at: null }
+    for (const [key, n] of Object.entries(next.notices)) {
+      if (daysBetween(n.first_shown_at) >= 60) delete next.notices[key]
+    }
+  })
+}
+
+// 開いている知らせをすべて閉じる（review を開いたとき、または harness-note report close）。
+export function closeNotices(ctx) {
+  return updateAuto(ctx, (state) => {
+    let closed = 0
+    for (const report of state.reports) {
+      if (!report.closed_at) {
+        report.closed_at = iso()
+        if (daysBetween(report.at) < NOTICE_DAYS) closed += 1
+      }
+    }
+    for (const notice of Object.values(state.notices)) {
+      if (!notice.closed_at) {
+        notice.closed_at = iso()
+        closed += 1
+      }
+    }
+    return closed
+  })
+}
+
 // ---- 確認（review）----
 
 // 未確認の自動変更を、中身つきで並べる。
@@ -473,6 +604,7 @@ export function reviewItems(ctx) {
   const skills = listSkills(ctx)
   const items = unreviewed(state).map((c) => {
     const item = { id: c.id, kind: c.kind, cause_key: c.cause_key, at: c.at, days: daysBetween(c.at), report: c.report }
+    if (c.during_lock) item.note = '自動改善の実行中に、ロックしたセッション以外から入った変更です。誰が入れたものか、中身とあわせて確かめてください。'
     if (c.kind === 'trial_add' || c.kind === 'trial_edit') {
       const rule = rules.get(c.cause_key)
       item.rule = rule ? { line: renderRule(rule), text: rule.text, edits: rule.edits, previous: rule.history?.at(-1)?.text ?? null } : null
@@ -494,6 +626,7 @@ export function reviewItems(ctx) {
     stale_trials: extras.stale,
     bugs: extras.bugs.map((c) => ({ id: c.id, cause_key: c.cause_key, text: c.text, at: c.at })),
     preferences: extras.preferences.map((p) => ({ cause_key: p.key, sessions: p.sessions, texts: p.texts })),
+    auto_blocked: ctx.config.auto.interval_days ? blockedReasons(ctx, state) : [],
     next_incident_id: nextIncidentId(ctx.repo.root),
   }
 }

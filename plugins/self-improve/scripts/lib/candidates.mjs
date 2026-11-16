@@ -2,7 +2,7 @@
 // 1 件 1 ファイル。状態は new / consumed / rejected。件数は「異なるセッションの数」で数える。
 import { mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { AUTO_CATEGORIES, daysBetween, iso, listFiles, now, randomId, readJson, writeJson } from './core.mjs'
+import { AUTO_CATEGORIES, DAY_MS, daysBetween, iso, listFiles, now, randomId, readJson, withLock, writeJson } from './core.mjs'
 
 export const KEY_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/
 export const TEXT_MAX = 300
@@ -63,33 +63,45 @@ export function similarKeys(key, candidates) {
   return existing.filter((other) => isSimilarKey(key, other))
 }
 
+// そのセッションが直近 24 時間に記録した件数。「1 セッション 3 件」は、この件数で数える
+// （何日も再開して使うセッションが、3 件で記録できなくなるのを防ぐ）。
+export function sessionCount(candidates, sessionId) {
+  const since = now().getTime() - DAY_MS
+  return candidates.filter((c) => c.session_id === sessionId && new Date(c.at).getTime() > since).length
+}
+
 // 記録する。記録しなかったときは recorded: false と理由を返す（エラーにはしない）。
+// 数えてから書くまでを排他で囲む（並行して呼ばれても、上限を超えて入らないように）。
 export function addCandidate(ctx, { category, key, text, sessionId, sessionSource = 'flag', episode = null }) {
-  const max = ctx.config.candidates.max_per_session
-  const all = loadCandidates(ctx)
-  const line = normalize(text)
-  const at = now()
-  const recent = (c) => at.getTime() - new Date(c.at).getTime() < DUPLICATE_WINDOW_MS
+  mkdirSync(ctx.dirs.candidates, { recursive: true })
+  return withLock(ctx.dirs.candidates, () => {
+    const max = ctx.config.candidates.max_per_session
+    const all = loadCandidates(ctx)
+    const line = normalize(text)
+    const at = now()
+    const recent = (c) => at.getTime() - new Date(c.at).getTime() < DUPLICATE_WINDOW_MS
 
-  const duplicate = all.find((c) => c.cause_key === key && recent(c) && (c.session_id === sessionId || normalize(c.text) === line))
-  if (duplicate) return { recorded: false, reason: 'duplicate', duplicate }
+    // 同じセッションの同じキー、または同じキー・同じ文面（別のセッションからでも）が続けて来たら、重複。
+    const duplicate = all.find((c) => c.cause_key === key && recent(c) && (c.session_id === sessionId || normalize(c.text) === line))
+    if (duplicate) return { recorded: false, reason: 'duplicate', duplicate }
 
-  const inSession = all.filter((c) => c.session_id === sessionId).length
-  if (inSession >= max) return { recorded: false, reason: 'limit', count: inSession, max }
+    const inSession = sessionCount(all, sessionId)
+    if (inSession >= max) return { recorded: false, reason: 'limit', count: inSession, max }
 
-  const candidate = {
-    id: randomId('c'),
-    category,
-    cause_key: key,
-    text: line,
-    at: iso(at),
-    session_id: sessionId,
-    session_source: sessionSource,
-    episode,
-    status: 'new',
-  }
-  save(ctx, candidate)
-  return { recorded: true, candidate, similar: similarKeys(key, all), remaining: max - inSession - 1 }
+    const candidate = {
+      id: randomId('c'),
+      category,
+      cause_key: key,
+      text: line,
+      at: iso(at),
+      session_id: sessionId,
+      session_source: sessionSource,
+      episode,
+      status: 'new',
+    }
+    save(ctx, candidate)
+    return { recorded: true, candidate, similar: similarKeys(key, all), remaining: max - inSession - 1 }
+  })
 }
 
 // 原因キーごとの集計。sessions は new の候補を記録した、異なるセッションの数。

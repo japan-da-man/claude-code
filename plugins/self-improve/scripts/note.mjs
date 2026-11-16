@@ -16,52 +16,27 @@
 //   harness-note lock --session <ID> | unlock [--session <ID>]
 //   harness-note targets | status | review | review done <変更ID> --decision keep|edit|remove|promote|apply|dismiss [--incident INC-..] [--path P]
 //
+//   harness-note report close            セッション開始時の知らせ（報告の 1 行など）を閉じる
+//
 // 読み出し系には --json を付けられる。方針で記録・追加しなかったときは、終了コード 0 で理由を返す。
+// セッション ID は --session で受け取る。hook が引き渡した環境変数（HARNESS_SESSION_ID）と食い違えば、受け付けない。
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  activeLock, dayOf, daysBetween, disabled, iso, isLocked, listFiles, makeContext, readStdin, safeId,
+  activeLock, dayOf, daysBetween, disabled, iso, isKnownSession, isLocked, listFiles, makeContext, readStdin, safeId, sessionLock,
 } from './lib/core.mjs'
+import { UsageError, parseArgs } from './lib/args.mjs'
 import { TEXT_MAX, addCandidate, loadCandidates, markCandidates, rekey, summarizeKeys, validKey } from './lib/candidates.mjs'
+import { INCIDENT_REF } from './lib/content.mjs'
 import {
   addRule, addSkill, editRule, listRules, listSkills, measureAlwaysLoaded, parseSkillMarkdown, readSkill, removeRule,
-  removeSkill, renderRule,
+  removeSkill, renderRule, ruleCapacity,
 } from './lib/trial.mjs'
 import {
-  DECISIONS, PROPOSAL_KINDS, ROOT_CAUSES, SIGNALS, acquireLock, addPending, autoGate, computeTargets, decisionStats, intervalState,
-  listPending, loadAuto, markPendingTrial, readPending, readReport, registerChange, rejectCause, releaseLock, removePending,
-  reviewDone, reviewItems, summaryLine, unreviewed, updateAuto, writeReport,
+  DECISIONS, PROPOSAL_KINDS, ROOT_CAUSES, SIGNALS, acquireLock, addPending, autoGate, blockedReasons, closeNotices, computeTargets,
+  decisionStats, intervalState, isAutoSession, listPending, loadAuto, markPendingTrial, readPending, readReport, registerChange,
+  registerDuringLock, rejectCause, releaseLock, removePending, reviewDone, reviewItems, summaryLine, unreviewed, updateAuto, writeReport,
 } from './lib/auto.mjs'
-
-class UsageError extends Error {}
-
-const BOOLEAN_FLAGS = new Set(['json', 'keep-cause', 'help'])
-
-function parseArgs(argv) {
-  const positional = []
-  const flags = {}
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]
-    if (arg.startsWith('--') && arg.length > 2) {
-      let name = arg.slice(2)
-      let value
-      const eq = name.indexOf('=')
-      if (eq >= 0) {
-        value = name.slice(eq + 1)
-        name = name.slice(0, eq)
-      } else if (BOOLEAN_FLAGS.has(name)) {
-        value = true
-      } else {
-        value = argv[++i]
-        if (value === undefined) throw new UsageError(`--${name} の値がありません`)
-      }
-      ;(flags[name] ??= []).push(value)
-    } else {
-      positional.push(arg)
-    }
-  }
-  return { positional, flags }
-}
 
 let stdinCache = null
 const stdin = () => (stdinCache ??= readStdin())
@@ -91,12 +66,22 @@ function makeReader(flags, allowed) {
   return { one, text, required, has: (name) => Boolean(flags[name]) }
 }
 
+// セッション ID を決める。--session → hook が引き渡した環境変数 → 直近のセッションからの推定、の順。
+// --session は自己申告なので、hook が引き渡した ID（HARNESS_SESSION_ID）と食い違うときは受け付けない。
+// （Bash のコマンドを見る側のガードも、hook の本物の session_id と照らしている。）
 function resolveSession(ctx, flags) {
-  const given = flags.session?.at(-1)
-  if (given && given !== true) return { id: safeId(given), source: 'flag' }
-  const env = process.env.HARNESS_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID
-  if (env) return { id: safeId(env), source: 'env' }
-  // 環境変数が渡らないときは、このリポジトリで直近に動いていたセッションと見なす。
+  const handed = process.env.HARNESS_SESSION_ID ? safeId(process.env.HARNESS_SESSION_ID) : null
+  const given = (flags.session ?? []).filter((v) => v !== true).map((v) => safeId(v))
+  if (new Set(given).size > 1) throw new UsageError('--session が複数あり、値が食い違っています')
+  if (given.length) {
+    if (handed && handed !== given[0]) {
+      throw new UsageError('--session が、このセッションの ID と食い違っています。ほかのセッションを名乗ることはできません')
+    }
+    return { id: given[0], source: 'flag' }
+  }
+  if (handed) return { id: handed, source: 'env' }
+  if (process.env.CLAUDE_CODE_SESSION_ID) return { id: safeId(process.env.CLAUDE_CODE_SESSION_ID), source: 'env' }
+  // 環境変数が渡らないときは、このリポジトリで直近に動いていたセッションと見なす（推定）。
   const cutoff = Date.now() - 12 * 60 * 60 * 1000
   let best = null
   for (const sid of listFiles(ctx.dirs.sessions)) {
@@ -114,14 +99,23 @@ function resolveSession(ctx, flags) {
   return { id: `unknown-${dayOf()}`, source: 'unknown' }
 }
 
+const estimated = (session) => session.source === 'recent' || session.source === 'unknown'
+
 // 書き込み系のコマンドが、どのセッションから呼ばれたかを決める。
-// 自動改善が実行中なのにセッションを確かめられないときは、受け付けない
-// （自動改善のセッションからの書き込みが、人の書き込みとして歯止めをすり抜けるのを防ぐ）。
+//   - ロックのファイルを読めないときは、受け付けない（拒否の側に倒す）
+//   - 自動改善が実行中なのにセッションを確かめられないときは、受け付けない
+//     （自動改善のセッションからの書き込みが、人の書き込みとして歯止めをすり抜けるのを防ぐ）
+//   - 別のリポジトリのロックを持っているセッション（自動改善の途中で別のリポジトリへ移った）からは、受け付けない
 function writerSession(ctx, flags) {
   const session = resolveSession(ctx, flags)
   const lock = activeLock(ctx)
-  if (lock && (session.source === 'recent' || session.source === 'unknown')) {
+  if (lock?.broken) throw new UsageError('ロックのファイル（lock.json）を読めません。2 時間たつか、人が確かめるまで、書き込みは受け付けません')
+  if (lock && estimated(session)) {
     throw new UsageError('自動改善が実行中です。どのセッションからの書き込みかを確かめるので、--session <セッションID> を付けて呼んでください')
+  }
+  const elsewhere = sessionLock(ctx.data, session.id)
+  if (elsewhere && elsewhere.repoId !== ctx.repo.id) {
+    throw new UsageError('このセッションは、別のリポジトリで自動改善を実行中です。このリポジトリには書き込めません')
   }
   return { session, lock, locked: Boolean(lock && lock.session_id === session.id) }
 }
@@ -155,7 +149,7 @@ function cmdAdd(ctx, flags) {
   if (isLocked(ctx, session.id)) {
     return refuse('自動改善のセッションなので、改善候補は記録しません。何もせず終了してよい。')
   }
-  if (activeLock(ctx) && (session.source === 'recent' || session.source === 'unknown')) {
+  if (activeLock(ctx) && estimated(session)) {
     return refuse('記録しません：自動改善が実行中で、どのセッションからの記録かを確かめられません。--session <セッションID> を付けてください。付けられなければ、何もせず終了してよい。')
   }
   const category = r.required('category')
@@ -165,6 +159,11 @@ function cmdAdd(ctx, flags) {
   const text = r.required('text')
   if (/[\r\n]/.test(text.trim())) throw new UsageError('--text は 1 行で書いてください')
   if (text.trim().length > TEXT_MAX) throw new UsageError(`--text は ${TEXT_MAX} 文字までです`)
+  // 件数は「異なるセッションの数」で数えるので、hook が記録しているセッションの ID だけを受け付ける
+  // （1 つのセッションが、ありもしない ID を名乗って件数を重ねるのを防ぐ。lock と同じ前提）。
+  if (!isKnownSession(ctx, session.id)) {
+    return refuse(`記録しません：セッション ${session.id} は、このプラグインの hook に記録されていません。ターン終了時の確認に書かれている --session の値を、そのまま使ってください。使えなければ、何もせず終了してよい。`)
+  }
   let episode = r.one('episode')
   const notes = []
   if (episode && !existsSync(join(ctx.dirs.episodes, `${safeId(episode)}.md`))) {
@@ -185,8 +184,8 @@ function cmdAdd(ctx, flags) {
       `同じ原因なら、次でまとめ直してください：harness-note rekey ${key} ${result.similar[0]}`,
     )
   }
-  if (session.source === 'recent' || session.source === 'unknown') {
-    lines.push('注意：セッション ID を受け取れなかったので、推定で記録しました。次からは --session を付けてください。')
+  if (estimated(session)) {
+    lines.push('注意：セッション ID を受け取れなかったので、直近のセッションと見なして記録しました。次からは --session を付けてください。')
   }
   out(lines.join('\n'))
   return 0
@@ -298,7 +297,7 @@ function cmdEpisodes(ctx, positional, flags) {
 
 // ---- 試用ルール ----
 
-const INCIDENT_ID = /^INC-\d{4}-\d{4}$/
+const INCIDENT_ID = INCIDENT_REF
 
 function cmdTrial(ctx, positional, flags) {
   const sub = positional[0]
@@ -311,7 +310,7 @@ function cmdTrial(ctx, positional, flags) {
     for (const rule of rules) out(`${rule.line}  ［${rule.cause_key}、${rule.by}、${rule.days} 日、編集 ${rule.edits} 回］`)
     return 0
   }
-  const { lock, locked } = writerSession(ctx, flags)
+  const { session, lock, locked } = writerSession(ctx, flags)
 
   if (sub === 'add' || sub === 'edit') {
     const r = makeReader(flags, ['key', 'text', 'ref'])
@@ -331,18 +330,21 @@ function cmdTrial(ctx, positional, flags) {
       if (listRules(ctx).length >= max) {
         return refuse(`見送り：試用ルールが上限（${max} 件）に達しています。先に /self-improve:review で昇格するか消してください。`)
       }
-      const measure = measureAlwaysLoaded(ctx)
-      if (measure.total + 1 > measure.limit) {
-        notes.push(`警告：常時ロードの行数が目安を超えます（${measure.total + 1} 行、目安 ${measure.limit} 行）。棚卸しを検討してください。`)
-      }
+      const capacity = ruleCapacity(ctx)
+      if (!capacity.ok) notes.push(`警告：${capacity.reason}。人が入れる分は止めませんが、昇格して paths を付けるか、棚卸しを検討してください。`)
     }
     const result = sub === 'add'
       ? addRule(ctx, { key, text, ref: ref ?? null, by })
       : editRule(ctx, { key, text, ref: ref ?? undefined, by })
     if (!result.ok) return fail(result.errors)
+    const kind = sub === 'add' ? 'trial_add' : 'trial_edit'
     if (locked) {
-      registerChange(ctx, lock, { kind: sub === 'add' ? 'trial_add' : 'trial_edit', key, ref: key })
+      registerChange(ctx, lock, { kind, key, ref: key })
       if (sub === 'add') markPendingTrial(ctx, key, `trial:rules/${key}`)
+    } else if (lock && text !== null) {
+      // 自動改善の実行中に、ロックしたセッション以外から入った試用。名乗りにかかわらず、人の確認に回す。
+      registerDuringLock(ctx, { kind, key, ref: key, session: session.id })
+      notes.push('自動改善の実行中に入った変更なので、未確認の自動変更として登録しました（/self-improve:review に出ます）。')
     }
     out([`試用ルールを${sub === 'add' ? '追加' : '更新'}しました：${renderRule(result.rule)}`, '次のセッション開始時から読み込まれます。', ...notes].join('\n'))
     return 0
@@ -489,7 +491,7 @@ function cmdPending(ctx, positional, flags) {
 
   let category = r.one('category')
   if (locked) {
-    const gate = autoGate(ctx, lock, 'pending add', key)
+    const gate = autoGate(ctx, lock, 'pending add', key, { proposal: Boolean(proposalKind), rootCause })
     if (!gate.ok) return refuse(`見送り：${gate.reason}`)
     category ??= gate.target.category
   }
@@ -501,7 +503,7 @@ function cmdPending(ctx, positional, flags) {
     key, category, signal, rootCause, severity, area,
     asked: r.required('asked', r.text), expected: r.required('expected', r.text), actual: r.required('actual', r.text),
     evidence: r.text('evidence') ?? '', proposalKind, proposal: r.text('proposal'), by: locked ? 'auto' : 'human',
-  })
+  }, locked ? lock : null)
   const lines = [`失敗票の下書きを書きました：${key}（材料にした候補 ${result.consumed.length} 件を consumed にしました）`]
   if (result.related.length) lines.push(`同じ原因の失敗票：${result.related.join('、')}`)
   if (result.recurrence) lines.push(`試用中の原因の再発として数えました（${result.recurrence} 回目）。`)
@@ -532,7 +534,15 @@ function cmdReport(ctx, positional, flags) {
     out(text)
     return 0
   }
-  if (sub !== 'write') throw new UsageError('使い方：harness-note report write|list|show')
+  if (sub === 'close') {
+    makeReader(flags, [])
+    // 自動改善のセッションは、人に向けた知らせを閉じない。
+    if (isLocked(ctx, resolveSession(ctx, flags).id)) return refuse(HUMAN_ONLY)
+    const closed = closeNotices(ctx)
+    out(closed ? `セッション開始時の知らせを ${closed} 件閉じました。未確認の自動変更が残っているあいだは、件数の 1 行だけ出ます。` : '閉じる知らせはありません。')
+    return 0
+  }
+  if (sub !== 'write') throw new UsageError('使い方：harness-note report write|list|show|close')
   const r = makeReader(flags, ['body'])
   const session = resolveSession(ctx, flags)
   const lock = activeLock(ctx)
@@ -558,22 +568,31 @@ function gateSummary(ctx) {
     max_trial_rules: ctx.config.auto.max_trial_rules,
     trial_skills: listSkills(ctx).length,
     max_trial_skills: ctx.config.auto.max_trial_skills,
-    always_loaded_lines: measure.total,
-    always_loaded_limit: measure.limit,
+    rule_lines: measure.rule_lines,
+    rule_limit: measure.rule_limit,
+    claude_md_lines: measure.claude_md,
+    claude_md_limit: measure.claude_md_limit,
+    blocked: blockedReasons(ctx, state),
   }
 }
 
 function describeTarget(t, i) {
-  const what = t.mode === 'recurrence'
-    ? `試用中の原因の再発（${t.recurrence_no} 回目）。${t.allowed.length ? '文言の編集（trial edit）ができます' : '編集しません。ガードや検証コマンドへ移す案（pending add --proposal-kind）だけ'}`
-    : '新規。trial add か skill add のどちらか 1 つ'
+  let what
+  if (t.mode === 'recurrence') {
+    what = `試用中の原因の再発（${t.recurrence_no} 回目）。${t.allowed.length ? '文言の編集（trial edit）ができます' : '編集しません。ガードや検証コマンドへ移す案（pending add --proposal-kind）だけ'}`
+  } else if (t.blocked) {
+    what = `新規。ただし、いまは追加できません（${t.blocked}）。下書きは作らず、理由を報告に書いてください`
+  } else {
+    const off = [t.limits?.rule, t.limits?.skill].filter(Boolean)
+    what = `新規。${t.allowed.join(' か ')}${t.allowed.length > 1 ? ' のどちらか 1 つ' : ' だけ'}${off.length ? `（${off.join('。')}）` : ''}`
+  }
   return `${i + 1}. ${t.key}（${t.category}、${t.sessions} セッション）— ${what}`
 }
 
 function cmdLock(ctx, flags) {
   makeReader(flags, [])
   const session = resolveSession(ctx, flags)
-  if (session.source === 'recent' || session.source === 'unknown') {
+  if (estimated(session)) {
     return fail('セッション ID が分かりません。harness-note lock --session <セッションID> の形で呼んでください')
   }
   const result = acquireLock(ctx, session.id)
@@ -586,18 +605,21 @@ function cmdLock(ctx, flags) {
     `対象（${ctx.config.auto.max_per_run} 件まで。件数の多い順にスクリプトが選びました。これ以外は扱いません）：`,
     ...(result.lock.targets.length ? result.lock.targets.map(describeTarget) : ['  なし（追加・編集はせず、報告だけ書いて終了してください）']),
     `未確認の自動変更：${g.unreviewed} 件（上限 ${g.max_unreviewed} 件）${full ? ' → 上限に達しています。追加も編集もせず、報告だけにしてください' : ''}`,
-    `試用ルール ${g.trial_rules}/${g.max_trial_rules} 件、試用Skill ${g.trial_skills}/${g.max_trial_skills} 件、常時ロード ${g.always_loaded_lines}/${g.always_loaded_limit} 行`,
-    'このセッションでは、ファイルへの書き込みはすべて拒否されます。書き込みは harness-note だけを使い、最後に report write と unlock を実行してください。',
+    `試用ルール ${g.trial_rules}/${g.max_trial_rules} 件、試用Skill ${g.trial_skills}/${g.max_trial_skills} 件、常時ロードのルール ${g.rule_lines}/${g.rule_limit} 行`,
+    'このセッションでは、Read・Grep・Glob・Skill と harness-note 以外のツールは拒否されます。harness-note には、毎回 --session を付けてください。最後に report write、そのあとに unlock を実行します。',
   ].join('\n'))
   return 0
 }
 
 function cmdUnlock(ctx, flags) {
   makeReader(flags, [])
-  const given = flags.session?.at(-1)
-  const result = releaseLock(ctx, given && given !== true ? given : resolveSession(ctx, flags).id)
-  if (flags.json) return json(result), 0
-  if (result.released) out('自動改善のロックを解除しました。')
+  const session = resolveSession(ctx, flags)
+  // 推定の ID では外さない（別のセッションが、自動改善のロックを外してしまうのを防ぐ）。
+  if (estimated(session)) return fail('セッション ID が分かりません。harness-note unlock --session <セッションID> の形で呼んでください')
+  const result = releaseLock(ctx, session.id)
+  if (flags.json) return json({ released: result.released, reason: result.reason ?? null }), 0
+  if (result.released) out('自動改善のロックを解除しました。このセッションでは、このあとも書き込みに確認が挟まります（自動改善を呼び出したセッションのため）。作業を続けるなら、新しいセッションで行ってください。')
+  else if (result.reason === 'no_report') return refuse('見送り：先に harness-note report write で実行の記録を書いてください。ロックを外せるのは、そのあとです。')
   else out(result.reason === 'other' ? '別のセッションのロックなので、解除しません。' : 'ロックはありません。')
   return 0
 }
@@ -624,7 +646,9 @@ function cmdStatus(ctx, flags) {
     session,
     disabled: disabled(),
     config_error: ctx.config.error,
-    lock: lock ? { session_id: lock.session_id, at: lock.at, mine: lock.session_id === session.id } : null,
+    // ロックの ID は全文では出さない（ほかのセッションが名乗れないように）。
+    lock: lock ? { session: lock.broken ? null : short(lock.session_id), at: lock.at, mine: lock.session_id === session.id, broken: Boolean(lock.broken) } : null,
+    auto_session: isAutoSession(ctx, session.id),
     interval: intervalState(ctx, state),
     gates: gateSummary(ctx),
     candidates: { new: loadCandidates(ctx).filter((c) => c.status === 'new').length },
@@ -636,9 +660,10 @@ function cmdStatus(ctx, flags) {
     `リポジトリ：${value.repo.name}（${value.repo.id}）`,
     `データの置き場所：${value.data_dir}（${{ env: '環境変数', handoff: 'セッション開始時の引き渡し', default: '既定のパスの計算' }[value.data_dir_source]}）`,
     `セッション：${session.id}（${{ flag: '--session', env: '環境変数', recent: '直近のセッションから推定', unknown: '不明' }[session.source]}）`,
-    `ロック：${lock ? `${short(lock.session_id)} が ${lock.at} から${value.lock.mine ? '（このセッション）' : ''}` : 'なし'}`,
-    `自動改善：${value.interval.enabled ? `間隔 ${ctx.config.auto.interval_days} 日、前回 ${value.interval.last_run_at ?? 'なし'}` : '停止中（interval_days が 0）'}`,
-    `未確認の自動変更 ${value.gates.unreviewed}/${value.gates.max_unreviewed} 件、試用ルール ${value.gates.trial_rules}/${value.gates.max_trial_rules} 件、試用Skill ${value.gates.trial_skills}/${value.gates.max_trial_skills} 件、常時ロード ${value.gates.always_loaded_lines}/${value.gates.always_loaded_limit} 行`,
+    `ロック：${lock ? (lock.broken ? 'ファイルを読めません（書き込みは拒否されます）' : `${short(lock.session_id)}… が ${lock.at} から${value.lock.mine ? '（このセッション）' : ''}`) : 'なし'}`,
+    `自動改善：${value.interval.enabled ? `間隔 ${ctx.config.auto.interval_days} 日、前回 ${value.interval.last_run_at ?? 'なし'}${value.interval.next_run_from ? `、次に実行できるのは ${value.interval.next_run_from} 以降` : ''}` : '停止中（interval_days が 0）'}`,
+    `未確認の自動変更 ${value.gates.unreviewed}/${value.gates.max_unreviewed} 件、試用ルール ${value.gates.trial_rules}/${value.gates.max_trial_rules} 件、試用Skill ${value.gates.trial_skills}/${value.gates.max_trial_skills} 件、常時ロードのルール ${value.gates.rule_lines}/${value.gates.rule_limit} 行、CLAUDE.md ${value.gates.claude_md_lines}/${value.gates.claude_md_limit} 行`,
+    ...(value.gates.blocked.length && value.interval.enabled ? [`自動改善は、いま試用を追加しません：${value.gates.blocked.join('。')}`] : []),
     `new の改善候補 ${value.candidates.new} 件、対象になる原因キー：${value.targets.join('、') || 'なし'}`,
     `自動改善の採否：残した ${value.decisions.kept} 件、消した ${value.decisions.removed} 件`,
     ...(ctx.config.error ? [`警告：harness/config.json を読めません（${ctx.config.error}）。初期値で動いています`] : []),
@@ -649,7 +674,11 @@ function cmdStatus(ctx, flags) {
 function cmdReview(ctx, positional, flags) {
   if (positional[0] !== 'done') {
     makeReader(flags, [])
-    return json(reviewItems(ctx)), 0
+    const items = reviewItems(ctx)
+    // 確認を開いたので、セッション開始時の知らせを閉じる（自動改善のセッションが開いたときは閉じない）。
+    const session = resolveSession(ctx, flags)
+    if (!isLocked(ctx, session.id) && !isAutoSession(ctx, session.id)) closeNotices(ctx)
+    return json(items), 0
   }
   const r = makeReader(flags, ['decision', 'incident', 'path'])
   const id = positional[1]

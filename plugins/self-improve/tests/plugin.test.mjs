@@ -48,7 +48,8 @@ test('hooks.json: 設計書の割り当てどおりのイベントに、実在�
   }
   // 同じイベントの hook は並列に走るので、Stop は 1 つのスクリプトにまとめる
   assert.equal(hooks.Stop[0].hooks.length, 1)
-  assert.equal(hooks.PreToolUse[0].matcher, 'Write|Edit|MultiEdit|NotebookEdit|Bash')
+  // ガードは全ツールを見る（自動改善のセッションでは、通すツールの一覧で判定するため）。記録は、変更しうるツールだけ
+  assert.equal(hooks.PreToolUse[0].matcher, undefined)
   assert.equal(hooks.PostToolUse[0].matcher, 'Write|Edit|MultiEdit|NotebookEdit|Bash')
   // SessionStart は種類を絞らない（startup / resume / clear / compact のすべてで試用ルールを読み込む）
   assert.equal(hooks.SessionStart[0].matcher, undefined)
@@ -63,10 +64,10 @@ test('bin/harness-note: 実行でき、設計書 9 章のサブコマンドを�
   const help = spawnSync(NOTE, ['--help'], { encoding: 'utf8', env: t.env, cwd: t.repo })
   assert.equal(help.status, 0, help.stderr)
   const run = (args) => spawnSync(NOTE, args, { encoding: 'utf8', env: t.env, cwd: t.repo })
-  for (const args of [['keys'], ['list'], ['trial', 'list'], ['skill', 'list'], ['pending', 'list'], ['report', 'list'], ['targets'], ['status'], ['review'], ['episodes', 'some-key'], ['unlock']]) {
+  for (const args of [['keys'], ['list'], ['trial', 'list'], ['skill', 'list'], ['pending', 'list'], ['report', 'list'], ['targets'], ['status'], ['review'], ['episodes', 'some-key'], ['report', 'close']]) {
     assert.equal(run(args).status, 0, args.join(' '))
   }
-  for (const args of [['add'], ['trial', 'add'], ['trial', 'edit'], ['trial', 'remove'], ['skill', 'add'], ['skill', 'remove'], ['pending', 'add'], ['lock'], ['nope'], ['trial', 'nope']]) {
+  for (const args of [['add'], ['trial', 'add'], ['trial', 'edit'], ['trial', 'remove'], ['skill', 'add'], ['skill', 'remove'], ['pending', 'add'], ['lock'], ['unlock'], ['nope'], ['trial', 'nope']]) {
     const result = run(args)
     assert.equal(result.status, 1, args.join(' '))
     assert.match(result.stderr, /^harness-note: /)
@@ -89,6 +90,12 @@ test('skills: init・retro・auto-improve・review がある（harness-prune は
   const auto = read('skills/auto-improve/SKILL.md')
   assert.match(auto, /harness-note lock --session \$\{CLAUDE_SESSION_ID\}/)
   assert.match(auto, /harness-note unlock --session \$\{CLAUDE_SESSION_ID\}/)
+  // lock 中に通る Bash は「--session がちょうど 1 つ付いた harness-note」だけなので、スキルの中の呼び出しには、すべて付ける
+  const calls = [...auto.matchAll(/^\s*harness-note [^\n]*$/gm)].map((m) => m[0].trim())
+  assert.ok(calls.length >= 8)
+  for (const call of calls) assert.match(call, /--session \$\{CLAUDE_SESSION_ID\}/, call)
+  // 記録（report write）は、unlock より前
+  assert.ok(auto.indexOf('harness-note report write') < auto.indexOf('harness-note unlock'))
   assert.equal(parseFrontmatter(auto).data['allowed-tools'], 'Bash(harness-note *)')
 })
 

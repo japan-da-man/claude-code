@@ -35,7 +35,9 @@ export function ruleFiles(root) {
   return out
 }
 
-// CLAUDE.md、paths なしのルール、試用ルールの合計。試用ルールは毎回読み込まれるので、常時ロードとして数える。
+// 常時ロードの行数。試用ルールは毎回読み込まれるので、常時ロードとして数える。
+// 自動改善が追加をやめるかどうかは、rule_lines（paths なしのルール＋試用ルール）と rule_limit で決める。
+// CLAUDE.md の行数は、警告にだけ使う。
 export function measureAlwaysLoaded(ctx) {
   const budget = ctx.config.budget
   const claudeMd = [join(ctx.repo.root, 'CLAUDE.md'), join(ctx.repo.root, '.claude', 'CLAUDE.md')]
@@ -45,12 +47,32 @@ export function measureAlwaysLoaded(ctx) {
   const trial = listRules(ctx).length
   return {
     claude_md: claudeMd,
+    claude_md_limit: budget.claude_md_lines,
     unscoped_rules: unscoped,
     trial_rules: trial,
+    rule_lines: unscoped + trial,
+    rule_limit: budget.always_loaded_rule_lines,
     total: claudeMd + unscoped + trial,
-    limit: budget.claude_md_lines + budget.always_loaded_rule_lines,
     scoped: rules.filter((r) => r.scoped).map((r) => ({ file: r.file, lines: r.lines })),
   }
+}
+
+// 試用ルールをもう 1 件足せるか。足せないときは理由を返す。
+export function ruleCapacity(ctx) {
+  const count = listRules(ctx).length
+  const max = ctx.config.auto.max_trial_rules
+  if (count >= max) return { ok: false, reason: `試用ルールが上限（${max} 件）に達しています` }
+  const m = measureAlwaysLoaded(ctx)
+  if (m.rule_lines + 1 > m.rule_limit) {
+    return { ok: false, reason: `常時ロードのルールが行数の目安を超えます（paths なしのルール ${m.unscoped_rules} 行＋試用ルール ${m.trial_rules} 行、目安 ${m.rule_limit} 行）` }
+  }
+  return { ok: true, reason: null }
+}
+
+export function skillCapacity(ctx) {
+  const max = ctx.config.auto.max_trial_skills
+  if (listSkills(ctx).length >= max) return { ok: false, reason: `試用 Skill が上限（${max} 件）に達しています` }
+  return { ok: true, reason: null }
 }
 
 // ---- 試用ルール ----

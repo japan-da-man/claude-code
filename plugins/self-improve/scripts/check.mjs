@@ -4,7 +4,7 @@
 //   1. 失敗票 ID の付いたルール行が指す失敗票が実在するか
 //   2. 失敗票の status と control が食い違っていないか
 //   3. 常時ロードの行数（CLAUDE.md、paths なしのルール、試用ルール）が目安を超えていないか
-// あわせて、設定とガードの定義が読めるかも見る。
+// あわせて、設定とガードの定義が読めるかも見る（読めない harness/guards.json は、黙って無効にしない）。
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isMain, lineCount, makeContext } from './lib/core.mjs'
@@ -30,7 +30,10 @@ export function runCheck(ctx) {
   const root = ctx.repo.root
 
   if (ctx.config.error) warn('config', `harness/config.json を読めません（${ctx.config.error}）。初期値で動いています`, 'harness/config.json')
-  for (const error of loadGuards(root).errors) warn('guards', error, 'harness/guards.json')
+  // 読めない harness/guards.json は、ほかの警告と分けて出す（このリポジトリのガードが、まるごと効かなくなるため）。
+  for (const error of loadGuards(root).errors) {
+    warn(error.startsWith('harness/guards.json を読めません') ? 'guards_unreadable' : 'guards', error, 'harness/guards.json')
+  }
 
   // 1. ルール行の失敗票 ID
   const incidents = incidentFiles(root)
@@ -83,9 +86,8 @@ export function runCheck(ctx) {
   if (measure.claude_md > budget.claude_md_lines) {
     warn('budget', `CLAUDE.md が ${measure.claude_md} 行です（目安 ${budget.claude_md_lines} 行）。詳細は paths 付きのルールか Skill へ移してください`, 'CLAUDE.md')
   }
-  const always = measure.unscoped_rules + measure.trial_rules
-  if (always > budget.always_loaded_rule_lines) {
-    warn('budget', `常時ロードのルールが ${always} 行です（paths なしのルール ${measure.unscoped_rules} 行＋試用ルール ${measure.trial_rules} 行、目安 ${budget.always_loaded_rule_lines} 行）。昇格して paths を付けるか、棚卸しをしてください`)
+  if (measure.rule_lines > budget.always_loaded_rule_lines) {
+    warn('budget', `常時ロードのルールが ${measure.rule_lines} 行です（paths なしのルール ${measure.unscoped_rules} 行＋試用ルール ${measure.trial_rules} 行、目安 ${budget.always_loaded_rule_lines} 行）。昇格して paths を付けるか、棚卸しをしてください`)
   }
   for (const file of measure.scoped) {
     if (file.lines > budget.scoped_rule_file_lines) {
@@ -107,7 +109,7 @@ if (isMain(import.meta.url)) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
     } else {
       const m = result.measure
-      process.stdout.write(`常時ロード：CLAUDE.md ${m.claude_md} 行＋paths なしのルール ${m.unscoped_rules} 行＋試用ルール ${m.trial_rules} 行＝${m.total} 行（目安の合計 ${m.limit} 行）。失敗票 ${result.incidents} 件。\n`)
+      process.stdout.write(`常時ロード：CLAUDE.md ${m.claude_md} 行（目安 ${m.claude_md_limit} 行）、ルール ${m.rule_lines} 行（paths なしのルール ${m.unscoped_rules} 行＋試用ルール ${m.trial_rules} 行、目安 ${m.rule_limit} 行）。失敗票 ${result.incidents} 件。\n`)
       if (!result.warnings.length) process.stdout.write('警告はありません。\n')
       for (const w of result.warnings) process.stdout.write(`警告［${w.rule}］${w.message}\n`)
     }

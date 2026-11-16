@@ -35,7 +35,8 @@ export function makeEnv({ config = {}, files = {}, initialized = true, name = 'd
   writeFiles(repo, files)
   // 親プロセスの CLAUDE_* や HARNESS_* は引き継がない（テストの外の状態に左右されないように）。
   // 日付の表示は現地時刻なので、テストでは UTC に固定する。
-  const env = { PATH: process.env.PATH, HOME: home, TZ: 'UTC', HARNESS_DATA_DIR: data, HARNESS_CLAUDE_HOME: claudeHome }
+  // HARNESS_TEST=1 のときだけ、HARNESS_NOW で時刻を固定できる。
+  const env = { PATH: process.env.PATH, HOME: home, TZ: 'UTC', HARNESS_TEST: '1', HARNESS_DATA_DIR: data, HARNESS_CLAUDE_HOME: claudeHome }
   return { base, repo, data, home, claudeHome, env, name }
 }
 
@@ -61,8 +62,8 @@ export function knownSession(t, id) {
 }
 
 export function note(t, args, { env = {}, now = null, input = undefined, cwd = t.repo, known = true } = {}) {
-  // lock は、hook が記録したセッションでしか始まらない。テストでは、既定でその状態を作っておく。
-  if (args[0] === 'lock' && known) {
+  // lock と add は、hook が記録したセッションの ID しか受け付けない。テストでは、既定でその状態を作っておく。
+  if ((args[0] === 'lock' || args[0] === 'add') && known) {
     const id = args.includes('--session') ? args[args.indexOf('--session') + 1] : env.HARNESS_SESSION_ID
     if (id) knownSession(t, id)
   }
@@ -139,3 +140,45 @@ export function session(t, id = 'sess-1') {
       runHook('on-stop.mjs', { ...base, hook_event_name: 'Stop', prompt_id: promptId, stop_hook_active: false, last_assistant_message: lastMessage, ...extra }, t, opts),
   }
 }
+
+// 自動改善の実行を終える：実行の記録を書いてから、ロックを外す（unlock は、記録を書いたあとだけ受け付ける）。
+export function finishAuto(t, { session = 'auto-1', now = at(65), body = '検討の記録' } = {}) {
+  const written = note(t, ['report', 'write', '--session', session, '--body', body], { now })
+  if (!written.stdout.includes('実行の記録を書きました')) throw new Error(`report write failed: ${written.stdout}${written.stderr}`)
+  const unlocked = note(t, ['unlock', '--session', session], { now })
+  if (!unlocked.stdout.includes('解除しました')) throw new Error(`unlock failed: ${unlocked.stdout}${unlocked.stderr}`)
+  return written
+}
+
+// PreToolUse の入力をガードに流し、deny / ask / allow のどれになったかを返す。
+export function guardRun(t, sessionId, tool, input, opts = {}, extra = {}) {
+  return runHook('guard-harness.mjs', { session_id: sessionId, prompt_id: 'p1', hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, ...extra }, t, opts)
+}
+export const decisionOf = (run) => (run.status === 2 ? 'deny' : run.json?.hookSpecificOutput?.permissionDecision ?? (run.status === 0 ? 'allow' : 'error'))
+
+// レビューで見つかった、「読むだけ」に見えてファイルに書けるコマンド（touch out.txt の形にそろえてある）。
+export const SNEAKY_WRITES = [
+  ['uniq の第 2 引数は出力先', 'echo x | uniq - out.txt'],
+  ['sed の w コマンド', "sed -n 'w out.txt' f"],
+  ['sed の e コマンド（GNU）', "sed '1e touch out.txt' f"],
+  ['git diff --output', 'git diff --output=out.txt'],
+  ['git log --output', 'git log -1 --output=out.txt'],
+  ['git -c で設定を差し替える', "git -c core.fsmonitor='touch out.txt;false' status"],
+  ['環境変数の前置き', "GIT_EXTERNAL_DIFF='touch out.txt;:' git diff HEAD~1 HEAD"],
+  ['${x@P} の展開', "x='$(touch out.txt)'; echo ${x@P}"],
+  ['test -v の添字', "test -v 'a[$(touch out.txt)]'"],
+  ['printf -v の添字', "printf -v 'a[$(touch out.txt)]' x"],
+  ['区切りが単純でないヒアドキュメント', 'cat <<E-O-F\nx\nE-O-F\ntouch out.txt'],
+  ['引用の中の <<EOF', 'echo "<<EOF"\ntouch out.txt'],
+  ["$'…' の中の \\'", "echo $'\\'' ; touch out.txt ; echo $'\\''"],
+  ['git remote -v add', 'git remote -v add evil /tmp/x'],
+  ['終わりの見つからないヒアドキュメント', 'cat <<EOF\nx\ntouch out.txt'],
+  ['閉じていない引用', 'echo "x\ntouch out.txt'],
+  ['区切りを引用していないヒアドキュメントの本文の展開', 'cat <<EOF\n$(touch out.txt)\nEOF'],
+  ['rg --pre', 'rg --pre ./x.sh pattern'],
+  ['sort の圧縮プログラム', 'sort --compress-program=./x.sh big.txt'],
+  ['tree -o', 'tree -o out.txt'],
+  ['find -fprint', 'find . -fprint out.txt'],
+  ['less', 'less README.md'],
+]
+

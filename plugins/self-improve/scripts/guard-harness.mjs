@@ -1,7 +1,8 @@
-// PreToolUse（Write・Edit・NotebookEdit・Bash）のガード。
+// PreToolUse のガード。matcher は付けず、すべてのツールを見る。
 //   禁止操作            → 終了コード 2 で拒否する（理由と直し方を標準エラーに書く。終了コード 1 はブロックにならない）
 //   ハーネスのファイル  → permissionDecision: "ask" を返し、必ず確認を出す
-//   自動改善のセッション → 書き込みをすべて拒否する（確認は出さない）
+//   自動改善のセッション → Read・Grep・Glob・Skill と harness-note 以外のツールを、すべて拒否する（確認は出さない）
+// 関係のないツール（ふだんのセッションの Read など）は、ロックを確かめたらすぐに抜ける。
 // 拒否は、自分で生ログに記録する。HARNESS_GUARD_DRYRUN=1 のとき（test-guards.mjs）は記録しない。
 import { heartbeat, hookContext, isLocked, isMain, logEvent, readHookInput } from './lib/core.mjs'
 import { evaluate } from './lib/guard.mjs'

@@ -1,43 +1,30 @@
 // Bash のコマンド文字列の、粗い読み取り。
 // 目的は 3 つ：禁止パターンの照合、「読むだけ」のコマンドの判定、書き込み先のパスの拾い出し。
-// シェルを完全には再現しない。見分けられないもの（コマンド置換など）は、厳しい側に倒す。
+// シェルを完全には再現しない。読み取りに自信のない書き方（uncertain）と、コマンド置換（subst）は印を付け、
+// 呼び出し側が厳しい側に倒す。
 import { basename } from 'node:path'
 import { NOTE_BIN } from './core.mjs'
 
-// ヒアドキュメントの本文を取り除く。区切りが引用されていない本文にコマンド置換があれば unsafe。
-export function stripHeredocs(command) {
-  const lines = String(command ?? '').split('\n')
-  const out = []
-  let unsafe = false
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    out.push(line)
-    const re = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g
-    let match
-    while ((match = re.exec(line))) {
-      if (line[match.index - 1] === '<') continue // <<< はヒアストリング
-      const quoted = match[1] !== ''
-      i++
-      while (i < lines.length && lines[i].trim() !== match[2]) {
-        if (!quoted && /\$\(|`/.test(lines[i])) unsafe = true
-        i++
-      }
-    }
-  }
-  return { text: out.join('\n'), unsafe }
-}
-
 const newSegment = () => ({ words: [], redirects: [] })
+const SIMPLE_DELIMITER = /^[A-Za-z0-9_]+$/
+const SIMPLE_PARAMETER = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/
 
 // コマンドを、区切り（; && || | & 改行 括弧）ごとのセグメントに分ける。
 // 各セグメントは words（引用を外した語）と redirects（op と target）を持つ。
+// 返す印：
+//   subst      コマンド置換（$( ) とバッククォート）がある
+//   uncertain  bash と読み方がずれうる書き方がある。$'…'、${…@…} のような単純でない展開、
+//              区切りが単純でないヒアドキュメント、終わりの見つからないヒアドキュメントや引用、
+//              区切りを引用していないヒアドキュメントの本文の展開
 export function parseBash(command, depth = 0) {
-  const { text, unsafe } = stripHeredocs(command)
+  const text = String(command ?? '')
   const segments = []
   let subst = false
+  let uncertain = false
   let segment = newSegment()
   let word = null
   let pendingRedirect = null
+  const heredocs = []
 
   const endWord = () => {
     if (!word) return
@@ -56,9 +43,68 @@ export function parseBash(command, depth = 0) {
     segment = newSegment()
   }
   const add = (ch, quoted = false) => {
-    if (!word) word = { text: '', quoted: false }
+    if (!word) word = { text: '', quoted: false, expands: false }
     word.text += ch
     if (quoted) word.quoted = true
+  }
+  // $ で始まる展開。単純な $NAME と ${NAME} 以外は、読み方に自信がないものとして扱う。
+  const expansion = (at) => {
+    const next = text[at + 1]
+    if (next === '(') subst = true
+    else if (next === '{' && !SIMPLE_PARAMETER.test(text.slice(at, at + 80))) uncertain = true
+    if (word) word.expands = true
+  }
+
+  // ヒアドキュメントの区切りの語を読む。start は <<（または <<-）の直後。
+  const readDelimiter = (start) => {
+    let at = start
+    while (text[at] === ' ' || text[at] === '\t') at++
+    let tag = ''
+    let quoted = false
+    for (; at < text.length; at++) {
+      const ch = text[at]
+      if (ch === "'" || ch === '"') {
+        const end = text.indexOf(ch, at + 1)
+        if (end < 0) {
+          uncertain = true
+          return { tag, quoted: true, next: text.length }
+        }
+        tag += text.slice(at + 1, end)
+        quoted = true
+        at = end
+      } else if (ch === '\\' && text[at + 1] !== undefined) {
+        tag += text[at + 1]
+        quoted = true
+        at++
+      } else if (/[\s;&|<>()]/.test(ch)) {
+        break
+      } else {
+        tag += ch
+      }
+    }
+    if (!SIMPLE_DELIMITER.test(tag)) uncertain = true
+    return { tag, quoted, next: at }
+  }
+  // 行の終わりで、たまっているヒアドキュメントの本文を読み飛ばす。start は改行の次の位置。
+  const skipHeredocs = (start) => {
+    let at = start
+    for (const doc of heredocs.splice(0)) {
+      let found = false
+      while (at <= text.length) {
+        let end = text.indexOf('\n', at)
+        if (end < 0) end = text.length
+        const line = text.slice(at, end)
+        at = end + 1
+        if ((doc.stripTabs ? line.replace(/^\t+/, '') : line) === doc.tag) {
+          found = true
+          break
+        }
+        if (!doc.quoted && /[$`]/.test(line)) uncertain = true
+        if (end === text.length) break
+      }
+      if (!found) uncertain = true
+    }
+    return at
   }
 
   let state = 'normal'
@@ -76,8 +122,13 @@ export function parseBash(command, depth = 0) {
         add(next, true)
         i++
       } else {
-        if (ch === '`' || (ch === '$' && next === '(')) subst = true
         add(ch, true)
+        if (ch === '`') {
+          subst = true
+          word.expands = true
+        } else if (ch === '$') {
+          expansion(i)
+        }
       }
       continue
     }
@@ -87,6 +138,19 @@ export function parseBash(command, depth = 0) {
     } else if (ch === '"') {
       state = 'double'
       add('', true)
+    } else if (ch === '$' && next === "'") {
+      // $'…' は \' を含められる。中身を取り違えないよう、ここで終わりまで読む。
+      uncertain = true
+      add('', true)
+      let j = i + 2
+      for (; j < text.length && text[j] !== "'"; j++) {
+        if (text[j] === '\\' && j + 1 < text.length) j++
+        add(text[j], true)
+      }
+      if (j >= text.length) uncertain = true
+      i = j
+    } else if (ch === '$' && next === '"') {
+      // $"…" は、二重引用と同じに読む（$ を読み飛ばすだけ）。
     } else if (ch === '\\') {
       if (next === '\n') i++
       else if (next !== undefined) {
@@ -105,7 +169,13 @@ export function parseBash(command, depth = 0) {
       subst = true
       endSegment()
       i++
-    } else if (ch === '\n' || ch === ';' || ch === '(' || ch === ')') {
+    } else if (ch === '$') {
+      add(ch)
+      expansion(i)
+    } else if (ch === '\n') {
+      endSegment()
+      if (heredocs.length) i = skipHeredocs(i + 1) - 1
+    } else if (ch === ';' || ch === '(' || ch === ')') {
       endSegment()
     } else if (ch === '|') {
       endSegment()
@@ -119,17 +189,24 @@ export function parseBash(command, depth = 0) {
         endSegment()
         if (next === '&') i++
       }
+    } else if (ch === '<' && next === '<' && text[i + 2] !== '<') {
+      // ヒアドキュメント。区切りの語を読み、本文は行の終わりで読み飛ばす。
+      if (word && /^\d+$/.test(word.text) && !word.quoted) word = null
+      else endWord()
+      const stripTabs = text[i + 2] === '-'
+      const doc = readDelimiter(i + (stripTabs ? 3 : 2))
+      heredocs.push({ tag: doc.tag, quoted: doc.quoted, stripTabs })
+      i = doc.next - 1
     } else if (ch === '>' || ch === '<') {
       if (word && /^\d+$/.test(word.text) && !word.quoted) word = null
       else endWord()
       let op = ch
-      if (next === ch) {
+      if (ch === '<' && next === '<') {
+        op = '<<<'
+        i += 2
+      } else if (next === ch) {
         op += next
         i++
-        if (ch === '<' && text[i + 1] === '<') {
-          op += '<'
-          i++
-        }
       } else if (ch === '>' && (next === '&' || next === '|')) {
         op += next
         i++
@@ -142,10 +219,12 @@ export function parseBash(command, depth = 0) {
       add(ch)
     }
   }
+  if (state !== 'normal') uncertain = true
   endSegment()
+  // 本文の始まる改行がないまま終わったヒアドキュメント。
+  if (heredocs.length) uncertain = true
 
   // bash -c '...' と eval '...' の中身も調べる。
-  let heredocUnsafe = unsafe
   if (depth < 3) {
     for (const seg of [...segments]) {
       const { name, args } = commandOf(seg)
@@ -161,11 +240,11 @@ export function parseBash(command, depth = 0) {
         const parsed = parseBash(inner, depth + 1)
         segments.push(...parsed.segments)
         subst = subst || parsed.subst
-        heredocUnsafe = heredocUnsafe || parsed.heredocUnsafe
+        uncertain = uncertain || parsed.uncertain
       }
     }
   }
-  return { segments, subst, heredocUnsafe }
+  return { segments, subst, uncertain }
 }
 
 export function commandOf(segment) {
@@ -189,15 +268,17 @@ export function writeRedirects(segment) {
   })
 }
 
+// 「変更あり」に数えないための、読むだけと分かっているコマンド。
+// 引数しだいで書けるもの（sed、uniq、sort、find、less、rg、tree、test、printf など）は入れない。
 const READ_ONLY = new Set([
-  'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'rg', 'pwd', 'echo', 'printf', 'date', 'which', 'whoami',
-  'true', 'false', 'test', '[', 'stat', 'file', 'du', 'df', 'tree', 'basename', 'dirname', 'realpath', 'readlink',
-  'uniq', 'cut', 'tr', 'jq', 'diff', 'cmp', 'printenv', 'type', 'uname', 'id', 'sleep', 'column', 'nl', 'less', 'more', 'cd',
+  'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'egrep', 'fgrep', 'pwd', 'echo', 'date', 'which', 'whoami',
+  'true', 'false', 'stat', 'file', 'du', 'df', 'basename', 'dirname', 'realpath', 'readlink',
+  'cut', 'tr', 'jq', 'diff', 'cmp', 'printenv', 'type', 'uname', 'id', 'sleep', 'column', 'nl', 'cd',
 ])
 
 const GIT_READ_ONLY = new Set([
-  'status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'blame', 'describe', 'shortlog', 'cat-file', 'grep', 'ls-tree',
-  'merge-base', 'rev-list', 'reflog', 'whatchanged', 'name-rev', 'for-each-ref', 'check-ignore',
+  'status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'blame', 'describe', 'shortlog', 'cat-file', 'ls-tree',
+  'merge-base', 'rev-list', 'name-rev', 'for-each-ref', 'check-ignore',
 ])
 
 export function gitSubcommand(args) {
@@ -208,62 +289,69 @@ export function gitSubcommand(args) {
     else if (arg.startsWith('-')) i += 1
     else break
   }
-  return { sub: args[i] ?? '', rest: args.slice(i + 1) }
+  return { sub: args[i] ?? '', rest: args.slice(i + 1), globals: args.slice(0, i) }
 }
 
 function gitReadOnly(args) {
-  const { sub, rest } = gitSubcommand(args)
+  const { sub, rest, globals } = gitSubcommand(args)
+  // -c は設定を差し替えて任意のコマンドを動かせる。--output は読み取り系でもファイルに書く。
+  if (globals.some((a) => a === '-c' || a.startsWith('--exec-path') || a.startsWith('--config-env'))) return false
+  if (rest.some((a) => a.startsWith('--output') || a === '-O' || a.startsWith('--ext-diff') || a.startsWith('--textconv'))) return false
   if (GIT_READ_ONLY.has(sub)) return true
   if (sub === 'branch') return rest.every((a) => /^(--list|-l|-a|-r|-v|-vv|--all|--remotes|--show-current|--verbose)$/.test(a))
-  if (sub === 'remote') return rest.length === 0 || ['-v', 'get-url', 'show'].includes(rest[0])
-  if (sub === 'tag') return rest.length === 0 || ['-l', '--list'].includes(rest[0])
-  if (sub === 'stash') return ['list', 'show'].includes(rest[0])
-  if (sub === 'worktree') return rest[0] === 'list'
+  if (sub === 'remote') return rest.length === 0 || (rest.length === 1 && rest[0] === '-v') || ['get-url', 'show'].includes(rest[0])
+  if (sub === 'tag') return rest.length === 0 || (rest.length === 1 && ['-l', '--list'].includes(rest[0]))
+  if (sub === 'stash') return rest.length === 1 && rest[0] === 'list'
+  if (sub === 'worktree') return rest.length === 1 && rest[0] === 'list'
   if (sub === 'config') return ['--get', '--get-all', '--list', '-l'].includes(rest[0])
   return false
 }
 
 export function isReadOnlySegment(segment) {
   if (writeRedirects(segment).length) return false
-  const { name, args } = commandOf(segment)
+  const { assigns, name, args } = commandOf(segment)
+  // 環境変数の前置き（GIT_EXTERNAL_DIFF など）や、代入だけの行は、読むだけとは見なさない。
+  if (assigns.length) return false
   if (!name) return true
   const cmd = basename(name)
   if (cmd === 'git') return gitReadOnly(args)
-  if (cmd === 'find') return !args.some((a) => /^-(delete|exec|execdir|ok|okdir|fprint|fprintf|fprint0|fls)$/.test(a))
-  if (cmd === 'sed') return !args.some((a) => /^(-[a-zA-Z]*i|--in-place)/.test(a))
-  if (cmd === 'sort') return !args.some((a) => /^(-[a-zA-Z]*o|--output)/.test(a))
   return READ_ONLY.has(cmd)
+}
+
+// harness-note の呼び出しか（前置きやリダイレクトの有無は問わない）。
+export function isHarnessNoteCommand(segment) {
+  const { name } = commandOf(segment)
+  return name === 'harness-note' || name === NOTE_BIN
 }
 
 // harness-note の単純な呼び出しか。環境変数の前置き（データ領域の差し替え）とリダイレクトは認めない。
 export function isHarnessNoteSegment(segment) {
-  const { assigns, name } = commandOf(segment)
+  const { assigns } = commandOf(segment)
   if (assigns.length) return false
-  if (name !== 'harness-note' && name !== NOTE_BIN) return false
-  return writeRedirects(segment).length === 0
+  if (!isHarnessNoteCommand(segment)) return false
+  return segment.redirects.every((r) => r.op === '<<<' || r.target === '/dev/null')
 }
 
 export function isHarnessNoteOnly(command) {
   const parsed = parseBash(command)
-  if (parsed.subst || parsed.heredocUnsafe || parsed.segments.length === 0) return false
+  if (parsed.subst || parsed.uncertain || parsed.segments.length === 0) return false
   return parsed.segments.every(isHarnessNoteSegment)
 }
 
 // 「変更あり」に数えないコマンドか（読むだけのコマンドと harness-note だけでできている）。
-// 自動改善のセッションで通すコマンドの判定にも使う。
 export function isNonChanging(command) {
   const parsed = parseBash(command)
-  if (parsed.subst || parsed.heredocUnsafe) return false
+  if (parsed.subst || parsed.uncertain) return false
   return parsed.segments.every((s) => isReadOnlySegment(s) || isHarnessNoteSegment(s))
 }
 
-const WRITERS = new Set(['tee', 'mv', 'rm', 'rmdir', 'unlink', 'shred', 'install', 'ln', 'truncate', 'touch', 'chmod', 'chown', 'rsync', 'patch'])
+const WRITERS = new Set(['tee', 'mv', 'rm', 'rmdir', 'unlink', 'shred', 'install', 'ln', 'truncate', 'touch', 'rsync', 'patch'])
 const GIT_WORKTREE_WRITE = new Set(['checkout', 'restore', 'rm', 'mv', 'clean', 'apply', 'stash'])
 const WRAPPERS = new Set(['sudo', 'command', 'time', 'nohup', 'exec'])
 
 // コマンドが書き換える（消す・動かすを含む）ファイルの候補を返す。
 // 見るのは、リダイレクト先と、書き換えると分かっているコマンド（sed -i、tee、cp、mv、rm、git checkout など）の引数だけ。
-// スクリプトの中からの書き込み（python や node など）は見分けられない。
+// スクリプトの中からの書き込み（python や node など）は見分けられない。chmod のように中身を変えないものは見ない。
 // 返すのは、順に並んだ { command, tokens } と、cd による移動 { cd }。
 export function writeTargets(command) {
   const parsed = parseBash(command)

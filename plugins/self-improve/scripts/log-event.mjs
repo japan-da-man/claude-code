@@ -12,12 +12,20 @@ const CORRECTIONS = [
 ]
 const CORRECTIONS_EN = /\b(?:no[,.!]|(?:wrong|revert|undo|that'?s not|not what i|i said|i didn'?t ask|you (?:broke|missed|forgot))\b)/i
 
+// 「A と B は何が違う？」「間違いがないか確かめて」のような、違いや誤りを尋ねているだけの言い方。
+const NOT_CORRECTION = /何が違|どこが違|どう違|違いは|違いを|違いが|違うの(?:か|です)|間違い(?:が|は)?(?:ない|無い|あ(?:る|り)|があれば)|間違って(?:い)?(?:ない|ませんか|いないか|ないか)/
+
 export function correctionWords(prompt, extra = []) {
   const text = String(prompt ?? '')
   if (!text.trim() || text.trimStart().startsWith('/')) return []
-  const found = [...CORRECTIONS, ...extra].filter((word) => text.includes(word))
-  const english = CORRECTIONS_EN.exec(text)
-  if (english) found.push(english[0].toLowerCase())
+  // 文ごとに見る。質問の文（？で終わる、または違いを尋ねる言い方）は、訂正に数えない。
+  const found = []
+  for (const sentence of text.split(/(?<=[。？?！!\n])/)) {
+    if (/[？?]\s*$/.test(sentence) || NOT_CORRECTION.test(sentence)) continue
+    found.push(...[...CORRECTIONS, ...extra].filter((word) => sentence.includes(word)))
+    const english = CORRECTIONS_EN.exec(sentence)
+    if (english) found.push(english[0].toLowerCase())
+  }
   return [...new Set(found)]
 }
 

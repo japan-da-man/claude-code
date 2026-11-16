@@ -39,6 +39,12 @@ test('訂正語：直前のターンがあるときだけ検出する', () => {
   assert.deepEqual(correctionWords('ちゃうねん', ['ちゃうねん']), ['ちゃうねん'])
   assert.deepEqual(correctionWords('/self-improve:retro 違う'), [])
   assert.deepEqual(correctionWords('know nothing about normal notes'), [])
+  // 質問の文は、訂正に数えない（「違う」を含んでいても）
+  for (const question of ['A と B は何が違う？', 'この 2 つはどう違うんですか?', '違いは何ですか', 'What is wrong with this approach?', 'この実装に間違いがないか見て']) {
+    assert.deepEqual(correctionWords(question), [], question)
+  }
+  // 質問のあとに訂正が続けば、訂正として数える
+  assert.deepEqual(correctionWords('何が違う？ いや、そうじゃなくて戻して'), ['そうじゃな', '戻して'])
 })
 
 test('PostToolUseFailure: tool_name、error の 1 行目、is_interrupt を残す。harness-note の失敗は数えない', () => {
