@@ -1,0 +1,6 @@
+#!/usr/bin/env node
+// Claude の Bash ツールから「harness-note ...」で呼ぶ入口。中身は scripts/note.mjs。
+import('../scripts/note.mjs').catch((error) => {
+  process.stderr.write(`harness-note: ${error?.stack || error}\n`)
+  process.exitCode = 1
+})

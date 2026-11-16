@@ -1,0 +1,7 @@
+{
+  "name": "self-improve-scripts",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}
