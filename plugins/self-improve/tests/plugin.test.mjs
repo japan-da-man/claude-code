@@ -116,13 +116,20 @@ test('公開リポジトリなので、ローカルの絶対パスや個人の�
   }
 })
 
-test('マーケットプレイスと bundle に登録されている', () => {
+test('マーケットプレイスに登録されている。bundle には入れない（bin/ を持つプラグインは claude.ai と Cowork で入らないため）', () => {
   const marketplace = JSON.parse(readFileSync(join(REPO, '.claude-plugin/marketplace.json'), 'utf8'))
   const entry = marketplace.plugins.find((p) => p.name === 'self-improve')
   assert.deepEqual([entry.source, entry.description], ['./plugins/self-improve', JSON.parse(read('.claude-plugin/plugin.json')).description])
   const bundle = JSON.parse(readFileSync(join(REPO, 'plugins/japan-da-man-mods/.claude-plugin/plugin.json'), 'utf8'))
-  assert.ok(bundle.dependencies.includes('self-improve'))
-  assert.match(bundle.description, /self-improve/)
-  assert.match(marketplace.plugins.find((p) => p.name === 'japan-da-man-mods').description, /self-improve/)
-  assert.match(readFileSync(join(REPO, 'README.md'), 'utf8'), /\| \[self-improve\]\(plugins\/self-improve\) \|/)
+  assert.equal(bundle.dependencies.includes('self-improve'), false)
+  assert.doesNotMatch(bundle.description, /self-improve/)
+  assert.doesNotMatch(marketplace.plugins.find((p) => p.name === 'japan-da-man-mods').description, /self-improve/)
+  // 個別に入れることと、その理由を、両方の README に書く
+  const rootReadme = readFileSync(join(REPO, 'README.md'), 'utf8')
+  assert.match(rootReadme, /\| \[self-improve\]\(plugins\/self-improve\) \|/)
+  for (const text of [rootReadme, read('README.md')]) {
+    assert.match(text, /claude plugin install self-improve@japan-da-man/)
+    assert.match(text, /bundle[^\n]*(入っていない|入れていない)/)
+    assert.match(text, /bin\/[^\n]*claude\.ai と Cowork/)
+  }
 })
