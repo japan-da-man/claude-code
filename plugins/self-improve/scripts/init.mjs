@@ -1,61 +1,62 @@
-// init スキルから呼ぶ。適用先のリポジトリに harness/ を作る。結果は JSON で出す。
+// init スキルから呼ぶ。user 単位の初期設定。結果は JSON で出す。
 //   node init.mjs [リポジトリのパス]
-// 作るのは、harness/config.json、guards.json、guards.test.json、incidents/、.gitignore への追記。
-// すでにあるファイルは上書きしない。.claude/settings.local.json は書かない
-// （harness-note の許可ルールは、Claude が確認を通して足す）。
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+// 作るのは、user の設定（~/.claude/self-improve/config.json）と、失敗票の置き場所（~/.claude/self-improve/incidents/）だけ。
+// すでにあるファイルは上書きしない。リポジトリには、何も作らない。
+// self-improve は init しなくても動く（設定がなければ、初期値で動く）。init は、設定のファイルを手元に置いて、
+// 除外や上限を変えられるようにするためのもの。
+// 次のものは、ここでは書かない（Claude が、人の確認を通して足す）：
+//   - ~/.claude/settings.json の許可ルール（harness-note を確認なしで呼べるようにする）
+//   - リポジトリの harness/config.json（検証コマンドを使うと答えたときだけ）
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { PLUGIN_ROOT, findRepo, isMain } from './lib/core.mjs'
+import { PLUGIN_ROOT, claudeHome, findRepo, inactiveReason, isMain, tildePath, userDir, userRepoDir } from './lib/core.mjs'
 
 const TEMPLATES = join(PLUGIN_ROOT, 'templates')
 export const ALLOW_RULE = 'Bash(harness-note *)'
-const IGNORE_LINE = 'harness/reports/'
 
 export function init(start) {
-  const repo = findRepo(start)
-  if (!repo) return { ok: false, error: 'git リポジトリではありません。適用先は git リポジトリにしてください' }
   const created = []
   const skipped = []
-  const harness = join(repo.root, 'harness')
-  mkdirSync(join(harness, 'incidents'), { recursive: true })
-  for (const name of ['config.json', 'guards.json', 'guards.test.json']) {
-    const target = join(harness, name)
-    if (existsSync(target)) {
-      skipped.push(`harness/${name}`)
-    } else {
-      copyFileSync(join(TEMPLATES, name), target)
-      created.push(`harness/${name}`)
-    }
-  }
-  const keep = join(harness, 'incidents', '.gitkeep')
-  if (!existsSync(keep)) {
-    writeFileSync(keep, '')
-    created.push('harness/incidents/.gitkeep')
-  }
-  const ignore = join(repo.root, '.gitignore')
-  const current = existsSync(ignore) ? readFileSync(ignore, 'utf8') : ''
-  if (current.split(/\r?\n/).some((line) => line.trim() === IGNORE_LINE || line.trim() === '/harness/reports/')) {
-    skipped.push('.gitignore')
+  const dir = userDir()
+  mkdirSync(join(dir, 'incidents'), { recursive: true })
+  const config = join(dir, 'config.json')
+  if (existsSync(config)) {
+    skipped.push(tildePath(config))
   } else {
-    appendFileSync(ignore, `${current && !current.endsWith('\n') ? '\n' : ''}# self-improve: 棚卸しのレポート\n${IGNORE_LINE}\n`)
-    created.push('.gitignore')
+    copyFileSync(join(TEMPLATES, 'config.json'), config)
+    created.push(tildePath(config))
   }
-  const settings = join(repo.root, '.claude', 'settings.local.json')
+  const settings = join(claudeHome(), 'settings.json')
   let allowed = false
   try {
     allowed = JSON.parse(readFileSync(settings, 'utf8')).permissions?.allow?.includes(ALLOW_RULE) ?? false
   } catch {
     // なければ、これから足す
   }
+  // いまいるリポジトリ（あれば）。検証コマンドを使うかどうかを尋ねるのに使う。
+  const repo = findRepo(start)
   return {
     ok: true,
-    repo: { root: repo.root, name: repo.name, id: repo.id },
+    user_dir: tildePath(dir),
     created,
     skipped,
-    settings_file: '.claude/settings.local.json',
+    settings_file: tildePath(settings),
     allow_rule: ALLOW_RULE,
     allow_rule_present: allowed,
-    incident_template: join(TEMPLATES, 'incident.md'),
+    repo: repo
+      ? {
+        root: repo.root,
+        name: repo.name,
+        id: repo.id,
+        // このリポジトリで self-improve が動かない理由（除外してある、など）。動くなら null。
+        inactive: inactiveReason(start),
+        verify_config: 'harness/config.json',
+        verify_config_exists: existsSync(join(repo.root, 'harness', 'config.json')),
+        verify_template: join(TEMPLATES, 'repo-config.json'),
+        override_dir: tildePath(userRepoDir(repo)),
+      }
+      : null,
+    templates: { guards: join(TEMPLATES, 'guards.json'), guards_test: join(TEMPLATES, 'guards.test.json'), incident: join(TEMPLATES, 'incident.md') },
   }
 }
 

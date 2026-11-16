@@ -3,8 +3,10 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ROOT, at, dataFiles, decisionOf, events, guardRun, makeEnv, note, readData, repoId, session } from './helpers.mjs'
+import { ROOT, at, dataFiles, decisionOf, events, guardRun, makeEnv, note, readData, repoId, session, writeFiles } from './helpers.mjs'
 
+// 失敗の信号（ツールの失敗）。改善候補の確認は、信号があったターンだけ頼む。
+const signal = (s, promptId, minute = 1) => s.failed(promptId, 'Bash', { command: 'npm test' }, 'Exit code 1', { now: at(minute) })
 const write = (t, s, promptId, file = 'src/a.ts', minute = 1) => s.used(promptId, 'Write', { file_path: join(t.repo, file), content: 'x' }, { now: at(minute) })
 // Stop の hook の結果：検証の失敗（終了コード 2）、候補の確認（additionalContext）、人への知らせ（systemMessage）、何もなし
 const ask = (run) => run.json?.hookSpecificOutput?.additionalContext ?? null
@@ -23,11 +25,12 @@ test('質問に答えただけのターン（信号も変更もない）では�
   assert.deepEqual(dataFiles(t, 'episodes'), [])
 })
 
-test('変更があったターン：改善候補の確認を 1 回だけ頼む（エラーではなく additionalContext で）。同じターンの 2 回目の Stop では頼まない', () => {
+test('失敗の信号があったターン：改善候補の確認を 1 回だけ頼む（エラーではなく additionalContext で）。同じターンの 2 回目の Stop では頼まない', () => {
   const t = makeEnv()
   const s = session(t)
   s.prompt('p1', 'ユーザー一覧の API を足して', { now: at(0) })
   write(t, s, 'p1')
+  signal(s, 'p1')
   const first = s.stop('p1', '足しました', { now: at(2) })
   // 候補の確認は、エラー（終了コード 2）ではなく、hookSpecificOutput.additionalContext で頼む
   assert.equal(first.status, 0)
@@ -53,8 +56,8 @@ test('変更があったターン：改善候補の確認を 1 回だけ頼む�
   assert.match(ask(first), /dev\/bug \/ dev\/cause \/ dev\/mistake \/ dev\/other \/ behavior\/preference/)
   assert.match(ask(first), /あと 3 件/)
   assert.match(ask(first), /なければ何も記録せず/)
-  // 信号はないので、事象メモは作らない
-  assert.deepEqual(dataFiles(t, 'episodes'), [])
+  // 信号があったターンなので、事象メモも作る
+  assert.equal(dataFiles(t, 'episodes').length, 1)
 
   // Claude が harness-note add を実行して、もう一度止まる。harness-note の実行は「変更あり」に数えない
   s.used('p1', 'Bash', { command: 'harness-note keys' }, { now: at(3) })
@@ -65,16 +68,34 @@ test('変更があったターン：改善候補の確認を 1 回だけ頼む�
   assert.equal(outcome(s.stop('p1', 'x', { now: at(5) })), 'none')
   assert.equal(events(t).filter((e) => e.type === 'asked').length, 1)
 
-  // 次のターンで変更があれば、また 1 回頼む。別のセッションは別に数える
+  // 次のターンで信号があれば、また 1 回頼む
   s.prompt('p2', '続けて', { now: at(10) })
-  write(t, s, 'p2', 'src/b.ts', 11)
+  signal(s, 'p2', 11)
   assert.equal(outcome(s.stop('p2', 'x', { now: at(12) })), 'ask')
   assert.equal(outcome(s.stop('p2', 'x', { now: at(13) })), 'none')
 })
 
+test('変更があっただけのターン（失敗の信号がない）では、改善候補の確認を頼まない（全リポジトリで動くので、トークンと待ち時間を抑える）', () => {
+  const t = makeEnv()
+  const s = session(t)
+  s.prompt('p1', 'ユーザー一覧の API を足して', { now: at(0) })
+  write(t, s, 'p1')
+  s.used('p1', 'Bash', { command: 'npm run build' }, { now: at(1) })
+  const run = s.stop('p1', '足しました', { now: at(2) })
+  assert.deepEqual([run.status, run.stdout, run.stderr], [0, '', ''])
+  assert.deepEqual(dataFiles(t, 'episodes'), [])
+  assert.equal(events(t).filter((e) => e.type === 'asked').length, 0)
+  // 信号の種類は 4 つ：ツールの失敗、人の訂正、ガードの拒否、検証の失敗。どれかがあれば頼む
+  s.prompt('p2', '違う、そこじゃない。戻して', { now: at(10) })
+  assert.equal(outcome(s.stop('p2', '戻しました', { now: at(11) })), 'ask')
+  s.prompt('p3', 'push して', { now: at(20) })
+  assert.equal(guardRun(t, 'sess-1', 'Bash', { command: 'git push --force' }, { now: at(21) }, { prompt_id: 'p3' }).status, 2)
+  assert.equal(outcome(s.stop('p3', '止められました', { now: at(22) })), 'ask')
+})
+
 test('harness-note だけ・読むだけのコマンドだけのターンでは、確認を頼まず、検証も走らせない', () => {
   const t = makeEnv()
-  writeFileSync(join(t.repo, 'harness/config.json'), JSON.stringify(verifyConfig(t)))
+  writeFiles(t.repo, { 'harness/config.json': verifyConfig(t) })
   const s = session(t)
   s.prompt('p1', '改善候補を見せて', { now: at(0) })
   s.used('p1', 'Bash', { command: 'harness-note list' }, { now: at(1) })
@@ -144,7 +165,7 @@ test('人の訂正：直前のターンの依頼文と応答を、訂正の内�
 
 test('検証：変更があったターンだけ走らせる。失敗したら検証の結果だけを返し、通ったあとの Stop で候補の確認を頼む', () => {
   const t = makeEnv()
-  writeFileSync(join(t.repo, 'harness/config.json'), JSON.stringify(verifyConfig(t)))
+  writeFiles(t.repo, { 'harness/config.json': verifyConfig(t) })
   const s = session(t)
   s.prompt('p1', '型を直して', { now: at(0) })
   write(t, s, 'p1')
@@ -183,7 +204,7 @@ test('検証：変更があったターンだけ走らせる。失敗したら�
 
 test('検証の失敗が連続 3 回で打ち切り、人に知らせる（Claude には続けさせない）', () => {
   const t = makeEnv()
-  writeFileSync(join(t.repo, 'harness/config.json'), JSON.stringify(verifyConfig(t)))
+  writeFiles(t.repo, { 'harness/config.json': verifyConfig(t) })
   const s = session(t)
   s.prompt('p1', '型を直して', { now: at(0) })
   write(t, s, 'p1')
@@ -240,7 +261,7 @@ const childPid = (t) => Number(readFileSync(join(t.base, 'child.pid'), 'utf8').t
 
 test('検証のタイムアウト：シェルだけでなく、その先で動いている子孫のプロセスも止める', { skip: process.platform === 'win32' }, async () => {
   const t = makeEnv()
-  writeFileSync(join(t.repo, 'harness/config.json'), JSON.stringify(slowVerify(t, 1)))
+  writeFiles(t.repo, { 'harness/config.json': slowVerify(t, 1) })
   const s = session(t)
   s.prompt('p1', 'テストを直して', { now: at(0) })
   write(t, s, 'p1')
@@ -253,7 +274,7 @@ test('検証のタイムアウト：シェルだけでなく、その先で動�
 
 test('hook 自身が止められたときも、検証コマンドを残さない', { skip: process.platform === 'win32' }, async () => {
   const t = makeEnv()
-  writeFileSync(join(t.repo, 'harness/config.json'), JSON.stringify(slowVerify(t, 240)))
+  writeFiles(t.repo, { 'harness/config.json': slowVerify(t, 240) })
   const s = session(t)
   s.prompt('p1', 'テストを直して', { now: at(0) })
   write(t, s, 'p1')
@@ -270,7 +291,7 @@ test('hook 自身が止められたときも、検証コマンドを残さない
 
 test('1 ターンのあいだに続けさせる回数には、万一の上限がある', () => {
   const t = makeEnv()
-  writeFileSync(join(t.repo, 'harness/config.json'), JSON.stringify(verifyConfig(t)))
+  writeFiles(t.repo, { 'harness/config.json': verifyConfig(t) })
   const s = session(t)
   const ok = join(t.repo, 'ok.txt')
   let minute = 0
@@ -302,27 +323,24 @@ test('そのセッションの候補が上限（3 件）に達していれば、
     note(t, ['add', '--session', 'sess-1', '--category', 'dev/mistake', '--key', key, '--text', 'x'], { now: at(i) })
   }
   s.prompt('p1', 'a', { now: at(10) })
-  write(t, s, 'p1', 'src/a.ts', 11)
+  signal(s, 'p1', 11)
   assert.match(ask(s.stop('p1', 'x', { now: at(12) })), /あと 1 件/)
   note(t, ['add', '--session', 'sess-1', '--category', 'dev/mistake', '--key', 'key-three', '--text', 'x'], { now: at(13) })
   s.prompt('p2', 'b', { now: at(20) })
-  write(t, s, 'p2', 'src/a.ts', 21)
+  signal(s, 'p2', 21)
   const run = s.stop('p2', 'x', { now: at(22) })
   assert.equal(outcome(run), 'none')
   // 上限は、そのセッションが直近 24 時間に記録した件数で数える。日をまたいで使うセッションは、また頼まれる
-  s.prompt('p9', 'd', { now: at(0, 2) })
-  write(t, s, 'p9', 'src/a.ts', 60 * 24 * 2 + 1)
-  assert.match(ask(s.stop('p9', 'x', { now: at(2, 2) })), /あと 3 件/)
   // 信号があれば、事象メモは上限に関係なく作る
-  s.prompt('p3', 'c', { now: at(30) })
-  s.failed('p3', 'Bash', { command: 'npm test' }, 'Exit code 1', { now: at(31) })
-  assert.equal(outcome(s.stop('p3', 'x', { now: at(32) })), 'none')
-  assert.equal(dataFiles(t, 'episodes').length, 1)
+  assert.equal(dataFiles(t, 'episodes').length, 2)
+  s.prompt('p9', 'd', { now: at(0, 2) })
+  signal(s, 'p9', 60 * 24 * 2 + 1)
+  assert.match(ask(s.stop('p9', 'x', { now: at(2, 2) })), /あと 3 件/)
 })
 
 test('自動改善のセッションでは、検証も事象メモも候補の確認も動かさない', () => {
   const t = makeEnv({ config: { auto: { interval_days: 7 } } })
-  writeFileSync(join(t.repo, 'harness/config.json'), JSON.stringify({ auto: { interval_days: 7 }, ...verifyConfig(t) }))
+  writeFiles(t.repo, { 'harness/config.json': verifyConfig(t) })
   // ロックの前に記録された変更があっても（ロックの前のプロンプトなど）、ロック中は動かさない
   const s = session(t, 'auto-1')
   s.prompt('p1', 'auto-improve を実行して', { now: at(0) })
@@ -343,8 +361,8 @@ test('自動改善のセッションでは、検証も事象メモも候補の�
   assert.equal(runs(t), 1)
 })
 
-test('harness/config.json がないリポジトリと HARNESS_DISABLE=1 では、何もしない', () => {
-  const none = makeEnv({ initialized: false })
+test('git リポジトリでない場所と HARNESS_DISABLE=1 では、何もしない', () => {
+  const none = makeEnv({ git: false })
   const n = session(none)
   n.used('p1', 'Write', { file_path: 'a' })
   const off = n.stop('p1', 'x')
@@ -354,7 +372,7 @@ test('harness/config.json がないリポジトリと HARNESS_DISABLE=1 では�
   const t = makeEnv()
   const s = session(t)
   s.prompt('p1', 'a', { now: at(0) })
-  write(t, s, 'p1')
+  signal(s, 'p1')
   const disabled = s.stop('p1', 'x', { now: at(2), env: { HARNESS_DISABLE: '1' } })
   assert.deepEqual([disabled.status, disabled.stdout, disabled.stderr], [0, '', ''])
   // 止めていなければ頼む（同じ状態から）
@@ -365,14 +383,14 @@ test('prompt_id が渡らない版でも、ターンの始まりの時刻で区�
   const t = makeEnv()
   const s = session(t)
   s.prompt(undefined, '最初の依頼', { now: at(0) })
-  s.used(undefined, 'Write', { file_path: join(t.repo, 'a.ts') }, { now: at(1) })
+  s.failed(undefined, 'Bash', { command: 'npm test' }, 'Exit code 1', { now: at(1) })
   assert.equal(outcome(s.stop(undefined, 'x', { now: at(2) })), 'ask')
   assert.equal(outcome(s.stop(undefined, 'x', { now: at(3) })), 'none')
-  // 次のターンに変更がなければ、前のターンの変更は数えない
+  // 次のターンに信号がなければ、前のターンの信号は数えない
   s.prompt(undefined, '質問だけ', { now: at(10) })
   assert.equal(outcome(s.stop(undefined, 'x', { now: at(11) })), 'none')
-  s.prompt(undefined, 'もう一度変更', { now: at(20) })
-  s.used(undefined, 'Edit', { file_path: join(t.repo, 'a.ts') }, { now: at(21) })
+  s.prompt(undefined, 'もう一度', { now: at(20) })
+  s.failed(undefined, 'Bash', { command: 'npm test' }, 'Exit code 1', { now: at(21) })
   assert.equal(outcome(s.stop(undefined, 'x', { now: at(22) })), 'ask')
   assert.ok(repoId(t))
 })

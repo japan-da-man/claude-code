@@ -7,7 +7,7 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { PLUGIN_ROOT, activeLock, isInside, isLocked, posix, realish } from './core.mjs'
+import { PLUGIN_ROOT, activeLock, claudeHome, isInside, isLocked, posix, realish, tildePath, userDir } from './core.mjs'
 import { parseArgs } from './args.mjs'
 import { commandOf, isHarnessNoteCommand, isHarnessNoteSegment, isNonChanging, isWrappedHarnessNote, parseBash, skeleton, writeTargets } from './bash.mjs'
 import { isAutoSession } from './auto.mjs'
@@ -45,38 +45,71 @@ function readGuardFile(file) {
   }
 }
 
-// 共通リスト（プラグインの初期値）と、リポジトリ固有の harness/guards.json を合わせる。
+// ガードの定義を置ける 4 か所。すべて読み、すべて効かせる。
+//   default    共通リスト（プラグインに同梱）
+//   user       user 全体（~/.claude/self-improve/guards.json）。どのリポジトリでも効かせたい、自分の決まり
+//   user-repo  user のリポジトリごと（~/.claude/self-improve/repos/<名前>/guards.json）。リポジトリには置かない、自分だけの決まり
+//   repo       リポジトリの harness/guards.json。チームで共有する決まり
+export function guardFiles(ctx) {
+  const mine = join(ctx.user.dir, 'guards.json')
+  const mineHere = join(ctx.user.repoDir, 'guards.json')
+  return [
+    { source: 'default', file: DEFAULT_GUARDS, label: 'guards.default.json' },
+    { source: 'user', file: mine, label: tildePath(mine) },
+    { source: 'user-repo', file: mineHere, label: tildePath(mineHere) },
+    { source: 'repo', file: join(ctx.repo.root, 'harness', 'guards.json'), label: 'harness/guards.json' },
+  ]
+}
+
 // ルールは 2 種類：pattern（Bash のコマンドに当てる。文字列か、その配列）と path（書き込み先のパスに当てる）。
 // decision が "ask" のルールは、拒否ではなく確認を挟む。
-export function loadGuards(repoRoot) {
+// 共通リストのルールを外せる（disable_defaults）のは、user 側のファイルだけ。リポジトリのファイルは、共有されたり
+// プルで変わったりするので、足すことはできても、共通リストを外すことはできない。
+// 読めないファイルは、黙って「ない」にせず、errors に残す（そのファイルのガードが効いていないことを知らせる）。
+export function loadGuards(ctx) {
   const errors = []
-  const defaults = readGuardFile(DEFAULT_GUARDS)
-  if (defaults.error) errors.push(`guards.default.json を読めません（${defaults.error}）`)
-  const repo = readGuardFile(join(repoRoot, 'harness', 'guards.json'))
-  if (repo.error) errors.push(`harness/guards.json を読めません（${repo.error}）。このリポジトリのガードは、直すまで効きません`)
-  const own = repo.value ?? {}
-  const off = new Set(Array.isArray(own.disable_defaults) ? own.disable_defaults : [])
-  const rules = []
-  const sources = [
-    ...(defaults.value?.rules ?? []).filter((r) => !off.has(r.id)).map((r) => ({ ...r, source: 'default' })),
-    ...(Array.isArray(own.rules) ? own.rules : []).map((r) => ({ ...r, source: 'repo' })),
-  ]
-  for (const rule of sources) {
-    const where = `${rule.source === 'default' ? 'guards.default.json' : 'harness/guards.json'} の ${rule.id ?? '（id なし）'}`
-    if (!rule.id || !rule.message) {
-      errors.push(`${where}：id と message（直し方を 1 行）が必要です`)
-      continue
+  const notes = []
+  const loaded = guardFiles(ctx).map((entry) => {
+    const read = readGuardFile(entry.file)
+    if (read.error) errors.push(`${entry.label} を読めません（${read.error}）。このファイルのガードは、直すまで効きません`)
+    return { ...entry, value: read.value ?? {} }
+  })
+  const off = new Set()
+  for (const { source, label, value } of loaded) {
+    const list = Array.isArray(value.disable_defaults) ? value.disable_defaults : []
+    if (!list.length) continue
+    if (source === 'repo') {
+      notes.push(`${label} の disable_defaults は読みません（共通リストを外せるのは、user 側のファイルだけです）。${loaded[2].label} に移してください`)
+    } else {
+      for (const id of list) off.add(id)
     }
-    const patterns = (Array.isArray(rule.pattern) ? rule.pattern : [rule.pattern]).map((p) => compile(p, rule.flags, errors, where)).filter(Boolean)
-    const path = compile(rule.path, rule.flags, errors, where)
-    if (!patterns.length && !path) {
-      if (!rule.pattern && !rule.path) errors.push(`${where}：pattern か path が必要です`)
-      continue
-    }
-    rules.push({ ...rule, patterns, path, except: compile(rule.except, rule.flags, errors, where), decision: rule.decision === 'ask' ? 'ask' : 'deny' })
   }
-  const protect = (Array.isArray(own.protect) ? own.protect : []).map((p, i) => compile(p, 'i', errors, `harness/guards.json の protect[${i}]`)).filter(Boolean)
-  return { rules, protect, errors }
+  const rules = []
+  const protect = []
+  for (const { source, label, value } of loaded) {
+    for (const raw of Array.isArray(value.rules) ? value.rules : []) {
+      if (source === 'default' && off.has(raw?.id)) continue
+      const where = `${label} の ${raw?.id ?? '（id なし）'}`
+      if (!raw || !raw.id || !raw.message) {
+        errors.push(`${where}：id と message（直し方を 1 行）が必要です`)
+        continue
+      }
+      const patterns = (Array.isArray(raw.pattern) ? raw.pattern : [raw.pattern]).map((p) => compile(p, raw.flags, errors, where)).filter(Boolean)
+      const path = compile(raw.path, raw.flags, errors, where)
+      if (!patterns.length && !path) {
+        if (!raw.pattern && !raw.path) errors.push(`${where}：pattern か path が必要です`)
+        continue
+      }
+      rules.push({ ...raw, source, file: label, patterns, path, except: compile(raw.except, raw.flags, errors, where), decision: raw.decision === 'ask' ? 'ask' : 'deny' })
+    }
+    if (source !== 'default') {
+      (Array.isArray(value.protect) ? value.protect : []).forEach((p, i) => {
+        const re = compile(p, 'i', errors, `${label} の protect[${i}]`)
+        if (re) protect.push(re)
+      })
+    }
+  }
+  return { rules, protect, errors, notes }
 }
 
 // ---- 確認を挟むパス ----
@@ -105,10 +138,18 @@ export function expandHome(raw) {
 }
 
 // ログやメッセージに出すパス。リポジトリの外は、ホームを ~ に直す（絶対パスをそのまま残さない）。
-function displayPath(abs) {
-  const home = homedir()
-  if (abs === home) return '~'
-  return isInside(home, abs) ? `~/${posix(relative(home, abs))}` : posix(abs)
+const displayPath = tildePath
+
+// user 側のファイルか（~/.claude/self-improve/ の下と、~/.claude/CLAUDE.md）。書き込みには確認を挟む。
+// 名前と実体の両方で見て、大文字小文字は区別しない（区別しないファイルシステムで、別の綴りから書けるため）。
+function userSideKind(at) {
+  const lower = (p) => p.toLowerCase()
+  const paths = at.all.map(lower)
+  const under = (base) => [base, realish(base)].map(lower).some((b) => paths.some((p) => p === b || p.startsWith(`${b}/`) || p.startsWith(`${b}\\`)))
+  const same = (file) => [file, realish(file)].map(lower).some((f) => paths.includes(f))
+  if (under(userDir())) return 'self-improve の user 側のファイル（設定・ガード・失敗票・自分専用のルール）'
+  if (same(join(claudeHome(), 'CLAUDE.md'))) return 'user の CLAUDE.md'
+  return null
 }
 
 // 実体が同じなら、その名前への書き込みとして扱うファイル（CLAUDE.md -> AGENTS.md のようなリンク）。
@@ -166,7 +207,7 @@ const AFTER_AUTO = 'このセッションは、自動改善（auto-improve）を
 function locationDeny(ctx, at) {
   const inside = (base) => at.all.some((abs) => isInside(base, abs) || isInside(realish(base), abs))
   if (inside(PLUGIN_ROOT)) {
-    return { rule: 'plugin-files', message: 'self-improve プラグイン自身のファイルは書き換えられません。ハーネスの決まりを変えたいときは、適用先のリポジトリの harness/ を変えてください。' }
+    return { rule: 'plugin-files', message: 'self-improve プラグイン自身のファイルは書き換えられません。決まりを変えたいときは、~/.claude/self-improve/ の設定やガードか、リポジトリの harness/ を変えてください。' }
   }
   if (inside(ctx.data)) {
     return { rule: 'harness-data', message: 'プラグインのデータ領域は、harness-note コマンドだけが書き込みます。試用ルールや改善候補は harness-note で読み書きしてください。' }
@@ -189,9 +230,13 @@ function matchPathRule(guards, at) {
   return guards.rules.find((r) => r.path && subjects.some((s) => r.path.test(s) && !(r.except && r.except.test(s)))) ?? null
 }
 const protectedOf = (at, protect) => at.rels.map((rel) => protectedKind(rel, protect)).find(Boolean) ?? null
-const byRule = (rule, target) => (rule.decision === 'ask'
-  ? ask(rule.id, `${rule.message}（ルール：${rule.id}。確認のうえで進めます）`, target)
-  : deny(rule.id, rule.message, target))
+// どのファイルのルールかを、結果に残す（拒否の記録に入れる）。
+const byRule = (rule, target) => ({
+  ...(rule.decision === 'ask'
+    ? ask(rule.id, `${rule.message}（ルール：${rule.id}。確認のうえで進めます）`, target)
+    : deny(rule.id, rule.message, target)),
+  source: rule.file,
+})
 
 // ---- harness-note の呼び出しの確かめ ----
 
@@ -272,7 +317,7 @@ export function evaluate(ctx, input) {
     return allow
   }
 
-  const guards = loadGuards(ctx.repo.root)
+  const guards = loadGuards(ctx)
   let verdict = allow
   // 確認（ask）は、あとから拒否（deny）が見つかれば上書きされる。
   const consider = (next) => {
@@ -292,7 +337,7 @@ export function evaluate(ctx, input) {
       const stop = consider(byRule(rule, at.subject))
       if (stop) return stop
     }
-    const kind = protectedOf(at, guards.protect)
+    const kind = protectedOf(at, guards.protect) ?? userSideKind(at)
     if (kind) consider(askProtected(kind, at.subject))
     if (verdict.decision === 'allow' && isAutoSession(ctx)) return ask('auto-session-after', AFTER_AUTO, at.subject)
     return verdict
@@ -332,7 +377,7 @@ export function evaluate(ctx, input) {
     }
   }
   for (const at of targets) {
-    const kind = at.rels.some((rel) => PROTECTED_DIRS.has(rel.toLowerCase())) ? 'ハーネスのディレクトリ' : protectedOf(at, guards.protect)
+    const kind = at.rels.some((rel) => PROTECTED_DIRS.has(rel.toLowerCase())) ? 'ハーネスのディレクトリ' : protectedOf(at, guards.protect) ?? userSideKind(at)
     if (kind) consider(askProtected(kind, at.subject))
   }
   if (verdict.decision === 'allow' && !isNonChanging(command) && isAutoSession(ctx)) return ask('auto-session-after', AFTER_AUTO, command.slice(0, 200))

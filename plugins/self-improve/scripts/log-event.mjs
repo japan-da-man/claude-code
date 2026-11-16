@@ -37,7 +37,8 @@ function target(ctx, input) {
   const path = ti.file_path ?? ti.notebook_path
   if (typeof path === 'string' && path) {
     const rel = relative(ctx.repo.root, path)
-    return rel.startsWith('..') ? path : rel
+    // リポジトリの外は、ホームを ~ に直して残す（絶対パスをそのまま残さない）。
+    return rel.startsWith('..') ? tildePath(path) : rel
   }
   return null
 }
@@ -86,6 +87,8 @@ function main() {
   const input = readHookInput()
   const ctx = hookContext(input)
   if (!ctx || !ctx.sessionId) return
+  // user の設定が読めないあいだは、何も記録しない（依頼文の一時保持も含めて）。
+  if (!ctx.recording) return
   if (isLocked(ctx)) return
   if (input.hook_event_name === 'UserPromptSubmit') onPrompt(ctx, input)
   else if (input.hook_event_name === 'PostToolUseFailure') onFailure(ctx, input)

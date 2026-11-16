@@ -4,12 +4,14 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   BUG_CATEGORY, DAY_MS, OTHER_CATEGORY, PREFERENCE_CATEGORY, activeLock, dayOf, daysBetween, isKnownSession, iso, listFiles, now,
-  parseFrontmatter, readJson, safeId, withLock, writeFileAtomic, writeJson,
+  isInside, posix, readJson, realish, safeId, tildePath, withLock, writeFileAtomic, writeJson,
 } from './core.mjs'
 import { loadCandidates, markCandidates, rankTargets, summarizeKeys } from './candidates.mjs'
 import {
-  getRule, listRules, listSkills, measureAlwaysLoaded, readSkill, removeRule, removeSkill, renderRule, ruleCapacity, skillCapacity,
+  addPersonalRule, getRule, listRules, listSkills, measureAlwaysLoaded, personalRulesFile, promoteSkill, readSkill, removeRule, removeSkill,
+  renderRule, ruleCapacity, skillCapacity,
 } from './trial.mjs'
+import { INCIDENT_ID, getIncident, repoIncidents, updateIncident } from './incidents.mjs'
 
 const EMPTY = { last_run_at: null, changes: [], rejected: {}, recurrences: {}, promoted: {}, reports: [], notices: {}, auto_sessions: {} }
 // セッション開始時の知らせ（報告の 1 行と、1 回きりの知らせ）を出し続ける日数。
@@ -315,27 +317,6 @@ export function readPending(ctx, key) {
   }
 }
 
-export function incidentFiles(root) {
-  const dir = join(root, 'harness', 'incidents')
-  const out = []
-  for (const file of listFiles(dir, (f) => /^INC-\d{4}-\d{4}\.md$/.test(f))) {
-    let text = ''
-    try {
-      text = readFileSync(join(dir, file), 'utf8')
-    } catch {
-      continue
-    }
-    out.push({ id: file.replace(/\.md$/, ''), file: `harness/incidents/${file}`, data: parseFrontmatter(text).data ?? {} })
-  }
-  return out
-}
-
-export function nextIncidentId(root) {
-  const year = dayOf().slice(0, 4)
-  const numbers = incidentFiles(root).filter((i) => i.id.startsWith(`INC-${year}-`)).map((i) => Number(i.id.slice(-4)))
-  return `INC-${year}-${String(Math.max(0, ...numbers) + 1).padStart(4, '0')}`
-}
-
 const one = (value) => String(value ?? '').replace(/\r\n/g, '\n').trim()
 
 // 下書きを作り、材料にした候補を consumed にする。試用中の原因なら、再発として数える。
@@ -343,7 +324,8 @@ const one = (value) => String(value ?? '').replace(/\r\n/g, '\n').trim()
 export function addPending(ctx, input, lock = null) {
   const { key, category, signal, rootCause, severity, area, asked, expected, actual, evidence, proposalKind, proposal, by } = input
   const candidates = loadCandidates(ctx).filter((c) => c.cause_key === key && c.status === 'new')
-  const related = incidentFiles(ctx.repo.root).filter((i) => i.data.cause_key === key).map((i) => i.id)
+  // 関連する失敗票は、今のリポジトリの票だけを見る。
+  const related = repoIncidents(ctx).filter((i) => i.data.cause_key === key).map((i) => i.id)
   const episodes = [...new Set(candidates.map((c) => c.episode).filter(Boolean))]
   const sessions = [...new Set(candidates.map((c) => c.session_id))]
   const sections = [
@@ -475,13 +457,12 @@ export function summaryLine(report) {
   if (counts.proposal) sentences.push(`承認待ちの案が${counts.proposal}件`)
   if (counts.draft) sentences.push(`対策を入れなかった記録が${counts.draft}件`)
   if (report.bugs) sentences.push(`バグの候補が${report.bugs}件`)
-  if (report.preferences) sentences.push(`確認したい好みの候補が${report.preferences}件`)
   if (!sentences.length) sentences.push('変更なし')
   return `自動改善（${label}）：${sentences.join('。')}。`
 }
 
 export const reportHasContent = (report) =>
-  Object.values(report.counts ?? {}).some((n) => n > 0) || report.bugs > 0 || report.preferences > 0
+  Object.values(report.counts ?? {}).some((n) => n > 0) || report.bugs > 0
 
 // 報告に載せるだけのもの（自動改善の対象外のカテゴリ、見直しの時期が来た試用、再発）。
 export function reportExtras(ctx, state = loadAuto(ctx)) {
@@ -489,7 +470,8 @@ export function reportExtras(ctx, state = loadAuto(ctx)) {
   const fresh = candidates.filter((c) => c.status === 'new')
   const bugs = fresh.filter((c) => c.category === BUG_CATEGORY)
   const others = fresh.filter((c) => c.category === OTHER_CATEGORY)
-  const preferences = summarizeKeys(fresh.filter((c) => c.category === PREFERENCE_CATEGORY), { rejected: state.rejected })
+  // 好みの候補は user 単位。全リポジトリの分を、異なるセッションの数で数える。
+  const preferences = summarizeKeys(fresh.filter((c) => c.category === PREFERENCE_CATEGORY))
     .filter((e) => e.sessions >= ctx.config.candidates.preference_min_sessions)
   const reviewDays = ctx.config.trial_review_days
   const stale = reviewDays
@@ -510,7 +492,7 @@ export function writeReport(ctx, lock, body) {
   const day = dayOf(new Date(lock.at))
   let name = `auto-${day}`
   for (let n = 2; existsSync(join(ctx.dirs.reports, `${name}.md`)); n++) name = `auto-${day}-${n}`
-  const report = { name, at: lock.at, session_id: lock.session_id, counts, bugs: extras.bugs.length, preferences: extras.preferences.length, closed_at: null }
+  const report = { name, at: lock.at, session_id: lock.session_id, counts, bugs: extras.bugs.length, closed_at: null }
 
   const rules = new Map(listRules(ctx).map((r) => [r.cause_key, r]))
   const describe = (c) => {
@@ -540,14 +522,12 @@ export function writeReport(ctx, lock, body) {
     `- バグの候補（${BUG_CATEGORY}）：${extras.bugs.length} 件`,
     ...extras.bugs.map((c) => `  - ${c.id}［${c.cause_key}］${c.text}`),
     `- その他の気づき（${OTHER_CATEGORY}）：${extras.others.length} 件`,
-    `- 確認したい好みの候補（${ctx.config.candidates.preference_min_sessions} セッション以上）：${extras.preferences.length} 件`,
-    ...extras.preferences.map((p) => `  - ${p.key}（${p.sessions} セッション）：${p.texts.at(-1)}`),
     `- 見直しの時期が来た試用（${ctx.config.trial_review_days} 日超）：${extras.stale.length} 件`,
     ...extras.stale.map((t) => `  - ${t.key}（${t.kind === 'rule' ? '試用ルール' : '試用Skill'}、${t.days} 日）`),
     `- 再発した原因：${extras.recurrences.length} 件`,
     ...extras.recurrences.map((r) => `  - ${r.key}（${r.count} 回）`),
     `- 未確認の自動変更：${unreviewed(state).length} 件（上限 ${ctx.config.auto.max_unreviewed} 件）`,
-    `- 常時ロードのルール：${m.rule_lines} 行（目安 ${m.rule_limit} 行）。CLAUDE.md：${m.claude_md} 行（目安 ${m.claude_md_limit} 行）`,
+    `- self-improve が読み込ませるルール：${m.rule_lines} 行（試用ルール ${m.trial_rules} 行＋自分専用のルール ${m.personal_rules} 行、目安 ${m.rule_limit} 行）`,
     '',
   ]
   mkdirSync(ctx.dirs.reports, { recursive: true })
@@ -584,6 +564,32 @@ export function noticeOpen(state, key) {
   return !entry.closed_at && daysBetween(entry.first_shown_at) < NOTICE_DAYS
 }
 
+// user 単位の状態（全リポジトリで 1 つ）。リポジトリをまたぐ知らせ（好みの候補、user の設定の注意）と、掃除の日付。
+const userStateFile = (ctx) => join(ctx.dirs.userState, 'state.json')
+export function loadUserState(ctx) {
+  return { notices: {}, cleaned_on: null, ...(readJson(userStateFile(ctx), {}) || {}) }
+}
+export function updateUserState(ctx, fn) {
+  return withLock(ctx.dirs.userState, () => {
+    const state = loadUserState(ctx)
+    const result = fn(state)
+    writeJson(userStateFile(ctx), state)
+    return result
+  })
+}
+// user 単位の知らせを初めて出したときに、出し始めた時刻を記録する。
+export function recordShownUser(ctx, keys) {
+  const state = loadUserState(ctx)
+  const fresh = keys.filter((k) => !state.notices[k])
+  if (!fresh.length) return
+  updateUserState(ctx, (next) => {
+    for (const key of fresh) next.notices[key] ??= { first_shown_at: iso(), closed_at: null }
+    for (const [key, n] of Object.entries(next.notices)) {
+      if (daysBetween(n.first_shown_at) >= 60) delete next.notices[key]
+    }
+  })
+}
+
 // 初めて出した知らせに、出し始めた時刻を記録する（7 日を数えるため）。
 export function recordShown(ctx, keys) {
   const state = loadAuto(ctx)
@@ -600,7 +606,20 @@ export function recordShown(ctx, keys) {
 
 // 開いている知らせをすべて閉じる（review を開いたとき、または harness-note report close）。
 export function closeNotices(ctx) {
-  return updateAuto(ctx, (state) => {
+  let user = 0
+  if (Object.values(loadUserState(ctx).notices).some((n) => !n.closed_at)) {
+    user = updateUserState(ctx, (state) => {
+      let closed = 0
+      for (const notice of Object.values(state.notices)) {
+        if (!notice.closed_at) {
+          notice.closed_at = iso()
+          closed += 1
+        }
+      }
+      return closed
+    })
+  }
+  return user + updateAuto(ctx, (state) => {
     let closed = 0
     for (const report of state.reports) {
       if (!report.closed_at) {
@@ -652,49 +671,52 @@ export function reviewItems(ctx) {
     bugs: extras.bugs.map((c) => ({ id: c.id, cause_key: c.cause_key, text: c.text, at: c.at })),
     preferences: extras.preferences.map((p) => ({ cause_key: p.key, sessions: p.sessions, texts: p.texts })),
     auto_blocked: ctx.config.auto.interval_days ? blockedReasons(ctx, state) : [],
-    next_incident_id: nextIncidentId(ctx.repo.root),
+    // 自分専用に昇格済みのもの（参考。確認の対象ではない）。
+    promoted: Object.entries(state.promoted).map(([key, p]) => ({ cause_key: key, ...p })),
   }
 }
 
-export const DECISIONS = ['keep', 'edit', 'remove', 'promote', 'apply', 'dismiss']
+export const DECISIONS = ['keep', 'edit', 'remove', 'apply', 'dismiss']
 
 // 確認の結果を記録する。remove と dismiss は、その原因を「断られた」とする。
-export function reviewDone(ctx, id, decision, { incident = null, path = null } = {}) {
+// 昇格は、ここではなく promote（harness-note promote）で行う。
+export function reviewDone(ctx, id, decision, { incident = null } = {}) {
   const state = loadAuto(ctx)
   const change = state.changes.find((c) => c.id === id)
   if (!change) return { ok: false, errors: [`${id} という自動変更はありません。harness-note review で ID を確かめてください`] }
   const key = change.cause_key
   const notes = []
-  const dropTrial = () => {
-    if (getRule(ctx, key)) {
-      removeRule(ctx, key)
-      notes.push('試用ルールを消しました')
-    }
-    for (const skill of listSkills(ctx).filter((s) => s.cause_key === key)) {
-      const removed = removeSkill(ctx, skill.name)
-      notes.push(removed.ok ? `試用Skill ${skill.dir_name} を消しました` : removed.errors.join(' '))
-    }
+  if (incident) {
+    const found = getIncident(ctx, incident)
+    if (!found) return { ok: false, errors: [`失敗票 ${incident} がありません。先に harness-note incident add で起票してください`] }
+    if (found.data.repo_id !== ctx.repo.id) return { ok: false, errors: [`失敗票 ${incident} は、別のリポジトリ（${found.data.repo ?? '不明'}）のものです`] }
   }
   if (decision === 'remove' || decision === 'dismiss') {
-    if (decision === 'remove') dropTrial()
+    if (decision === 'remove') {
+      if (getRule(ctx, key)) {
+        removeRule(ctx, key)
+        notes.push('試用ルールを消しました')
+      }
+      for (const skill of listSkills(ctx).filter((s) => s.cause_key === key)) {
+        const removed = removeSkill(ctx, skill.name)
+        notes.push(removed.ok ? `試用Skill ${skill.dir_name} を消しました` : removed.errors.join(' '))
+      }
+    }
     if (removePending(ctx, key)) notes.push('失敗票の下書きを捨てました')
     const marked = rejectCause(ctx, key)
     notes.push(`原因 ${key} を「断られた」と記録しました（数えなくなる候補 ${marked} 件）。新しい候補がたまるまで、自動改善の対象にしません`)
-  } else if (decision === 'promote') {
-    dropTrial()
-    if (removePending(ctx, key)) notes.push('失敗票の下書きを捨てました（harness/incidents/ へ移した前提）')
   } else if (incident) {
-    // keep / edit / apply：失敗票を harness/incidents/ に置いた前提で、試用ルールの ID を付け替え、下書きを捨てる。
+    // keep / edit / apply：起票した失敗票の ID を試用ルールに付け、下書きを捨てる。
     const rule = getRule(ctx, key)
     if (rule) {
       writeJson(join(ctx.dirs.rules, `${key}.json`), { ...rule, ref: incident })
       notes.push(`試用ルールの失敗票 ID を ${incident} にしました`)
     }
-    if (removePending(ctx, key)) notes.push('失敗票の下書きを捨てました（harness/incidents/ へ移した前提）')
+    if (removePending(ctx, key)) notes.push('失敗票の下書きを捨てました（起票済みのため）')
   }
   updateAuto(ctx, (next) => {
-    // 同じ原因の未確認の変更は、まとめて確認済みにする（remove / promote / dismiss のとき）。
-    const together = ['remove', 'promote', 'dismiss'].includes(decision)
+    // 同じ原因の未確認の変更は、まとめて確認済みにする（remove / dismiss のとき）。
+    const together = ['remove', 'dismiss'].includes(decision)
     for (const c of next.changes) {
       if (c.reviewed_at) continue
       if (c.id === id || (together && c.cause_key === key)) {
@@ -702,9 +724,89 @@ export function reviewDone(ctx, id, decision, { incident = null, path = null } =
         c.decision = decision
       }
     }
-    if (decision === 'promote') next.promoted[key] = { at: iso(), path }
   })
   return { ok: true, change, notes }
+}
+
+// ---- 昇格 ----
+
+// 試用（ルールか Skill）を昇格する。未確認の変更があってもなくても使える（見直しの時期が来た試用にも）。
+//   to: 'personal'  自分専用。ルールは user 側の rules.md に足し（セッション開始時に読み込む）、Skill は置き場所を変えずに
+//                   試用の印を外す。リポジトリには何も足さない。
+//   to: 'team'      チーム。人の承認を通して、先に .claude/rules/ や .claude/skills/ へ移してあること（path）。
+//                   移した先のファイルがあるかを確かめてから、試用を消す。チームへ出すものには、失敗票 ID を付けない
+//                   （失敗票は自分の手元にしかなく、ほかの人には引けないため）。
+export function promote(ctx, { key, to, path = null, incident = null }) {
+  const rule = getRule(ctx, key)
+  const skills = listSkills(ctx).filter((s) => s.cause_key === key)
+  if (!rule && !skills.length) return { ok: false, errors: [`原因キー ${key} の試用（ルールも Skill も）がありません`] }
+  const ref = incident ?? (rule && INCIDENT_ID.test(String(rule.ref)) ? rule.ref : null)
+  if (ref) {
+    const found = getIncident(ctx, ref)
+    if (incident && !found) return { ok: false, errors: [`失敗票 ${incident} がありません。先に harness-note incident add で起票してください`] }
+    if (found && found.data.repo_id !== ctx.repo.id) return { ok: false, errors: [`失敗票 ${ref} は、別のリポジトリ（${found.data.repo ?? '不明'}）のものです`] }
+  }
+  const notes = []
+  let control
+  if (to === 'personal') {
+    if (rule) {
+      const added = addPersonalRule(ctx, { text: rule.text, ref })
+      if (!added.ok) return { ok: false, errors: added.errors }
+      removeRule(ctx, key)
+      control = `personal:${tildePath(personalRulesFile(ctx))}`
+      notes.push(`自分専用のルールに足しました：${added.line}（${tildePath(added.file)}）。このリポジトリのセッション開始時に読み込みます`)
+    }
+    for (const skill of skills) {
+      const promoted = promoteSkill(ctx, skill.name)
+      if (!promoted.ok) return { ok: false, errors: promoted.errors }
+      control ??= `personal:${tildePath(promoted.skill.dir)}`
+      notes.push(`Skill ${skill.dir_name} を、自分専用にしました（置き場所はそのまま。試用ではなくなり、直接直せます）`)
+    }
+  } else if (to === 'team') {
+    if (!path) return { ok: false, errors: ['チームへ昇格するときは、--path に、移した先のファイル（.claude/rules/… や .claude/skills/…/SKILL.md）を指定してください'] }
+    // 移した先があるかを、試用を消す前に確かめる（移し忘れたまま消すと、決まりそのものがなくなる）。
+    const target = realish(join(ctx.repo.root, path))
+    if (!isInside(ctx.repo.root, target) || target === ctx.repo.root) return { ok: false, errors: ['--path は、このリポジトリの中のファイルにしてください'] }
+    let text
+    try {
+      text = readFileSync(target, 'utf8')
+    } catch {
+      return { ok: false, errors: [`移した先のファイル（${path}）がありません。先に、ルールや Skill をそこへ書いてください。試用は消していません`] }
+    }
+    if (!text.trim()) return { ok: false, errors: [`移した先のファイル（${path}）が空です。試用は消していません`] }
+    if (/INC-\d{4}-\d{4}/.test(text)) {
+      return { ok: false, errors: [`移した先のファイル（${path}）に、失敗票 ID（INC-…）が書かれています。チームへ出すものには付けません（失敗票は、あなたの手元にしかないため）。ID を消してから、やり直してください`] }
+    }
+    control = posix(path)
+    if (rule) {
+      removeRule(ctx, key)
+      notes.push('試用ルールを消しました')
+    }
+    for (const skill of skills) {
+      const removed = removeSkill(ctx, skill.name)
+      if (!removed.ok) return { ok: false, errors: removed.errors }
+      notes.push(`試用Skill ${skill.dir_name} を消しました`)
+    }
+  } else {
+    return { ok: false, errors: ['--to は personal（自分専用）か team（チーム）です'] }
+  }
+  if (ref && getIncident(ctx, ref)) {
+    updateIncident(ctx, ref, { status: 'converted', control, promoted_at: dayOf() })
+    notes.push(`失敗票 ${ref} を converted にしました`)
+    if (removePending(ctx, key)) notes.push('失敗票の下書きを捨てました（起票済みのため）')
+  } else if (existsSync(pendingFile(ctx, key))) {
+    notes.push(`失敗票の下書きが残っています。記録として残すなら harness-note incident add --from-draft --key ${key}、要らなければ harness-note pending remove ${key}`)
+  }
+  updateAuto(ctx, (next) => {
+    for (const c of next.changes) {
+      if (!c.reviewed_at && c.cause_key === key) {
+        c.reviewed_at = iso()
+        c.decision = 'promote'
+      }
+    }
+    next.promoted[key] = { at: iso(), to, path: control }
+  })
+  return { ok: true, to, control, notes }
 }
 
 // 採否の集計（設計書 10 章「自動改善の採否」）。

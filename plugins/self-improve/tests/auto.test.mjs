@@ -401,31 +401,32 @@ test('試用ルール・試用Skill の上限：実行の途中で達したら�
   assert.equal(note(t, ['status', '--json']).json.gates.trial_skills, 1)
 })
 
-test('行数の歯止め：見るのは「paths なしのルール＋試用ルール」だけ。CLAUDE.md が長くても、自動改善は止まらない', () => {
+// 自分専用のルールを、user 側のファイルに置く（昇格した結果と同じ形）。
+const personalRules = (t, lines) => writeFiles(join(t.user, 'repos', t.name), { 'rules.md': `# 自分専用のルール\n\n${lines.map((l) => `- ${l}`).join('\n')}\n` })
+
+test('行数の歯止め：数えるのは self-improve が足した分（試用ルール＋自分専用のルール）だけ。チームのルールや CLAUDE.md が長くても、自動改善は止まらない', () => {
   const t = makeEnv({
     config: AUTO,
     files: {
       'CLAUDE.md': Array.from({ length: 160 }, (_, i) => `- 行 ${i}`).join('\n'),
-      '.claude/rules/always.md': '- いつも読むルール\n',
+      '.claude/rules/always.md': '- いつも読むルール\n'.repeat(80),
       '.claude/rules/scoped.md': `---\npaths:\n  - "src/**"\n---\n${'- 絞ったルール\n'.repeat(60)}`,
     },
   })
+  personalRules(t, ['ルート定義は src/routes/ に置く', 'マイグレーションは手で書かない'])
   const lock = startAuto(t, ['route-placement'])
-  assert.match(lock.stdout, /常時ロードのルール 1\/50 行/)
+  assert.match(lock.stdout, /読み込ませるルール（試用＋自分専用）2\/50 行/)
   draft(t, 'route-placement')
   assert.match(trialAdd(t, 'route-placement').stdout, /追加しました/)
-  // paths 付きのルールと CLAUDE.md は、歯止めの行数に数えない
   const gates = note(t, ['status', '--json']).json.gates
-  assert.deepEqual([gates.rule_lines, gates.rule_limit, gates.claude_md_lines, gates.claude_md_limit], [2, 50, 160, 100])
+  assert.deepEqual([gates.rule_lines, gates.personal_rules, gates.trial_rules, gates.rule_limit], [3, 2, 1, 50])
 })
 
 test('行数の歯止めに掛かる対象は、lock の時点で「追加できない」と分かり、下書きで候補を消費しない', () => {
-  const t = makeEnv({
-    config: { auto: { interval_days: 7, max_trial_skills: 0 }, budget: { always_loaded_rule_lines: 3 } },
-    files: { '.claude/rules/always.md': '- a\n- b\n- c\n' },
-  })
+  const t = makeEnv({ config: { auto: { interval_days: 7, max_trial_skills: 0 }, budget: { always_loaded_rule_lines: 3 } } })
+  personalRules(t, ['a を守る', 'b を守る', 'c を守る'])
   const lock = startAuto(t, ['route-placement'])
-  assert.match(lock.stdout, /route-placement（dev\/mistake、2 セッション）— 新規。ただし、いまは追加できません（常時ロードのルールが行数の目安を超えます（paths なしのルール 3 行＋試用ルール 0 行、目安 3 行）/)
+  assert.match(lock.stdout, /route-placement（dev\/mistake、2 セッション）— 新規。ただし、いまは追加できません（self-improve が読み込ませるルールが行数の目安を超えます（試用ルール 0 行＋自分専用のルール 3 行、目安 3 行）/)
   const target = note(t, ['lock', '--session', 'auto-1', '--json'], { now: at(61) }).json.lock.targets[0]
   assert.deepEqual([target.allowed, Boolean(target.blocked)], [[], true])
 
@@ -439,14 +440,15 @@ test('行数の歯止めに掛かる対象は、lock の時点で「追加でき
   assert.match(draft(t, 'route-placement', { extra: ['--proposal-kind', 'guard', '--proposal', 'src/api/ への Write を止める'] }).stdout, /承認待ちの案として登録しました/)
   finishAuto(t)
   // 理由は記録にも残る
-  assert.match(note(t, ['report', 'show']).stdout, /route-placement（dev\/mistake、2 セッション、追加できない：常時ロードのルールが行数の目安を超えます/)
+  assert.match(note(t, ['report', 'show']).stdout, /route-placement（dev\/mistake、2 セッション、追加できない：self-improve が読み込ませるルールが行数の目安を超えます/)
 
   // 試用ルールは足せないが、試用 Skill は足せる場合：skill add だけを案内する
-  const t2 = makeEnv({ config: { auto: { interval_days: 7 }, budget: { always_loaded_rule_lines: 3 } }, files: { '.claude/rules/always.md': '- a\n- b\n- c\n' } })
+  const t2 = makeEnv({ config: { auto: { interval_days: 7 }, budget: { always_loaded_rule_lines: 3 } } })
+  personalRules(t2, ['a を守る', 'b を守る', 'c を守る'])
   const lock2 = startAuto(t2, ['migration-forgotten'])
-  assert.match(lock2.stdout, /新規。skill add だけ（常時ロードのルールが行数の目安を超えます/)
+  assert.match(lock2.stdout, /新規。skill add だけ（self-improve が読み込ませるルールが行数の目安を超えます/)
   assert.match(draft(t2, 'migration-forgotten').stdout, /下書きを書きました/)
-  assert.match(trialAdd(t2, 'migration-forgotten').stdout, /見送り：常時ロードのルールが行数の目安を超えます/)
+  assert.match(trialAdd(t2, 'migration-forgotten').stdout, /見送り：self-improve が読み込ませるルールが行数の目安を超えます/)
 })
 
 test('再発：1 回目だけ試用ルールを編集してよい。2 回目以降は編集せず、案だけ。再発は編集したかにかかわらず数える', () => {
@@ -496,7 +498,7 @@ test('再発：1 回目だけ試用ルールを編集してよい。2 回目以�
   assert.match(report, /再発した原因：1 件\n {2}- route-placement（2 回）/)
 })
 
-test('report write: lock したセッションだけが書ける。報告に載せるだけのもの（バグ・好み・その他）も並べる', () => {
+test('report write: lock したセッションだけが書ける。報告に載せるだけのもの（バグ・その他）も並べる。好みの候補は、user 単位の知らせに回すので載せない', () => {
   const t = makeEnv({ config: AUTO })
   seedCandidates(t, 'null-check-missing', ['b1'], { category: 'dev/bug' })
   seedCandidates(t, 'misc-note', ['o1'], { category: 'dev/other' })
@@ -515,7 +517,7 @@ test('report write: lock したセッションだけが書ける。報告に載�
   const body = '## route-placement\\n- 根拠：候補 2 件。事象メモなし\\n- 照らし合わせた既存のルール：CLAUDE.md（矛盾なし）'
   const written = note(t, ['report', 'write', '--session', 'auto-1', '--body', body], { now: at(65) })
   assert.match(written.stdout, /実行の記録を書きました：auto-2026-11-16/)
-  assert.match(written.stdout, /自動改善（11\/16）：試用ルールを1件追加、試用Skillを1件追加。バグの候補が1件。確認したい好みの候補が1件。/)
+  assert.match(written.stdout, /自動改善（11\/16）：試用ルールを1件追加、試用Skillを1件追加。バグの候補が1件。\n/)
   assert.deepEqual(dataFiles(t, 'reports'), [`${repoId(t)}/auto-2026-11-16.md`])
   const report = readData(t, 'reports', repoId(t), 'auto-2026-11-16.md')
   assert.match(report, /- route-placement（dev\/mistake、2 セッション）/)
@@ -524,34 +526,42 @@ test('report write: lock したセッションだけが書ける。報告に載�
   assert.match(report, /- 根拠：候補 2 件。事象メモなし\n- 照らし合わせた既存のルール/)
   assert.match(report, /バグの候補（dev\/bug）：1 件\n {2}- c-.*［null-check-missing］/)
   assert.match(report, /その他の気づき（dev\/other）：1 件/)
-  assert.match(report, /確認したい好みの候補（3 セッション以上）：1 件\n {2}- prefers-pnpm（3 セッション）/)
-  assert.doesNotMatch(report, /prefers-tabs/)
+  assert.doesNotMatch(report, /prefers-pnpm|prefers-tabs|好みの候補/)
   assert.deepEqual(note(t, ['report', 'list', '--json']).json.map((r) => [r.name, r.counts.trial_add, r.counts.skill_add, r.closed_at]), [['auto-2026-11-16', 1, 1, null]])
 })
 
-test('review: 未確認の自動変更を中身つきで並べ、残す・消す・昇格するを記録する', () => {
+test('review: 未確認の自動変更を中身つきで並べ、残す・消すを記録する。残すときは、下書きから失敗票を起票する', () => {
   const t = makeEnv({ config: AUTO })
-  startAuto(t, ['key-keep', 'key-remove', 'key-promote'])
-  for (const key of ['key-keep', 'key-remove', 'key-promote']) {
+  startAuto(t, ['key-keep', 'key-remove'])
+  for (const key of ['key-keep', 'key-remove']) {
     draft(t, key)
     trialAdd(t, key)
   }
   // 自動改善のセッションは、自分で確認済みにできない
   const items = note(t, ['review'], { now: at(0, 2) }).json
   assert.match(note(t, ['review', 'done', items.unreviewed[0].id, '--decision', 'keep', '--session', 'auto-1'], { now: at(64) }).stdout, /見送り：自動改善のセッションでは、確認の結果を記録しません/)
-  note(t, ['report', 'write', '--session', 'auto-1', '--body', '3 件'], { now: at(65) })
-  note(t, ['unlock', '--session', 'auto-1'], { now: at(66) })
+  finishAuto(t, { now: at(65), body: '2 件' })
 
-  assert.equal(items.unreviewed.length, 3)
+  assert.equal(items.unreviewed.length, 2)
   assert.equal(items.oldest_days, 1)
-  assert.equal(items.next_incident_id, 'INC-2026-0001')
   const byKey = Object.fromEntries(items.unreviewed.map((i) => [i.cause_key, i]))
   assert.equal(byKey['key-keep'].kind, 'trial_add')
   assert.equal(byKey['key-keep'].rule.line, '- key-keep の決まりを守る（下書き:key-keep）')
   assert.match(byKey['key-keep'].draft, /## 実際の結果/)
 
-  // 残す：失敗票を harness/incidents/ に置いた前提で、ID を付け替え、下書きを捨てる
-  writeFiles(t.repo, { 'harness/incidents/INC-2026-0001.md': '---\nid: INC-2026-0001\ncause_key: key-keep\nstatus: trial\ncontrol: trial:rules/key-keep\n---\n' })
+  // 残す：下書きから失敗票を起票し（status や control は、下書きの値を引き継ぐ）、その ID を試用ルールに付ける
+  const issued = note(t, ['incident', 'add', '--from-draft', '--key', 'key-keep', '--session', 'human-1'], { now: at(1, 2) })
+  assert.match(issued.stdout, /失敗票を起票しました：INC-2026-0001（~\/\.claude\/self-improve\/incidents\/INC-2026-0001\.md）\n下書きは、起票したので捨てました。/)
+  const incident = readFileSync(join(t.user, 'incidents/INC-2026-0001.md'), 'utf8')
+  assert.match(incident, /^status: trial$/m)
+  assert.match(incident, /^control: trial:rules\/key-keep$/m)
+  assert.match(incident, /^applied_by: auto$/m)
+  assert.match(incident, /^repo: demo-app$/m)
+  assert.match(incident, /## 実際の結果\n\nsrc\/api\/ に置いた/)
+  // 起票していない ID は受け付けない
+  const missing = note(t, ['review', 'done', byKey['key-keep'].id, '--decision', 'keep', '--incident', 'INC-2026-0099', '--session', 'human-1'], { now: at(1, 2) })
+  assert.equal(missing.status, 1)
+  assert.match(missing.stderr, /失敗票 INC-2026-0099 がありません。先に harness-note incident add で起票してください/)
   const keep = note(t, ['review', 'done', byKey['key-keep'].id, '--decision', 'keep', '--incident', 'INC-2026-0001', '--session', 'human-1'], { now: at(1, 2) })
   assert.match(keep.stdout, /試用ルールの失敗票 ID を INC-2026-0001 にしました/)
   assert.match(note(t, ['trial', 'list']).stdout, /- key-keep の決まりを守る（INC-2026-0001）/)
@@ -567,24 +577,25 @@ test('review: 未確認の自動変更を中身つきで並べ、残す・消す
   seedCandidates(t, 'key-remove', ['x2'], { now: at(1, 3) })
   assert.deepEqual(note(t, ['targets', '--json']).json.targets.map((x) => [x.key, x.mode]), [['key-remove', 'new']])
 
-  // 昇格する：.claude/rules/ へ移した前提で、試用を消す。その後の再発は、編集せず案だけ
-  const promote = note(t, ['review', 'done', byKey['key-promote'].id, '--decision', 'promote', '--path', '.claude/rules/promote.md', '--session', 'human-1'], { now: at(3, 2) })
-  assert.match(promote.stdout, /試用ルールを消しました/)
-  assert.deepEqual(note(t, ['trial', 'list', '--json']).json.map((r) => r.cause_key), ['key-keep'])
-  seedCandidates(t, 'key-promote', ['y1', 'y2'], { now: at(2, 3) })
-  const promoted = note(t, ['targets', '--json']).json.targets.find((x) => x.key === 'key-promote')
-  assert.deepEqual([promoted.mode, promoted.trial, promoted.allowed], ['recurrence', 'promoted', []])
-
   const after = note(t, ['review']).json
   assert.deepEqual(after.unreviewed, [])
-  assert.deepEqual(note(t, ['status', '--json']).json.decisions, { kept: 2, removed: 1 })
+  assert.deepEqual(note(t, ['status', '--json']).json.decisions, { kept: 1, removed: 1 })
   assert.deepEqual(dataFiles(t, 'pending'), [])
   assert.equal(note(t, ['review', 'done', 'a-nope', '--decision', 'keep', '--session', 'human-1']).status, 1)
   assert.equal(note(t, ['review', 'done', byKey['key-keep'].id, '--decision', 'whatever', '--session', 'human-1']).status, 1)
+  // 昇格は、review done ではなく promote で行う
+  const viaReview = note(t, ['review', 'done', byKey['key-keep'].id, '--decision', 'promote', '--session', 'human-1'])
+  assert.equal(viaReview.status, 1)
+  assert.match(viaReview.stderr, /昇格は、harness-note promote/)
 })
 
 test('pending add: 分類と項目を検査する。本文は 4 見出しで、同じ原因の失敗票を related に入れる', () => {
-  const t = makeEnv({ files: { 'harness/incidents/INC-2026-0003.md': '---\nid: INC-2026-0003\ncause_key: route-placement\nstatus: converted\ncontrol: .claude/rules/routes.md\n---\n' } })
+  const t = makeEnv()
+  // このリポジトリの失敗票（user 側）と、別のリポジトリの、同じ原因キーの失敗票
+  writeFiles(join(t.user, 'incidents'), {
+    'INC-2026-0003.md': `---\nid: INC-2026-0003\nrepo: demo-app\nrepo_id: ${repoId(t)}\ncause_key: route-placement\nstatus: converted\ncontrol: .claude/rules/routes.md\n---\n`,
+    'INC-2026-0004.md': '---\nid: INC-2026-0004\nrepo: other-app\nrepo_id: other-app-000000000000\ncause_key: route-placement\nstatus: open\ncontrol: null\n---\n',
+  })
   seedCandidates(t, 'route-placement', ['s1'], { now: at(0) })
   const base = ['pending', 'add', '--session', 'human-1', '--key', 'route-placement', '--asked', 'a', '--expected', 'b', '--actual', 'c']
   assert.equal(note(t, [...base, '--root-cause', 'laziness']).status, 1)
@@ -604,7 +615,8 @@ test('pending add: 分類と項目を検査する。本文は 4 見出しで、�
   assert.deepEqual(note(t, ['pending', 'list', '--json']).json, ['route-placement'])
   assert.match(note(t, ['pending', 'remove', 'route-placement']).stdout, /捨てました/)
   assert.equal(note(t, ['pending', 'show', 'route-placement']).status, 1)
-  assert.equal(readFileSync(join(t.repo, 'harness/incidents/INC-2026-0003.md'), 'utf8').includes('converted'), true)
+  // 関連する票は、今のリポジトリの票だけ（別のリポジトリの INC-2026-0004 は入らない）
+  assert.doesNotMatch(text, /INC-2026-0004/)
 })
 
 test('対策を入れなかった記録（環境が原因など）と、試用に添えた案も、未確認の自動変更として人に見せる', () => {
@@ -626,8 +638,9 @@ test('対策を入れなかった記録（環境が原因など）と、試用�
   assert.match(items.unreviewed[1].draft, /## 承認待ちの案（ガード）\n\nsrc\/api\/ への Write を止める/)
   assert.deepEqual(items.other_drafts, [])
 
-  // 直す：文言を直して残す（失敗票の ID を付け替える）
+  // 直す：文言を直して残す（下書きから起票し、その ID を付ける）
   note(t, ['trial', 'edit', '--session', 'human-1', '--key', 'route-placement', '--text', 'ルート定義は src/routes/ に置く'], { now: at(0, 1) })
+  assert.match(note(t, ['incident', 'add', '--from-draft', '--key', 'route-placement', '--session', 'human-1'], { now: at(0, 1) }).stdout, /INC-2026-0001/)
   const edited = note(t, ['review', 'done', items.unreviewed[1].id, '--decision', 'edit', '--incident', 'INC-2026-0001', '--session', 'human-1'], { now: at(1, 1) })
   assert.match(edited.stdout, /失敗票 ID を INC-2026-0001 にしました/)
   // 対応しない：下書きを捨て、その原因を「断られた」と記録する

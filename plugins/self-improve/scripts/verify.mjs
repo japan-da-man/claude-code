@@ -1,10 +1,10 @@
-// harness/config.json の verify を実行する。
+// リポジトリの harness/config.json の verify（検証コマンド）を実行する。リポジトリのこのファイルから読むのは、verify だけ。
 // on-stop.mjs から呼ばれる（verifyTurn）。直接実行すれば、検証コマンドを 1 回走らせて結果を見られる：
 //   node verify.mjs [リポジトリのパス]     失敗があれば終了コード 1
 import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { isMain, iso, logEvent, makeContext, readJson, sessionDir, writeJson } from './lib/core.mjs'
+import { inactiveReason, isMain, iso, logEvent, makeContext, readJson, sessionDir, writeJson } from './lib/core.mjs'
 
 // 検証の失敗が続いたら、ここで打ち切って人に知らせる。
 // 公式の連続 8 回の上限は、Claude がツールを呼ぶたびにリセットされるので、止め役にならない。
@@ -152,9 +152,10 @@ export function describeFailure(failure) {
 }
 
 if (isMain(import.meta.url)) {
-  const ctx = makeContext(process.argv[2] || process.cwd())
+  const start = process.argv[2] || process.cwd()
+  const ctx = makeContext(start)
   if (!ctx) {
-    process.stderr.write('harness/config.json がありません。先に /self-improve:init を実行してください。\n')
+    process.stderr.write(`${inactiveReason(start) ?? 'self-improve は、ここでは動いていません'}。\n`)
     process.exitCode = 1
   } else if (!ctx.config.verify.length) {
     process.stdout.write('検証コマンドは設定されていません（harness/config.json の verify が空）。\n')

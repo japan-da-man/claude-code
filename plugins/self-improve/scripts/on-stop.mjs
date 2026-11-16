@@ -50,6 +50,8 @@ function verifyMessage(result) {
 export async function onStop(input) {
   const ctx = hookContext(input)
   if (!ctx || !ctx.sessionId) return { code: 0 }
+  // user の設定が読めないあいだは、記録を止める。検証も、記録（変更の印）をもとに動くので、動かさない。
+  if (!ctx.recording) return { code: 0 }
   // 自動改善のセッションでは、検証・事象メモ・改善候補の確認を動かさない。
   if (isLocked(ctx)) return { code: 0 }
   heartbeat(ctx, 'record')
@@ -117,8 +119,10 @@ export async function onStop(input) {
     })
   }
 
-  // 3. 改善候補の確認。検証が失敗したときは、検証の結果だけを返す（確認は、検証が通ったあとの Stop で頼む）。
-  if (!block && !notice && (signals.length || changes.length) && !state.asked) {
+  // 3. 改善候補の確認。失敗の信号（ツールの失敗、訂正、ガードの拒否、検証の失敗）があったターンだけ頼む。
+  //    すべてのリポジトリで動くので、変更があっただけのターンでは頼まない（トークンと待ち時間を抑えるため）。
+  //    検証が失敗したときは、検証の結果だけを返す（確認は、検証が通ったあとの Stop で頼む）。
+  if (!block && !notice && signals.length && !state.asked) {
     const max = ctx.config.candidates.max_per_session
     // 上限は、そのセッションが直近 24 時間に記録した件数で数える。
     const recorded = sessionCount(loadCandidates(ctx), ctx.sessionId)

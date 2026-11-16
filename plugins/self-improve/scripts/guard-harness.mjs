@@ -4,14 +4,17 @@
 //   自動改善のセッション → Read・Grep・Glob と harness-note 以外のツールを、すべて拒否する（確認は出さない）
 // 拒否は、自分で生ログに記録する。HARNESS_GUARD_DRYRUN=1 のとき（test-guards.mjs）は記録しない。
 //
-// すべてのツール呼び出しで動くので、先頭では Node.js の標準だけを使い、することがないと分かった時点で抜ける
-// （lib/ の読み込みは、そのあとで行う）。先に抜けるのは、次のどちらかのとき。
-//   - harness/config.json が、どの階層にもない（init していない）
+//
+// すべてのツール呼び出しで、すべてのリポジトリで動くので、先頭では Node.js の標準と scope.mjs（標準だけで書いてある）
+// だけを使い、することがないと分かった時点で抜ける（lib/ のほかの読み込みは、そのあとで行う）。先に抜けるのは、次のとき。
+//   - self-improve が動かない場所（git リポジトリでない、除外してある、HARNESS_DISABLE=1）。判定は scope.mjs で、
+//     記録する側と同じものを使う
 //   - ファイルの書き込みでも Bash でもなく、ロックがどこにもなく、このセッションが lock を試みた記録もない
 // どちらも「あとの判定でも何もしない」と確かめられる場合だけで、迷うときは先へ進む。
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveScope } from './lib/scope.mjs'
 
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash'])
 
@@ -21,22 +24,6 @@ function readInput() {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
   } catch {
     return {}
-  }
-}
-
-// start から上の階層に、harness/config.json があるか（リポジトリの根かどうかは、あとの判定で確かめる）。
-function hasConfigAbove(start) {
-  let dir
-  try {
-    dir = realpathSync(resolve(start))
-  } catch {
-    return false
-  }
-  for (;;) {
-    if (existsSync(join(dir, 'harness', 'config.json'))) return true
-    const parent = dirname(dir)
-    if (parent === dir) return false
-    dir = parent
   }
 }
 
@@ -75,9 +62,7 @@ function noAutoState(sessionId) {
 
 // あとの判定でも何もしないと分かっているか。
 export function nothingToDo(input) {
-  if (process.env.HARNESS_DISABLE === '1') return true
-  const starts = [process.env.CLAUDE_PROJECT_DIR, input.cwd, process.cwd()].filter((s) => typeof s === 'string' && s)
-  if (!starts.some(hasConfigAbove)) return true
+  if (!resolveScope(input.cwd).active) return true
   if (WRITE_TOOLS.has(String(input.tool_name ?? ''))) return false
   return noAutoState(input.session_id)
 }
@@ -91,9 +76,11 @@ export async function guard(input) {
   const result = evaluate(ctx, input)
   if (result.decision === 'deny') {
     // harness-note の呼び出し方の検査（書式の検査）による拒否は、失敗の信号に数えない。
+    // user の設定が読めないあいだは、拒否はするが、記録はしない（logEvent が書かない）。
     if (process.env.HARNESS_GUARD_DRYRUN !== '1' && !isLocked(ctx) && result.rule !== NOTE_CALL_RULE) {
       heartbeat(ctx, 'guard')
-      logEvent(ctx, { type: 'guard_denied', prompt_id: input.prompt_id ?? null, rule: result.rule, tool: input.tool_name, target: result.target ?? null })
+      // source は、どのファイルのルールか（共通リスト、user 側、リポジトリ）。組み込みの判定は builtin。
+      logEvent(ctx, { type: 'guard_denied', prompt_id: input.prompt_id ?? null, rule: result.rule, source: result.source ?? 'builtin', tool: input.tool_name, target: result.target ?? null })
     }
     return { code: 2, stderr: `[self-improve] ${result.message}（ルール：${result.rule}）` }
   }

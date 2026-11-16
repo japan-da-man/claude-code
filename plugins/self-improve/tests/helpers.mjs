@@ -1,6 +1,6 @@
 // テスト用の足場。データ領域もホームも一時ディレクトリに向け、実際の ~/.claude には書かない。
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -22,23 +22,33 @@ export function writeFiles(dir, files) {
   }
 }
 
-// init 済みのリポジトリ（.git と harness/config.json がある）と、空のデータ領域・ホームを作る。
-export function makeEnv({ config = {}, files = {}, initialized = true, name = 'demo-app' } = {}) {
-  const base = mkdtempSync(join(tmpdir(), 'self-improve-test-'))
+// git リポジトリ（.git がある）と、空のデータ領域・ホームを作る。init はいらない（すべての git リポジトリで動く）。
+// 実際の ~/.claude には書かない。ホーム、~/.claude、データ領域は、すべて一時ディレクトリに向ける。
+//   config     user の設定（~/.claude/self-improve/config.json）に書く。verify は、リポジトリの harness/config.json に書く
+//              （リポジトリのファイルから読むのは、verify だけ）。何も渡さなければ、user の設定は作らない（初期値で動く）
+//   files      リポジトリに置くファイル
+//   userFiles  user 側（~/.claude/self-improve/）に置くファイル
+//   git        false なら、git リポジトリにしない（self-improve が動かない場所）
+export function makeEnv({ config = {}, files = {}, userFiles = {}, git = true, name = 'demo-app' } = {}) {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'self-improve-test-')))
   const repo = join(base, name)
   const data = join(base, 'data')
   const home = join(base, 'home')
   const claudeHome = join(home, '.claude')
-  mkdirSync(join(repo, '.git'), { recursive: true })
+  const user = join(claudeHome, 'self-improve')
+  mkdirSync(git ? join(repo, '.git') : repo, { recursive: true })
   mkdirSync(claudeHome, { recursive: true })
-  if (initialized) writeFiles(repo, { 'harness/config.json': config })
+  const { verify, ...userConfig } = config
+  if (Object.keys(userConfig).length) writeFiles(user, { 'config.json': userConfig })
+  if (verify) writeFiles(repo, { 'harness/config.json': { verify } })
   writeFiles(repo, files)
+  writeFiles(user, userFiles)
   // 親プロセスの CLAUDE_* や HARNESS_* は引き継がない（テストの外の状態に左右されないように）。
   // 日付の表示は現地時刻なので、テストでは UTC に固定する。
   // HARNESS_TEST=1 のときだけ、HARNESS_NOW で時刻を固定できる。時刻を渡さない呼び出しも、基準の時刻で動かす
   // （実際の時計で動かすと、テストを走らせる時刻によって、ロックの失効などの結果が変わる）。
   const env = { PATH: process.env.PATH, HOME: home, TZ: 'UTC', HARNESS_TEST: '1', HARNESS_NOW: at(0), HARNESS_DATA_DIR: data, HARNESS_CLAUDE_HOME: claudeHome }
-  return { base, repo, data, home, claudeHome, env, name }
+  return { base, repo, data, home, claudeHome, user, env, name }
 }
 
 export function runHook(file, input, t, { env = {}, now = null } = {}) {
@@ -55,6 +65,23 @@ export function runHook(file, input, t, { env = {}, now = null } = {}) {
     // JSON でない出力（または出力なし）
   }
   return { status: run.status, stdout: run.stdout, stderr: run.stderr, json }
+}
+
+// テストのプロセスの中で、スクリプトの関数を直接呼ぶときに使う。環境変数を、そのテストの一時ディレクトリに向ける
+// （ホーム、~/.claude、データ領域）。こうしないと、実際の ~/.claude の設定を読んでしまう。終わったら元に戻す。
+const SCOPED_ENV = ['HOME', 'HARNESS_CLAUDE_HOME', 'HARNESS_DATA_DIR', 'HARNESS_TEST', 'HARNESS_NOW', 'HARNESS_DISABLE', 'HARNESS_PROJECT_DIR', 'HARNESS_SESSION_ID', 'CLAUDE_PROJECT_DIR', 'CLAUDE_CONFIG_DIR', 'CLAUDE_PLUGIN_DATA', 'CLAUDE_CODE_PLUGIN_CACHE_DIR']
+export function withEnv(t, fn, extra = {}) {
+  const saved = Object.fromEntries(SCOPED_ENV.map((key) => [key, process.env[key]]))
+  for (const key of SCOPED_ENV) delete process.env[key]
+  Object.assign(process.env, { HOME: t.home, HARNESS_CLAUDE_HOME: t.claudeHome, HARNESS_DATA_DIR: t.data, HARNESS_TEST: '1', HARNESS_NOW: at(0) }, extra)
+  try {
+    return fn()
+  } finally {
+    for (const key of SCOPED_ENV) {
+      if (saved[key] === undefined) delete process.env[key]
+      else process.env[key] = saved[key]
+    }
+  }
 }
 
 // 実際の bash の版。古い bash（macOS の 3.2 など）にない書き方を、テストで飛ばすのに使う。bash がなければ null。

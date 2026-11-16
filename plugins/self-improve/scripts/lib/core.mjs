@@ -1,5 +1,6 @@
 // hook のスクリプトと harness-note が共有する土台。
-// リポジトリの特定、設定の読み込み、データ領域の解決、ファイルの読み書き、生ログ。
+// リポジトリの特定、設定の読み込み（初期値 → user の設定 → リポジトリごとの上書き）、データ領域の解決、ファイルの読み書き、生ログ。
+// どこで動くかの判定は scope.mjs にある（ガードの早い判定と同じものを使う）。
 // 外部の依存は使わない（Node.js 標準だけ）。ネットワークには出ない。
 import { createHash, randomBytes } from 'node:crypto'
 import {
@@ -8,6 +9,9 @@ import {
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { claudeHome, gitRootOf, isInside, readUserConfig, resolveScope, userDir } from './scope.mjs'
+
+export { claudeHome, isInside, userDir }
 
 export const PLUGIN = 'self-improve'
 export const PLUGIN_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
@@ -18,7 +22,8 @@ export const DAY_MS = 24 * 60 * 60 * 1000
 export const DEFAULT_CONFIG = {
   trial_review_days: 60,
   episode_retention_days: 90,
-  budget: { claude_md_lines: 100, always_loaded_rule_lines: 50, scoped_rule_file_lines: 50 },
+  // self-improve がセッション開始時に読み込ませる行数（試用ルール＋自分専用のルール）の目安。
+  budget: { always_loaded_rule_lines: 50 },
   candidates: {
     min_sessions: 2,
     preference_min_sessions: 3,
@@ -139,11 +144,6 @@ export function slug(value, fallback = 'repo') {
 
 export const posix = (p) => p.split(sep).join('/')
 
-export function isInside(parent, child) {
-  const rel = relative(parent, child)
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
-}
-
 // 存在しないパスでも、存在する祖先までを実体のパスに直す（シンボリックリンク経由の抜け道を塞ぐ）。
 export function realish(target) {
   let current = resolve(target)
@@ -162,99 +162,110 @@ export function realish(target) {
 
 // ---- リポジトリ ----
 
-function commonDirOf(dotgit, stat) {
-  let gitdir = dotgit
-  if (stat.isFile()) {
-    const match = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotgit, 'utf8'))
-    if (!match) return null
-    gitdir = resolve(dirname(dotgit), match[1])
-  }
-  try {
-    const common = readFileSync(join(gitdir, 'commondir'), 'utf8').trim()
-    if (common) gitdir = resolve(gitdir, common)
-  } catch {
-    // commondir がなければ、その gitdir が共通ディレクトリ
-  }
-  try {
-    return realpathSync(gitdir)
-  } catch {
-    return null
-  }
-}
-
 // cwd から上へたどって .git を探す。リポジトリ ID は git の共通ディレクトリのパスから作るので、
 // worktree でも同じ ID になる。git コマンドは呼ばない。
+function describeRepo(found) {
+  const common = found.commonDir
+  const raw = basename(common) === '.git' ? basename(dirname(common)) : basename(common).replace(/\.git$/, '')
+  const name = slug(raw)
+  return { root: found.root, commonDir: common, name, id: `${name}-${sha(common)}` }
+}
 export function findRepo(start) {
-  let dir
-  try {
-    dir = realpathSync(resolve(start || process.cwd()))
-  } catch {
-    return null
-  }
-  for (;;) {
-    const dotgit = join(dir, '.git')
-    let stat = null
-    try {
-      stat = statSync(dotgit)
-    } catch {
-      // 上の階層を探す
-    }
-    if (stat) {
-      const common = commonDirOf(dotgit, stat)
-      if (common) {
-        const raw = basename(common) === '.git' ? basename(dirname(common)) : basename(common).replace(/\.git$/, '')
-        const name = slug(raw)
-        return { root: dir, commonDir: common, name, id: `${name}-${sha(common)}` }
-      }
-    }
-    const parent = dirname(dir)
-    if (parent === dir) return null
-    dir = parent
-  }
+  const found = gitRootOf(start)
+  return found ? describeRepo(found) : null
+}
+
+// user 側の、リポジトリごとの置き場所（設定の上書き、ガード、自分専用のルール）。
+// ~/.claude/self-improve/repos/<名前>/。同じ名前のリポジトリを分けたいときは、<名前>-<ID の英数字> のディレクトリを作れば、
+// そちらを先に使う（harness-note status に、いま使っている場所が出る）。
+export function userRepoDir(repo) {
+  const byId = join(userDir(), 'repos', repo.id)
+  return existsSync(byId) ? byId : join(userDir(), 'repos', repo.name)
+}
+
+// 人に見せるパス。ホームの下は ~ から書く（絶対パスをそのまま出さない）。
+export function tildePath(path) {
+  const home = homedir()
+  const abs = resolve(path)
+  if (abs === home) return '~'
+  return isInside(home, abs) ? `~/${posix(relative(home, abs))}` : posix(abs)
 }
 
 // ---- 設定 ----
 
 const count = (value, fallback) => (Number.isFinite(value) && value >= 0 ? value : fallback)
+const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
+// リポジトリの harness/config.json。ここから読むのは、検証コマンド（verify）だけ。
 export function configPath(root) {
   return join(root, 'harness', 'config.json')
 }
 
-// harness/config.json がなければ null（＝ init していないリポジトリ。hook は何もしない）。
-// 壊れていても初期値で動かし、error に理由を残す。
-export function loadConfig(root) {
-  const file = configPath(root)
-  if (!existsSync(file)) return null
-  let raw = {}
-  let error = null
+// JSON のファイルを 1 つ読む。なければ空。読めなければ error に理由を入れる。
+function readLayer(file) {
+  let text
   try {
-    raw = JSON.parse(readFileSync(file, 'utf8'))
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('オブジェクトではありません')
+    text = readFileSync(file, 'utf8')
   } catch (e) {
-    error = e.message
-    raw = {}
+    return { exists: e?.code !== 'ENOENT', raw: {}, error: e?.code === 'ENOENT' ? null : e.message }
   }
+  try {
+    const raw = JSON.parse(text)
+    if (!isObject(raw)) throw new Error('オブジェクトではありません')
+    return { exists: true, raw, error: null }
+  } catch (e) {
+    return { exists: true, raw: {}, error: e.message }
+  }
+}
+
+// 上の層の値で、下の層を上書きする（budget・candidates・auto・prune は、項目ごとに重ねる）。
+function overlay(base, top) {
+  const out = { ...base }
+  for (const [key, value] of Object.entries(top)) {
+    out[key] = isObject(value) && isObject(base[key]) ? { ...base[key], ...value } : value
+  }
+  return out
+}
+
+// 設定を重ねて読む。初期値 → user の設定（~/.claude/self-improve/config.json）
+// → リポジトリごとの上書き（~/.claude/self-improve/repos/<名前>/config.json）の順。
+// リポジトリの harness/config.json からは、検証コマンド（verify）だけを読む。リポジトリのファイルは、
+// 共有されたり、プルで変わったりするので、仕組みの動き方（自動改善の間隔や上限など）は決めさせない。
+// 読めない層は飛ばして、errors に理由を残す。
+export function loadConfig(repo, user = readUserConfig()) {
+  const errors = []
+  const notes = [...user.notes]
+  if (user.error) errors.push(`${tildePath(user.file)}：${user.error}。直すまで、記録と掃除を止めています（ガードは効いています）`)
+  const overrideFile = join(userRepoDir(repo), 'config.json')
+  const override = readLayer(overrideFile)
+  if (override.error) errors.push(`${tildePath(overrideFile)} を読めません（${override.error}）。このリポジトリの上書きは使っていません`)
+  const repoFile = readLayer(configPath(repo.root))
+  if (repoFile.error) errors.push(`harness/config.json を読めません（${repoFile.error}）。検証コマンドは動いていません`)
+  const ignored = Object.keys(repoFile.raw).filter((key) => key !== 'verify' && !key.startsWith('$') && key !== 'description')
+  if (ignored.length) {
+    notes.push(`harness/config.json の ${ignored.join('、')} は読みません（読むのは verify だけです）。${tildePath(overrideFile)} に移してください`)
+  }
+
+  const raw = overlay(overlay({}, user.raw), override.raw)
   const d = DEFAULT_CONFIG
   const categories = Array.isArray(raw.candidates?.categories) && raw.candidates.categories.every((c) => typeof c === 'string' && c)
     ? raw.candidates.categories
     : d.candidates.categories
-  const verify = Array.isArray(raw.verify)
-    ? raw.verify.filter((v) => v && typeof v.run === 'string' && v.run.trim()).map((v, i) => ({
+  const verify = Array.isArray(repoFile.raw.verify)
+    ? repoFile.raw.verify.filter((v) => v && typeof v.run === 'string' && v.run.trim()).map((v, i) => ({
       name: typeof v.name === 'string' && v.name ? v.name : `verify-${i + 1}`,
       run: v.run,
       timeout_sec: count(v.timeout_sec, 240) || 240,
     }))
     : []
   return {
-    file,
-    error,
+    errors,
+    notes,
+    files: { user: user.file, override: overrideFile, repo: configPath(repo.root) },
     trial_review_days: count(raw.trial_review_days, d.trial_review_days),
     episode_retention_days: count(raw.episode_retention_days, d.episode_retention_days),
     budget: {
-      claude_md_lines: count(raw.budget?.claude_md_lines, d.budget.claude_md_lines),
       always_loaded_rule_lines: count(raw.budget?.always_loaded_rule_lines, d.budget.always_loaded_rule_lines),
-      scoped_rule_file_lines: count(raw.budget?.scoped_rule_file_lines, d.budget.scoped_rule_file_lines),
     },
     candidates: {
       min_sessions: Math.max(1, count(raw.candidates?.min_sessions, d.candidates.min_sessions)),
@@ -277,10 +288,6 @@ export function loadConfig(root) {
 
 // ---- データ領域 ----
 
-// ~/.claude に当たる場所。テストでは HARNESS_CLAUDE_HOME で一時ディレクトリに向ける。
-export function claudeHome() {
-  return resolve(process.env.HARNESS_CLAUDE_HOME || process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'))
-}
 export function personalSkillsDir() {
   return join(claudeHome(), 'skills')
 }
@@ -347,41 +354,56 @@ export function dirsFor(data, repoId) {
     auto: join(state, 'auto.json'),
     lock: join(state, 'lock.json'),
     heartbeat: join(state, 'heartbeat.json'),
+    // どのリポジトリのデータかの控え（1 日 1 回の掃除が、リポジトリごとの保持期間を引くのに使う）。
+    repoInfo: join(state, 'repo.json'),
+    // user 単位のもの（全リポジトリで共有する）。好みの候補と、知らせ・掃除の状態。
+    prefs: join(data, 'candidates', USER_SCOPE),
+    userState: join(data, 'state', USER_SCOPE),
   }
 }
+// データ領域の中で、user 単位のものを置くディレクトリ名（リポジトリ ID と重ならない）。
+export const USER_SCOPE = '_user'
 
-// hook と harness-note が共通で使う文脈。init していないリポジトリでは null。
-// リポジトリは、セッションを始めた場所（CLAUDE_PROJECT_DIR）を先に見る。cwd を先に見ると、
-// 入れ子の別のリポジトリへ cd しただけで、ロックや確認の対象から外れてしまうため。
-// ただし cwd が同じリポジトリの worktree なら、そちらの根を使う（検証は、変更のある側で走らせる）。
+// hook と harness-note が共通で使う文脈。動かない場所（git リポジトリでない、除外してある、HARNESS_DISABLE=1）では null。
+// リポジトリは、セッションを始めた場所を先に見る（scope.mjs）。ただし cwd が同じリポジトリの worktree なら、
+// そちらの根を使う（検証は、変更のある側で走らせる）。
 export function makeContext(cwd, { sessionId = null } = {}) {
-  const initialized = (start) => {
-    const repo = start ? findRepo(start) : null
-    const config = repo ? loadConfig(repo.root) : null
-    return config ? { repo, config } : null
-  }
-  let found = null
-  for (const start of [process.env.CLAUDE_PROJECT_DIR, cwd, process.cwd()]) {
-    found = initialized(start)
-    if (found) break
-  }
-  if (!found) return null
-  const here = initialized(cwd)
-  if (here && here.repo.id === found.repo.id) found = here
+  const scope = resolveScope(cwd)
+  if (!scope.active) return null
+  let found = scope.repo
+  const here = gitRootOf(cwd || process.cwd())
+  if (here && here.commonDir === found.commonDir) found = here
+  const repo = describeRepo(found)
   const data = resolveDataDir()
   return {
-    repo: found.repo,
-    config: found.config,
+    repo,
+    config: loadConfig(repo, scope.user),
     data: data.dir,
     dataSource: data.source,
-    dirs: dirsFor(data.dir, found.repo.id),
+    dirs: dirsFor(data.dir, repo.id),
+    // user 側の置き場所（~/.claude/self-improve/ の下）。
+    user: { dir: userDir(), repoDir: userRepoDir(repo), incidents: join(userDir(), 'incidents') },
+    // user の設定が読めないあいだは false。ガードは効かせたまま、記録と掃除を止める。
+    recording: scope.recording,
     sessionId: sessionId ? safeId(sessionId) : null,
   }
 }
 
-// hook 用。HARNESS_DISABLE=1 と、init していないリポジトリでは null（＝何もしない）。
+// 動かない理由を、人に伝える文にする（harness-note 用）。
+export function inactiveReason(cwd) {
+  const scope = resolveScope(cwd)
+  if (scope.active) return null
+  return {
+    disabled: 'HARNESS_DISABLE=1 なので、self-improve は止まっています',
+    no_repo: 'git リポジトリではありません。self-improve は、git リポジトリの中で動きます',
+    home: 'ホームディレクトリそのものは、self-improve の対象から外してあります',
+    node_modules: 'node_modules の中は、self-improve の対象から外してあります',
+    exclude: `このリポジトリは、~/.claude/self-improve/config.json の exclude で、self-improve の対象から外してあります`,
+  }[scope.reason]
+}
+
+// hook 用。動かない場所では null（＝何もしない）。
 export function hookContext(input) {
-  if (disabled()) return null
   return makeContext(input.cwd, { sessionId: input.session_id })
 }
 
@@ -425,6 +447,8 @@ export function withLock(dir, fn) {
 
 export function logEvent(ctx, event) {
   const record = { ts: iso(), session_id: ctx.sessionId, ...event }
+  // user の設定が読めないあいだは、記録しない（除外の一覧を信じられないため）。
+  if (ctx.recording === false) return record
   mkdirSync(ctx.dirs.events, { recursive: true })
   appendFileSync(join(ctx.dirs.events, `${dayOf()}.jsonl`), `${JSON.stringify(record)}\n`)
   return record
@@ -457,6 +481,7 @@ export function readEvents(ctx, since) {
 
 // hook が最後に動いた時刻。記録が止まっていないかの判定に使う（生ログの行数では判定しない）。
 export function heartbeat(ctx, kind) {
+  if (ctx.recording === false) return
   try {
     const current = readJson(ctx.dirs.heartbeat, {}) || {}
     current[kind] = iso()
