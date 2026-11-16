@@ -1,16 +1,21 @@
 {
+  "exclude": [],
   "trial_review_days": 60,
   "episode_retention_days": 90,
   "budget": {
-    "claude_md_lines": 100,
-    "always_loaded_rule_lines": 50,
-    "scoped_rule_file_lines": 50
+    "always_loaded_rule_lines": 50
   },
   "candidates": {
     "min_sessions": 2,
     "preference_min_sessions": 3,
     "max_per_session": 3,
-    "categories": ["dev/bug", "dev/cause", "dev/mistake", "dev/other", "behavior/preference"]
+    "categories": [
+      "dev/bug",
+      "dev/cause",
+      "dev/mistake",
+      "dev/other",
+      "behavior/preference"
+    ]
   },
   "auto": {
     "interval_days": 0,
@@ -21,6 +26,5 @@
   },
   "prune": {
     "interval_days": 30
-  },
-  "verify": []
+  }
 }

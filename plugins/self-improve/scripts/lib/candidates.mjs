@@ -1,8 +1,8 @@
 // 改善候補（Claude が書く 1 行の気づき）の保存と集計。
 // 1 件 1 ファイル。状態は new / consumed / rejected。件数は「異なるセッションの数」で数える。
-import { mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { AUTO_CATEGORIES, DAY_MS, daysBetween, iso, listFiles, now, randomId, readJson, withLock, writeJson } from './core.mjs'
+import { AUTO_CATEGORIES, DAY_MS, PREFERENCE_CATEGORY, daysBetween, iso, listFiles, now, randomId, readJson, withLock, writeJson } from './core.mjs'
 
 export const KEY_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/
 export const TEXT_MAX = 300
@@ -13,18 +13,30 @@ export function validKey(key) {
   return typeof key === 'string' && key.length >= 3 && key.length <= 50 && KEY_PATTERN.test(key)
 }
 
-export function loadCandidates(ctx) {
+// 置き場所。好みの候補（behavior/preference）は user 単位で、全リポジトリの分を 1 か所に置く
+// （好みはリポジトリをまたぐので、どのリポジトリで書いたものも一緒に数える）。ほかは、リポジトリごと。
+const dirOf = (ctx, candidate) => (candidate.category === PREFERENCE_CATEGORY ? ctx.dirs.prefs : ctx.dirs.candidates)
+
+function readDir(dir) {
   const out = []
-  for (const file of listFiles(ctx.dirs.candidates, (f) => f.endsWith('.json'))) {
-    const c = readJson(join(ctx.dirs.candidates, file))
+  for (const file of listFiles(dir, (f) => f.endsWith('.json'))) {
+    const c = readJson(join(dir, file))
     if (c && c.id && c.cause_key) out.push(c)
   }
-  return out.sort((a, b) => String(a.at).localeCompare(String(b.at)))
+  return out
+}
+
+// このリポジトリの候補と、user 単位の好みの候補（全リポジトリの分）。
+export function loadCandidates(ctx) {
+  const own = readDir(ctx.dirs.candidates).filter((c) => c.category !== PREFERENCE_CATEGORY)
+  const prefs = readDir(ctx.dirs.prefs).filter((c) => c.category === PREFERENCE_CATEGORY)
+  return [...own, ...prefs].sort((a, b) => String(a.at).localeCompare(String(b.at)))
 }
 
 function save(ctx, candidate) {
-  mkdirSync(ctx.dirs.candidates, { recursive: true })
-  writeJson(join(ctx.dirs.candidates, `${candidate.id}.json`), candidate)
+  const dir = dirOf(ctx, candidate)
+  mkdirSync(dir, { recursive: true })
+  writeJson(join(dir, `${candidate.id}.json`), candidate)
 }
 
 const normalize = (text) => String(text).replace(/\s+/g, ' ').trim()
@@ -97,6 +109,9 @@ export function addCandidate(ctx, { category, key, text, sessionId, sessionSourc
       session_id: sessionId,
       session_source: sessionSource,
       episode,
+      // どのリポジトリで書いたか（好みの候補は、全リポジトリの分が 1 か所に集まるので、見分けられるように）。
+      repo: ctx.repo.name,
+      repo_id: ctx.repo.id,
       status: 'new',
     }
     save(ctx, candidate)
@@ -158,14 +173,29 @@ export function rekey(ctx, from, to) {
   return changed
 }
 
-// 保持期間を過ぎた new の候補を消す。
-export function pruneCandidates(ctx) {
-  const days = ctx.config.episode_retention_days
+// 保持期間を過ぎた new の候補を、そのディレクトリから消す（1 日 1 回の掃除が、リポジトリごとと user 単位の両方に使う）。
+// 1.x が、リポジトリごとの場所に記録した好みの候補を、user 単位の場所へ移す（全リポジトリで数えるため）。
+// どのリポジトリで出たか（分かる範囲で）を足す。同じ ID のファイルが移した先にあれば、そのまま残す。
+export function adoptLegacyPreferences(fromDir, prefsDir, repo) {
+  let moved = 0
+  for (const c of readDir(fromDir)) {
+    if (c.category !== PREFERENCE_CATEGORY) continue
+    const target = join(prefsDir, `${c.id}.json`)
+    if (existsSync(target)) continue
+    mkdirSync(prefsDir, { recursive: true })
+    writeJson(target, { ...c, repo: c.repo ?? repo.name ?? null, repo_id: c.repo_id ?? repo.id })
+    rmSync(join(fromDir, `${c.id}.json`), { force: true })
+    moved++
+  }
+  return moved
+}
+
+export function pruneCandidatesIn(dir, days) {
   if (!days) return 0
   let removed = 0
-  for (const c of loadCandidates(ctx)) {
+  for (const c of readDir(dir)) {
     if (c.status === 'new' && daysBetween(c.at) >= days) {
-      rmSync(join(ctx.dirs.candidates, `${c.id}.json`), { force: true })
+      rmSync(join(dir, `${c.id}.json`), { force: true })
       removed++
     }
   }

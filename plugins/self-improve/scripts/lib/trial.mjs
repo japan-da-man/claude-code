@@ -1,11 +1,11 @@
 // 試用ルール（データ領域の trial/<リポジトリID>/rules/）と、試用 Skill（~/.claude/skills/<リポジトリ名>-<名前>/）。
 // 置き場所はここで固定する。呼び出し側からパスは受け取らない。
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { iso, isInside, lineCount, listFiles, parseFrontmatter, personalSkillsDir, readJson, writeFileAtomic, writeJson } from './core.mjs'
+import { iso, isInside, listFiles, parseFrontmatter, personalSkillsDir, readJson, realish, writeFileAtomic, writeJson } from './core.mjs'
 import { renderSkill, validateRuleText, validateSkill } from './content.mjs'
 
-// ---- 常時ロードの行数 ----
+// ---- self-improve が読み込ませる行数 ----
 
 function readText(file) {
   try {
@@ -15,46 +15,13 @@ function readText(file) {
   }
 }
 
-export function ruleFiles(root) {
-  const base = join(root, '.claude', 'rules')
-  let names = []
-  try {
-    names = readdirSync(base, { recursive: true }).map(String)
-  } catch {
-    return []
-  }
-  const out = []
-  for (const name of names.filter((n) => n.endsWith('.md')).sort()) {
-    const text = readText(join(base, name))
-    if (text === null) continue
-    const { data } = parseFrontmatter(text)
-    const paths = data?.paths
-    const scoped = Array.isArray(paths) ? paths.length > 0 : Boolean(paths)
-    out.push({ file: `.claude/rules/${name.split('\\').join('/')}`, text, lines: lineCount(text), scoped })
-  }
-  return out
-}
-
-// 常時ロードの行数。試用ルールは毎回読み込まれるので、常時ロードとして数える。
-// 自動改善が追加をやめるかどうかは、rule_lines（paths なしのルール＋試用ルール）と rule_limit で決める。
-// CLAUDE.md の行数は、警告にだけ使う。
+// セッション開始時に self-improve が読み込ませる行数（試用ルール＋自分専用のルール）。
+// 数えるのは、self-improve が足した分だけ。リポジトリの CLAUDE.md や .claude/rules/（チームのルール）は数えない
+// （共有リポジトリで、チームのルールが多いだけで自動改善が止まるのを避けるため）。
 export function measureAlwaysLoaded(ctx) {
-  const budget = ctx.config.budget
-  const claudeMd = [join(ctx.repo.root, 'CLAUDE.md'), join(ctx.repo.root, '.claude', 'CLAUDE.md')]
-    .map(readText).filter((t) => t !== null).reduce((sum, t) => sum + lineCount(t), 0)
-  const rules = ruleFiles(ctx.repo.root)
-  const unscoped = rules.filter((r) => !r.scoped).reduce((sum, r) => sum + r.lines, 0)
   const trial = listRules(ctx).length
-  return {
-    claude_md: claudeMd,
-    claude_md_limit: budget.claude_md_lines,
-    unscoped_rules: unscoped,
-    trial_rules: trial,
-    rule_lines: unscoped + trial,
-    rule_limit: budget.always_loaded_rule_lines,
-    total: claudeMd + unscoped + trial,
-    scoped: rules.filter((r) => r.scoped).map((r) => ({ file: r.file, lines: r.lines })),
-  }
+  const personal = listPersonalRules(ctx).length
+  return { trial_rules: trial, personal_rules: personal, rule_lines: trial + personal, rule_limit: ctx.config.budget.always_loaded_rule_lines }
 }
 
 // 試用ルールをもう 1 件足せるか。足せないときは理由を返す。
@@ -64,7 +31,7 @@ export function ruleCapacity(ctx) {
   if (count >= max) return { ok: false, reason: `試用ルールが上限（${max} 件）に達しています` }
   const m = measureAlwaysLoaded(ctx)
   if (m.rule_lines + 1 > m.rule_limit) {
-    return { ok: false, reason: `常時ロードのルールが行数の目安を超えます（paths なしのルール ${m.unscoped_rules} 行＋試用ルール ${m.trial_rules} 行、目安 ${m.rule_limit} 行）` }
+    return { ok: false, reason: `self-improve が読み込ませるルールが行数の目安を超えます（試用ルール ${m.trial_rules} 行＋自分専用のルール ${m.personal_rules} 行、目安 ${m.rule_limit} 行）` }
   }
   return { ok: true, reason: null }
 }
@@ -133,6 +100,41 @@ export function removeRule(ctx, key) {
   return { ok: true, rule: current }
 }
 
+// ---- 自分専用のルール（昇格先のひとつ）----
+
+// 自分専用に昇格したルールは、user 側の ~/.claude/self-improve/repos/<名前>/rules.md に、1 行に 1 つ置く。
+// リポジトリには何も足さない。そのリポジトリのセッション開始時に、試用ルールと一緒に読み込ませる。
+// 人が直接直してもよい（書き込みには確認が出る）。
+export const personalRulesFile = (ctx) => join(ctx.user.repoDir, 'rules.md')
+
+export function listPersonalRules(ctx) {
+  const text = readText(personalRulesFile(ctx))
+  if (text === null) return []
+  const out = []
+  text.replace(/\r\n/g, '\n').split('\n').forEach((line, index) => {
+    const match = /^[-*]\s+(.+?)\s*$/.exec(line)
+    if (!match) return
+    const ref = /（(INC-\d{4}-\d{4})）$/.exec(match[1])
+    out.push({ line: index + 1, text: ref ? match[1].slice(0, ref.index).trim() : match[1], ref: ref ? ref[1] : null, raw: match[1] })
+  })
+  return out
+}
+
+export function addPersonalRule(ctx, { text, ref = null }) {
+  const checked = validateRuleText(text)
+  if (!checked.ok) return { ok: false, errors: checked.errors }
+  const file = personalRulesFile(ctx)
+  const current = readText(file)
+  if (current !== null && listPersonalRules(ctx).some((r) => r.text === checked.text)) {
+    return { ok: false, errors: ['同じ文のルールが、すでに自分専用のルールにあります'] }
+  }
+  const header = `# ${ctx.repo.name}：自分専用のルール\n\nself-improve が、このリポジトリのセッション開始時に読み込ませます。「- 」で始まる行が、1 行で 1 つのルールです。\n\n`
+  const line = `- ${checked.text}${ref ? `（${ref}）` : ''}\n`
+  const base = current === null ? header : current.endsWith('\n') ? current : `${current}\n`
+  writeFileAtomic(file, `${base}${line}`)
+  return { ok: true, file, line: line.trim() }
+}
+
 // ---- 試用 Skill ----
 
 const MARKER = '.self-improve.json'
@@ -168,15 +170,30 @@ function skillTarget(ctx, name) {
   return { base, dir, dirName }
 }
 
-export function listSkills(ctx) {
+// このリポジトリの試用 Skill。promoted を true にすると、自分専用に昇格済みのものを返す。
+export function listSkills(ctx, { promoted = false } = {}) {
   const base = personalSkillsDir()
   const out = []
   for (const name of listFiles(base)) {
     const marker = readJson(join(base, name, MARKER))
-    if (!marker || marker.repo_id !== ctx.repo.id) continue
+    if (!marker || marker.repo_id !== ctx.repo.id || Boolean(marker.promoted_at) !== promoted) continue
     out.push({ ...marker, dir: join(base, name), dir_name: name })
   }
   return out.sort((a, b) => String(a.added_at).localeCompare(String(b.added_at)))
+}
+
+// 試用 Skill を、自分専用に昇格する。置き場所（~/.claude/skills/）は変えず、印のファイルに昇格の日時を書く。
+// 昇格したあとは試用ではないので、試用の件数にも、消える対象にも入らず、ガードも直接の編集を止めない。
+export function promoteSkill(ctx, name) {
+  const target = skillTarget(ctx, name)
+  if (target.error) return { ok: false, errors: [target.error] }
+  const marker = readJson(join(target.dir, MARKER))
+  if (!marker || marker.plugin !== 'self-improve' || marker.repo_id !== ctx.repo.id || marker.promoted_at) {
+    return { ok: false, errors: [`${target.dirName} は、このリポジトリの試用 Skill ではありません`] }
+  }
+  const next = { ...marker, promoted_at: iso(), promoted_to: 'personal' }
+  writeJson(join(target.dir, MARKER), next)
+  return { ok: true, skill: { ...next, dir: target.dir, dir_name: target.dirName } }
 }
 
 export function readSkill(skill) {
@@ -214,7 +231,7 @@ export function removeSkill(ctx, name) {
   const target = skillTarget(ctx, name)
   if (target.error) return { ok: false, errors: [target.error] }
   const marker = readJson(join(target.dir, MARKER))
-  if (!marker || marker.plugin !== 'self-improve' || marker.repo_id !== ctx.repo.id) {
+  if (!marker || marker.plugin !== 'self-improve' || marker.repo_id !== ctx.repo.id || marker.promoted_at) {
     return { ok: false, errors: [`${target.dirName} は、このリポジトリの試用 Skill ではありません`] }
   }
   const extra = listFiles(target.dir).filter((f) => f !== 'SKILL.md' && f !== MARKER)
@@ -226,9 +243,15 @@ export function removeSkill(ctx, name) {
 }
 
 // あるパスが、試用 Skill の中かどうか（ガードが直接の書き込みを止めるのに使う）。
+// 個人用の Skill の置き場所は、リンクのことがある（dotfiles で管理している場合など）。名前の側と実体の側の両方で見る。
 export function isTrialSkillPath(absPath) {
-  const base = personalSkillsDir()
-  if (!isInside(base, absPath) || resolve(absPath) === resolve(base)) return false
-  const first = resolve(absPath).slice(resolve(base).length + 1).split(/[\\/]/)[0]
-  return existsSync(join(base, first, MARKER))
+  const target = resolve(absPath)
+  for (const base of new Set([resolve(personalSkillsDir()), realish(personalSkillsDir())])) {
+    if (!isInside(base, target) || target === base) continue
+    const first = target.slice(base.length + 1).split(/[\\/]/)[0]
+    // 自分専用に昇格した Skill は、試用ではない。人が直せる（~/.claude への書き込みなので、Claude Code の確認は出る）。
+    const marker = join(base, first, MARKER)
+    if (existsSync(marker) && !readJson(marker)?.promoted_at) return true
+  }
+  return false
 }

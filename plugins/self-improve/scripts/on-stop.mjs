@@ -33,6 +33,8 @@ function askMessage(ctx, { remaining, episode }) {
     '   原因キー：英小文字とハイフンの短い名前（例：route-placement）',
     "   --text は、必ず単一引用符（'…'）で囲む（$ やバッククォートを、そのままの文字として渡すため）。文の中の ' は、「」などに言い換える",
     `3. このセッションで記録できるのは、あと ${remaining} 件。記録したら、ほかの作業はせずに終了する`,
+    // 依頼文は日本語だが、報告は、ユーザーの言語に合わせさせる（日本語でない会話に、日本語の 1 行が混ざらないように）。
+    '4. 記録したら、ユーザーへの報告は、この会話でユーザーが使っている言語で 1 行だけ書く（例：「改善候補を 1 件記録しました：<原因キー>」）',
   ].join('\n')
 }
 
@@ -47,9 +49,11 @@ function verifyMessage(result) {
   ].join('\n')
 }
 
-export function onStop(input) {
+export async function onStop(input) {
   const ctx = hookContext(input)
   if (!ctx || !ctx.sessionId) return { code: 0 }
+  // user の設定が読めないあいだは、記録を止める。検証も、記録（変更の印）をもとに動くので、動かさない。
+  if (!ctx.recording) return { code: 0 }
   // 自動改善のセッションでは、検証・事象メモ・改善候補の確認を動かさない。
   if (isLocked(ctx)) return { code: 0 }
   heartbeat(ctx, 'record')
@@ -86,9 +90,11 @@ export function onStop(input) {
   let unverifiedFailure = null
 
   // 1. 検証。そのターンでファイルの変更があったときだけ。検証が通ったあとに変更がなければ、繰り返さない。
+  //    人が許可した中身（harness-note verify trust）と一致するときだけ実行する。許可されていなければ、実行しない
+  //    （セッション開始時に、許可の仕方を知らせている）。クローンしただけのリポジトリのコマンドを、同意なしに走らせないため。
   const unverified = changes.filter((c) => !state.verified_at || c.ts > state.verified_at)
-  if (unverified.length && ctx.config.verify.length) {
-    const result = verifyTurn(ctx, { promptId })
+  if (unverified.length && ctx.config.verify.length && ctx.config.verify_trust.trusted) {
+    const result = await verifyTurn(ctx, { promptId })
     if (result.ok) {
       state.verified_at = iso()
     } else {
@@ -117,8 +123,10 @@ export function onStop(input) {
     })
   }
 
-  // 3. 改善候補の確認。検証が失敗したときは、検証の結果だけを返す（確認は、検証が通ったあとの Stop で頼む）。
-  if (!block && !notice && (signals.length || changes.length) && !state.asked) {
+  // 3. 改善候補の確認。失敗の信号（ツールの失敗、訂正、ガードの拒否、検証の失敗）があったターンだけ頼む。
+  //    すべてのリポジトリで動くので、変更があっただけのターンでは頼まない（トークンと待ち時間を抑えるため）。
+  //    検証が失敗したときは、検証の結果だけを返す（確認は、検証が通ったあとの Stop で頼む）。
+  if (!block && !notice && signals.length && !state.asked) {
     const max = ctx.config.candidates.max_per_session
     // 上限は、そのセッションが直近 24 時間に記録した件数で数える。
     const recorded = sessionCount(loadCandidates(ctx), ctx.sessionId)
@@ -156,7 +164,7 @@ export function onStop(input) {
 
 if (isMain(import.meta.url)) {
   try {
-    const result = onStop(readHookInput())
+    const result = await onStop(readHookInput())
     if (result.stdout) process.stdout.write(result.stdout)
     if (result.stderr) process.stderr.write(`${result.stderr}\n`)
     process.exitCode = result.code

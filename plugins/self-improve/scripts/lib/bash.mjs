@@ -11,15 +11,109 @@ const SIMPLE_PARAMETER = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/
 // 引用の外にあると、bash が語を作り替える文字（ブレース展開、パス名展開、チルダ展開）。
 const SPECIAL_CHARS = '{}*?[]~'
 
+// $( の中身の終わり（対応する閉じ括弧）を探す。start は $( の直後。見つからなければ -1。
+// 引用、入れ子の $( )、バッククォート、ヒアドキュメント（本文に括弧や引用があってもよい）を読み飛ばす。
+// Claude Code の標準のコミットの形（git commit -m "$(cat <<'EOF' … EOF )"）を、正しく読むためのもの。
+export function substEnd(text, start) {
+  let depth = 1
+  const docs = []
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '\\') {
+      i++
+    } else if (ch === "'") {
+      const end = text.indexOf("'", i + 1)
+      if (end < 0) return -1
+      i = end
+    } else if (ch === '"') {
+      let j = i + 1
+      for (; j < text.length && text[j] !== '"'; j++) {
+        if (text[j] === '\\') j++
+        else if (text[j] === '$' && text[j + 1] === '(') {
+          const end = substEnd(text, j + 2)
+          if (end < 0) return -1
+          j = end
+        } else if (text[j] === '`') {
+          const end = text.indexOf('`', j + 1)
+          if (end < 0) return -1
+          j = end
+        }
+      }
+      if (j >= text.length) return -1
+      i = j
+    } else if (ch === '`') {
+      const end = text.indexOf('`', i + 1)
+      if (end < 0) return -1
+      i = end
+    } else if (ch === '<' && text[i + 1] === '<' && text[i + 2] !== '<') {
+      let k = i + 2
+      const stripTabs = text[k] === '-'
+      if (stripTabs) k++
+      while (text[k] === ' ' || text[k] === '\t') k++
+      let tag = ''
+      for (; k < text.length; k++) {
+        const c = text[k]
+        if (c === "'" || c === '"') {
+          const end = text.indexOf(c, k + 1)
+          if (end < 0) return -1
+          tag += text.slice(k + 1, end)
+          k = end
+        } else if (c === '\\') {
+          tag += text[k + 1] ?? ''
+          k++
+        } else if (/[\s;&|<>()]/.test(c)) {
+          break
+        } else {
+          tag += c
+        }
+      }
+      if (!tag) return -1
+      docs.push({ tag, stripTabs })
+      i = k - 1
+    } else if (ch === '\n' && docs.length) {
+      let at = i + 1
+      for (const doc of docs.splice(0)) {
+        let found = false
+        while (at <= text.length) {
+          let end = text.indexOf('\n', at)
+          if (end < 0) end = text.length
+          const line = text.slice(at, end)
+          at = end + 1
+          if ((doc.stripTabs ? line.replace(/^\t+/, '') : line) === doc.tag) {
+            found = true
+            break
+          }
+          if (end === text.length) break
+        }
+        if (!found) return -1
+      }
+      i = at - 2
+    } else if (ch === '#' && (i === start || /\s/.test(text[i - 1]))) {
+      const end = text.indexOf('\n', i)
+      if (end < 0) return -1
+      i = end - 1
+    } else if (ch === '(') {
+      depth++
+    } else if (ch === ')') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
 // コマンドを、区切り（; && || | & 改行 括弧）ごとのセグメントに分ける。
 // 各セグメントは words（引用を外した語）と redirects（op と target）を持つ。
 // 語とリダイレクト先には、次の印が付く。
 //   quoted   引用（'…'、"…"）を含む
 //   expands  変数の展開やコマンド置換を含む（$NAME、${NAME}、"…$NAME…"、`…`）
+//   subst    コマンド置換を含む。restored に、置換を中身の文字列に戻した形が入る（$(echo --force) → echo --force）
 //   special  引用の外に、bash が語を作り替える文字（{ } * ? [ ] ~）がある。ブレース展開・パス名展開・チルダ展開で、
 //            1 つの語が別の語や複数の語になりうる（{--session=x,--key} は 2 語になる）
 // 返す印：
-//   subst      コマンド置換（$( ) とバッククォート）がある
+//   subst      コマンド置換（$( ) とバッククォート）がある。中身は、別のセグメントとして読む（引用の中のものも）。
+//              置換を含む語は、$(…) という置き場所の文字になり、もとのセグメントは分かれない。
+//              中身を戻した形は、語の restored に残す（restoredSkeleton が、禁止リストの照合に使う）
 //   uncertain  bash と読み方がずれうる書き方がある。$'…'、${…@…} のような単純でない展開、
 //              区切りが単純でないヒアドキュメント、終わりの見つからないヒアドキュメントや引用、
 //              区切りを引用していないヒアドキュメントの本文の展開
@@ -32,11 +126,13 @@ export function parseBash(command, depth = 0) {
   let word = null
   let pendingRedirect = null
   const heredocs = []
+  // コマンド置換の中身。あとで、別のコマンドとして読む。
+  const inner = []
 
   const endWord = () => {
     if (!word) return
     if (pendingRedirect) {
-      segment.redirects.push({ op: pendingRedirect, target: word.text, quoted: word.quoted, expands: word.expands, special: word.special })
+      segment.redirects.push({ op: pendingRedirect, target: word.text, quoted: word.quoted, expands: word.expands, special: word.special, subst: word.subst })
       pendingRedirect = null
     } else {
       segment.words.push(word)
@@ -49,9 +145,11 @@ export function parseBash(command, depth = 0) {
     if (segment.words.length || segment.redirects.length) segments.push(segment)
     segment = newSegment()
   }
-  const add = (ch, quoted = false) => {
-    if (!word) word = { text: '', quoted: false, expands: false, special: false }
+  // restored は、コマンド置換を中身の文字列に戻した形（置換のない語では text と同じ）。
+  const add = (ch, quoted = false, restored = ch) => {
+    if (!word) word = { text: '', restored: '', quoted: false, expands: false, special: false, subst: false }
     word.text += ch
+    word.restored += restored
     if (quoted) word.quoted = true
   }
   // $ で始まる展開。単純な $NAME と ${NAME} 以外は、読み方に自信がないものとして扱う。
@@ -60,6 +158,26 @@ export function parseBash(command, depth = 0) {
     if (next === '(') subst = true
     else if (next === '{' && !SIMPLE_PARAMETER.test(text.slice(at, at + 80))) uncertain = true
     if (word) word.expands = true
+  }
+
+  // コマンド置換を読む。at は $ か ` の位置。語には置き場所の文字（$(…)）を足し、中身は inner にためる。
+  // 終わりが見つからないときは、読み方に自信がないものとして扱う。返すのは、読み終えた位置（閉じる文字）。
+  const substitution = (at, quoted) => {
+    subst = true
+    const tick = text[at] === '`'
+    const end = tick ? text.indexOf('`', at + 1) : substEnd(text, at + 2)
+    const body = text.slice(at + (tick ? 1 : 2), end < 0 ? text.length : end)
+    add('$(…)', quoted, body)
+    word.expands = true
+    word.subst = true
+    if (end < 0) {
+      uncertain = true
+      return text.length
+    }
+    // case … in a) のように、括弧の数が合わない書き方は、終わりを取り違えうる。
+    if (/(^|[\s;(])case\s/.test(body) || (tick && body.includes('\\'))) uncertain = true
+    inner.push(body)
+    return end
   }
 
   // ヒアドキュメントの区切りの語を読む。start は <<（または <<-）の直後。
@@ -128,14 +246,12 @@ export function parseBash(command, depth = 0) {
       else if (ch === '\\' && next !== undefined && '"\\$`\n'.includes(next)) {
         add(next, true)
         i++
+      } else if (ch === '`' || (ch === '$' && next === '(' && text[i + 2] !== '(')) {
+        // 二重引用の中のコマンド置換も、中身を読む（"$(cat <<'EOF' … EOF)" など）。
+        i = substitution(i, true)
       } else {
         add(ch, true)
-        if (ch === '`') {
-          subst = true
-          word.expands = true
-        } else if (ch === '$') {
-          expansion(i)
-        }
+        if (ch === '$') expansion(i)
       }
       continue
     }
@@ -169,10 +285,10 @@ export function parseBash(command, depth = 0) {
     } else if (ch === '#' && !word) {
       while (i < text.length && text[i] !== '\n') i++
       i--
-    } else if (ch === '`') {
-      subst = true
-      endSegment()
+    } else if (ch === '`' || (ch === '$' && next === '(' && text[i + 2] !== '(')) {
+      i = substitution(i, false)
     } else if (ch === '$' && next === '(') {
+      // $(( … )) は算術。中身はコマンドではないが、括弧の区切りとして読む。
       subst = true
       endSegment()
       i++
@@ -232,6 +348,17 @@ export function parseBash(command, depth = 0) {
   // 本文の始まる改行がないまま終わったヒアドキュメント。
   if (heredocs.length) uncertain = true
 
+  // コマンド置換の中身を、別のコマンドとして読む。
+  for (const body of inner) {
+    if (depth >= 4) {
+      uncertain = true
+      continue
+    }
+    const parsed = parseBash(body, depth + 1)
+    segments.push(...parsed.segments)
+    uncertain = uncertain || parsed.uncertain
+  }
+
   // bash -c '...' と eval '...' の中身も調べる。
   if (depth < 3) {
     for (const seg of [...segments]) {
@@ -263,8 +390,29 @@ export function commandOf(segment) {
 }
 
 // 禁止パターンを当てる文字列。空白を含む引用（コミットメッセージなど）は伏せて、誤検知を減らす。
+const masked = (w) => (w.quoted && /\s/.test(w.text) ? "'…'" : w.text)
 export function skeleton(segment) {
-  return segment.words.map((w) => (w.quoted && /\s/.test(w.text) ? "'…'" : w.text)).join(' ')
+  return segment.words.map(masked).join(' ')
+}
+
+// コミットメッセージの値をとるオプション（-m、--message、-F、--file）。短いオプションのまとまり（-am）も含む。
+const MESSAGE_OPTION = /^(?:-[a-zA-Z]*[mF]|--message|--file)$/
+const MESSAGE_ATTACHED = /^(?:-[a-zA-Z]*[mF].|--message=|--file=)/
+function isMessageValue(words, i) {
+  return MESSAGE_ATTACHED.test(words[i].text) || (i > 0 && MESSAGE_OPTION.test(words[i - 1].text))
+}
+
+// コマンド置換を中身の文字列に戻した形で、禁止パターンを当てる文字列（置換を含む語がなければ null）。
+// skeleton だけだと、git push $(echo --force) の --force が $(…) に隠れる。中身は別のセグメントとしても読むが、
+// そちらには git push がないので、どちらにも「git push … --force」の形が現れない。
+// ただし、コミットメッセージの値（-m、--message、-F、--file の値）に当たる語は戻さない。
+// HEREDOC 形式のコミット（git commit -m "$(cat <<'EOF' … EOF)"）の本文で、誤って止めないため。
+export function restoredSkeleton(segment) {
+  const { words } = segment
+  if (!words.some((w) => w.subst)) return null
+  const out = words.map((w, i) => (w.subst && !isMessageValue(words, i) ? w.restored : masked(w)))
+  const text = out.join(' ')
+  return text === skeleton(segment) ? null : text
 }
 
 export function writeRedirects(segment) {

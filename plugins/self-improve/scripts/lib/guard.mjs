@@ -4,12 +4,12 @@
 //   自動改善のセッション（ロック中） → 通すツールの一覧で判定し、それ以外はすべて拒否する（確認は出さない）
 //   ロックを試みたセッション         → ロックが外れたあと・始まらなかったあとも、書き込みに確認を挟む
 // harness-note の呼び出しは、--session が hook の本物の session_id と一致するものだけを通す。
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, resolve } from 'node:path'
-import { PLUGIN_ROOT, activeLock, isInside, isLocked, posix, realish } from './core.mjs'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { PLUGIN_ROOT, activeLock, claudeHome, isInside, isLocked, posix, realish, tildePath, userDir } from './core.mjs'
 import { parseArgs } from './args.mjs'
-import { commandOf, isHarnessNoteCommand, isHarnessNoteSegment, isNonChanging, isWrappedHarnessNote, parseBash, skeleton, writeTargets } from './bash.mjs'
+import { commandOf, isHarnessNoteCommand, isHarnessNoteSegment, isNonChanging, isWrappedHarnessNote, parseBash, restoredSkeleton, skeleton, writeTargets } from './bash.mjs'
 import { isAutoSession } from './auto.mjs'
 import { isTrialSkillPath } from './trial.mjs'
 
@@ -45,38 +45,71 @@ function readGuardFile(file) {
   }
 }
 
-// 共通リスト（プラグインの初期値）と、リポジトリ固有の harness/guards.json を合わせる。
+// ガードの定義を置ける 4 か所。すべて読み、すべて効かせる。
+//   default    共通リスト（プラグインに同梱）
+//   user       user 全体（~/.claude/self-improve/guards.json）。どのリポジトリでも効かせたい、自分の決まり
+//   user-repo  user のリポジトリごと（~/.claude/self-improve/repos/<名前>/guards.json）。リポジトリには置かない、自分だけの決まり
+//   repo       リポジトリの harness/guards.json。チームで共有する決まり
+export function guardFiles(ctx) {
+  const mine = join(ctx.user.dir, 'guards.json')
+  const mineHere = join(ctx.user.repoDir, 'guards.json')
+  return [
+    { source: 'default', file: DEFAULT_GUARDS, label: 'guards.default.json' },
+    { source: 'user', file: mine, label: tildePath(mine) },
+    { source: 'user-repo', file: mineHere, label: tildePath(mineHere) },
+    { source: 'repo', file: join(ctx.repo.root, 'harness', 'guards.json'), label: 'harness/guards.json' },
+  ]
+}
+
 // ルールは 2 種類：pattern（Bash のコマンドに当てる。文字列か、その配列）と path（書き込み先のパスに当てる）。
 // decision が "ask" のルールは、拒否ではなく確認を挟む。
-export function loadGuards(repoRoot) {
+// 共通リストのルールを外せる（disable_defaults）のは、user 側のファイルだけ。リポジトリのファイルは、共有されたり
+// プルで変わったりするので、足すことはできても、共通リストを外すことはできない。
+// 読めないファイルは、黙って「ない」にせず、errors に残す（そのファイルのガードが効いていないことを知らせる）。
+export function loadGuards(ctx) {
   const errors = []
-  const defaults = readGuardFile(DEFAULT_GUARDS)
-  if (defaults.error) errors.push(`guards.default.json を読めません（${defaults.error}）`)
-  const repo = readGuardFile(join(repoRoot, 'harness', 'guards.json'))
-  if (repo.error) errors.push(`harness/guards.json を読めません（${repo.error}）。このリポジトリのガードは、直すまで効きません`)
-  const own = repo.value ?? {}
-  const off = new Set(Array.isArray(own.disable_defaults) ? own.disable_defaults : [])
-  const rules = []
-  const sources = [
-    ...(defaults.value?.rules ?? []).filter((r) => !off.has(r.id)).map((r) => ({ ...r, source: 'default' })),
-    ...(Array.isArray(own.rules) ? own.rules : []).map((r) => ({ ...r, source: 'repo' })),
-  ]
-  for (const rule of sources) {
-    const where = `${rule.source === 'default' ? 'guards.default.json' : 'harness/guards.json'} の ${rule.id ?? '（id なし）'}`
-    if (!rule.id || !rule.message) {
-      errors.push(`${where}：id と message（直し方を 1 行）が必要です`)
-      continue
+  const notes = []
+  const loaded = guardFiles(ctx).map((entry) => {
+    const read = readGuardFile(entry.file)
+    if (read.error) errors.push(`${entry.label} を読めません（${read.error}）。このファイルのガードは、直すまで効きません`)
+    return { ...entry, value: read.value ?? {} }
+  })
+  const off = new Set()
+  for (const { source, label, value } of loaded) {
+    const list = Array.isArray(value.disable_defaults) ? value.disable_defaults : []
+    if (!list.length) continue
+    if (source === 'repo') {
+      notes.push(`${label} の disable_defaults は読みません（共通リストを外せるのは、user 側のファイルだけです）。${loaded[2].label} に移してください`)
+    } else {
+      for (const id of list) off.add(id)
     }
-    const patterns = (Array.isArray(rule.pattern) ? rule.pattern : [rule.pattern]).map((p) => compile(p, rule.flags, errors, where)).filter(Boolean)
-    const path = compile(rule.path, rule.flags, errors, where)
-    if (!patterns.length && !path) {
-      if (!rule.pattern && !rule.path) errors.push(`${where}：pattern か path が必要です`)
-      continue
-    }
-    rules.push({ ...rule, patterns, path, except: compile(rule.except, rule.flags, errors, where), decision: rule.decision === 'ask' ? 'ask' : 'deny' })
   }
-  const protect = (Array.isArray(own.protect) ? own.protect : []).map((p, i) => compile(p, 'i', errors, `harness/guards.json の protect[${i}]`)).filter(Boolean)
-  return { rules, protect, errors }
+  const rules = []
+  const protect = []
+  for (const { source, label, value } of loaded) {
+    for (const raw of Array.isArray(value.rules) ? value.rules : []) {
+      if (source === 'default' && off.has(raw?.id)) continue
+      const where = `${label} の ${raw?.id ?? '（id なし）'}`
+      if (!raw || !raw.id || !raw.message) {
+        errors.push(`${where}：id と message（直し方を 1 行）が必要です`)
+        continue
+      }
+      const patterns = (Array.isArray(raw.pattern) ? raw.pattern : [raw.pattern]).map((p) => compile(p, raw.flags, errors, where)).filter(Boolean)
+      const path = compile(raw.path, raw.flags, errors, where)
+      if (!patterns.length && !path) {
+        if (!raw.pattern && !raw.path) errors.push(`${where}：pattern か path が必要です`)
+        continue
+      }
+      rules.push({ ...raw, source, file: label, patterns, path, except: compile(raw.except, raw.flags, errors, where), decision: raw.decision === 'ask' ? 'ask' : 'deny' })
+    }
+    if (source !== 'default') {
+      (Array.isArray(value.protect) ? value.protect : []).forEach((p, i) => {
+        const re = compile(p, 'i', errors, `${label} の protect[${i}]`)
+        if (re) protect.push(re)
+      })
+    }
+  }
+  return { rules, protect, errors, notes }
 }
 
 // ---- 確認を挟むパス ----
@@ -97,26 +130,108 @@ export function protectedKind(rel, protect = []) {
   return null
 }
 
+// ~ と $HOME で始まるパスを、ホームのパスに直す（Bash のコマンドの語は、展開の前の文字のまま届く）。
+export function expandHome(raw) {
+  const path = String(raw)
+  const match = /^(~|\$HOME|\$\{HOME\})(?=\/|$)/.exec(path)
+  return match ? join(homedir(), path.slice(match[1].length)) : path
+}
+
+// ログやメッセージに出すパス。リポジトリの外は、ホームを ~ に直す（絶対パスをそのまま残さない）。
+const displayPath = tildePath
+
+// user 側のファイルか（~/.claude/self-improve/ の下と、~/.claude/CLAUDE.md）。書き込みには確認を挟む。
+// 名前と実体の両方で見て、大文字小文字は区別しない（区別しないファイルシステムで、別の綴りから書けるため）。
+function userSideKind(at) {
+  const lower = (p) => p.toLowerCase()
+  const paths = at.all.map(lower)
+  const under = (base) => [base, realish(base)].map(lower).some((b) => paths.some((p) => p === b || p.startsWith(`${b}/`) || p.startsWith(`${b}\\`)))
+  const same = (file) => [file, realish(file)].map(lower).some((f) => paths.includes(f))
+  if (under(userDir())) return 'self-improve の user 側のファイル（設定・ガード・失敗票・自分専用のルール）'
+  if (same(join(claudeHome(), 'CLAUDE.md'))) return 'user の CLAUDE.md'
+  return null
+}
+
+// git の、リポジトリの場所を決めるファイル（.git/commondir、worktree の .git のファイル）と、.git/config か。
+// 書き込みには確認を挟む。commondir や .git のファイルを書き換えると、共通ディレクトリの場所（リポジトリ ID と、
+// exclude の判定に使う）が変わる。ほかの .git/ の下は見ない（git 自身が書くので）。
+// worktree では、gitdir（<共通ディレクトリ>/worktrees/<名前>/）がリポジトリの外にあるので、共通ディレクトリからの
+// 相対パスでも見る。大文字小文字は区別しない。
+const GIT_CONTROL_IN_REPO = /^\.git(?:\/(?:config|commondir|worktrees\/[^/]+\/commondir))?$/i
+const GIT_CONTROL_IN_COMMON = /^(?:config|commondir|worktrees\/[^/]+\/commondir)$/i
+function gitControlKind(ctx, at) {
+  const kind = 'git の設定（.git/commondir、worktree の .git のファイル、.git/config）'
+  if (at.rels.some((rel) => GIT_CONTROL_IN_REPO.test(rel))) return kind
+  const lower = (p) => p.toLowerCase()
+  for (const base of [ctx.repo.commonDir, realish(ctx.repo.commonDir)].map(lower)) {
+    for (const abs of at.all.map(lower)) {
+      if (isInside(base, abs) && GIT_CONTROL_IN_COMMON.test(posix(relative(base, abs)))) return kind
+    }
+  }
+  return null
+}
+
+// 実体が同じなら、その名前への書き込みとして扱うファイル（CLAUDE.md -> AGENTS.md のようなリンク）。
+const LINKABLE = ['CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md', 'harness/config.json', 'harness/guards.json', 'harness/guards.test.json']
+
+// 書き込み先を、名前（リンクをたどらないパス）と実体（リンクをたどったパス）の両方で表す。
+// どちらか一方だけで判定すると、シンボリックリンクで保護を外せる
+// （CLAUDE.md がリンクなら実体は別の名前になり、リンク先のディレクトリは名前が別になる）。
+//   abs   名前のパス（cd の移動先として使う）
+//   all   名前と実体の絶対パス
+//   rels  リポジトリの根からの相対パス（名前、実体、同じ実体を指す保護対象の名前）
 function locate(ctx, raw, cwd) {
-  let path = String(raw)
-  if (path === '~' || path.startsWith('~/')) path = join(homedir(), path.slice(1))
-  const abs = realish(isAbsolute(path) ? path : resolve(cwd, path))
-  const rel = isInside(ctx.repo.root, abs) ? posix(relative(ctx.repo.root, abs)) : null
-  return { abs, rel, subject: rel ?? posix(abs) }
+  const path = expandHome(raw)
+  const name = isAbsolute(path) ? resolve(path) : resolve(cwd, path)
+  const real = realish(name)
+  const root = ctx.repo.root
+  const rels = []
+  const add = (rel) => {
+    if (rel !== null && !rels.includes(rel)) rels.push(rel)
+  }
+  if (isInside(root, name)) {
+    add(posix(relative(root, name)))
+  } else {
+    // リポジトリそのものをリンク経由で開いているとき：名前のパスの祖先のうち、実体がリポジトリの根に当たるものを探す。
+    const tail = []
+    for (let dir = name; ; ) {
+      const parent = dirname(dir)
+      if (parent === dir) break
+      tail.unshift(basename(dir))
+      dir = parent
+      if (realish(dir) === root) {
+        add(tail.join('/'))
+        break
+      }
+    }
+  }
+  if (isInside(root, real)) add(posix(relative(root, real)))
+  for (const alias of LINKABLE) {
+    const file = join(root, alias)
+    try {
+      if (lstatSync(file).isSymbolicLink() && realish(file) === real) add(alias)
+    } catch {
+      // その名前のファイルがなければ、見ない
+    }
+  }
+  const all = name === real ? [name] : [name, real]
+  return { abs: name, all, rels, rel: rels[0] ?? null, subject: rels[0] ?? displayPath(real) }
 }
 
 const LOCKED_MESSAGE = '自動改善のセッションでは、Read・Grep・Glob と harness-note 以外のツールは使えません（ファイルへの書き込み、ほかのコマンド、MCP のツール、サブエージェントの起動を含みます）。読むのは Read / Grep / Glob、書き込みは harness-note だけを使ってください。リポジトリのファイルを変える案は、harness-note pending add --proposal-kind で報告に載せてください。'
 const BROKEN_MESSAGE = '自動改善のロックのファイル（lock.json）を読めません。誰かが実行中かどうかを確かめられないので、書き込みを拒否しています。2 時間たつと解けます。急ぐときは、人が HARNESS_DISABLE=1 で起動してください。'
 const AFTER_AUTO = 'このセッションは、自動改善（auto-improve）を呼び出したセッションです。ロックが外れたあと・始まらなかったあとも、書き込みには確認を挟みます（無人のセッションが、そのまま作業を続けないようにするため）。作業を続けるなら、新しいセッションで行ってください（self-improve）。'
 
-function locationDeny(ctx, abs) {
-  if (isInside(PLUGIN_ROOT, abs)) {
-    return { rule: 'plugin-files', message: 'self-improve プラグイン自身のファイルは書き換えられません。ハーネスの決まりを変えたいときは、適用先のリポジトリの harness/ を変えてください。' }
+// 書き込めない場所か。名前と実体のどちらかが当たれば、拒否する。
+function locationDeny(ctx, at) {
+  const inside = (base) => at.all.some((abs) => isInside(base, abs) || isInside(realish(base), abs))
+  if (inside(PLUGIN_ROOT)) {
+    return { rule: 'plugin-files', message: 'self-improve プラグイン自身のファイルは書き換えられません。決まりを変えたいときは、~/.claude/self-improve/ の設定やガードか、リポジトリの harness/ を変えてください。' }
   }
-  if (isInside(realish(ctx.data), abs)) {
+  if (inside(ctx.data)) {
     return { rule: 'harness-data', message: 'プラグインのデータ領域は、harness-note コマンドだけが書き込みます。試用ルールや改善候補は harness-note で読み書きしてください。' }
   }
-  if (isTrialSkillPath(abs)) {
+  if (at.all.some(isTrialSkillPath)) {
     return { rule: 'trial-skill', message: '試用 Skill は、harness-note コマンドだけが書き込みます。直すときは /self-improve:review を使ってください。' }
   }
   return null
@@ -128,12 +243,21 @@ const ask = (rule, message, target) => ({ decision: 'ask', rule, message, target
 const askProtected = (kind, subject) =>
   ask('harness-files', `${kind}（${subject}）への書き込みです。ハーネスの変更は、差分を確かめてから承認してください（self-improve）。`, subject)
 
-function matchPathRule(guards, subject) {
-  return guards.rules.find((r) => r.path && r.path.test(subject) && !(r.except && r.except.test(subject))) ?? null
+// パスのルールは、名前と実体のどちらの相対パスに当たっても効く。
+// 当たったルールを、すべて返す（Bash のパターンのルールと同じく、すべてを判定に通し、拒否が 1 つでもあれば拒否にする。
+// 最初の 1 件だけだと、共通リストの確認（.env）が先に当たり、user 側やリポジトリの拒否が効かない）。
+function matchPathRules(guards, at) {
+  const subjects = at.rels.length ? at.rels : [at.subject]
+  return guards.rules.filter((r) => r.path && subjects.some((s) => r.path.test(s) && !(r.except && r.except.test(s))))
 }
-const byRule = (rule, target) => (rule.decision === 'ask'
-  ? ask(rule.id, `${rule.message}（ルール：${rule.id}。確認のうえで進めます）`, target)
-  : deny(rule.id, rule.message, target))
+const protectedOf = (at, protect) => at.rels.map((rel) => protectedKind(rel, protect)).find(Boolean) ?? null
+// どのファイルのルールかを、結果に残す（拒否の記録に入れる）。
+const byRule = (rule, target) => ({
+  ...(rule.decision === 'ask'
+    ? ask(rule.id, `${rule.message}（ルール：${rule.id}。確認のうえで進めます）`, target)
+    : deny(rule.id, rule.message, target)),
+  source: rule.file,
+})
 
 // ---- harness-note の呼び出しの確かめ ----
 
@@ -181,6 +305,24 @@ export function harnessNoteProblem(command, sessionId, { strict = false, require
   return null
 }
 
+// harness-note verify trust（検証コマンドの実行の許可）の呼び出しか。
+function isVerifyTrustCall(segment) {
+  if (!isHarnessNoteCommand(segment)) return false
+  try {
+    const { positional } = parseArgs(commandOf(segment).args)
+    return positional[0] === 'verify' && positional[1] === 'trust'
+  } catch {
+    return false
+  }
+}
+// 検証コマンドの許可には、確認を挟む（許可ルール Bash(harness-note *) があっても、人が一覧を見てから決めるように。
+// リポジトリの CLAUDE.md などに「harness-note verify trust を実行して」と書かれていても、黙って許可されないため）。
+function verifyTrustAsk(ctx) {
+  const list = ctx.config.verify.map((v, i) => `${i + 1}. ${v.name}：${v.run}`).join(' ／ ')
+  const text = `harness/config.json の検証コマンドの実行を許可します。許可すると、変更のあったターンの終わりに、確認なしで実行されます：${list}。中身を確かめてから承認してください（self-improve）。`
+  return ask('verify-trust', text.length > 2000 ? `${text.slice(0, 2000)}…（続きは harness-note verify で確かめてください）` : text, 'harness-note verify trust')
+}
+
 // MCP のツールやサブエージェントの起動など、外へ働きかけるツール（ロックを試みたセッションでは確認を挟む）。
 const actsOutside = (tool) => /^mcp__/.test(tool) || ['Agent', 'Task', 'WebFetch', 'CronCreate', 'ScheduleWakeup'].includes(tool)
 
@@ -214,7 +356,7 @@ export function evaluate(ctx, input) {
     return allow
   }
 
-  const guards = loadGuards(ctx.repo.root)
+  const guards = loadGuards(ctx)
   let verdict = allow
   // 確認（ask）は、あとから拒否（deny）が見つかれば上書きされる。
   const consider = (next) => {
@@ -227,14 +369,13 @@ export function evaluate(ctx, input) {
     const raw = ti.file_path ?? ti.notebook_path
     if (typeof raw !== 'string' || !raw) return allow
     const at = locate(ctx, raw, cwd)
-    const location = locationDeny(ctx, at.abs)
+    const location = locationDeny(ctx, at)
     if (location) return deny(location.rule, location.message, at.subject)
-    const rule = matchPathRule(guards, at.subject)
-    if (rule) {
+    for (const rule of matchPathRules(guards, at)) {
       const stop = consider(byRule(rule, at.subject))
       if (stop) return stop
     }
-    const kind = at.rel === null ? null : protectedKind(at.rel, guards.protect)
+    const kind = protectedOf(at, guards.protect) ?? userSideKind(at) ?? gitControlKind(ctx, at)
     if (kind) consider(askProtected(kind, at.subject))
     if (verdict.decision === 'allow' && isAutoSession(ctx)) return ask('auto-session-after', AFTER_AUTO, at.subject)
     return verdict
@@ -245,9 +386,19 @@ export function evaluate(ctx, input) {
   if (problem) return deny(NOTE_CALL_RULE, problem, command.slice(0, 200))
 
   const parsed = parseBash(command)
-  // コマンド置換や、読み取りに自信のない書き方があるときは、元の文字列にも当てる。
-  const subjects = parsed.segments.map(skeleton)
-  if (parsed.subst || parsed.uncertain) subjects.push(command)
+  if (ctx.config.verify.length && parsed.segments.some(isVerifyTrustCall)) consider(verifyTrustAsk(ctx))
+  // 読み取りに自信のない書き方があるときだけ、元の文字列にも当てる。
+  // コマンド置換は中身まで読んでいるので、置換があるだけでは全文に当てない
+  // （git commit -m "$(cat <<'EOF' … EOF)" && git log -n 3 を、commit の -n と取り違えないため）。
+  // その代わり、置換を含む語があるセグメントは、置換を中身の文字列に戻した形にも当てる
+  // （git push $(echo --force) origin main の --force が、置き場所の文字に隠れないように。コミットメッセージの値は戻さない）。
+  const subjects = []
+  for (const segment of parsed.segments) {
+    subjects.push(skeleton(segment))
+    const restored = restoredSkeleton(segment)
+    if (restored) subjects.push(restored)
+  }
+  if (parsed.uncertain) subjects.push(command)
   for (const rule of guards.rules) {
     if (!rule.patterns.length) continue
     const hit = subjects.find((s) => rule.patterns.some((re) => re.test(s)) && !(rule.except && rule.except.test(s)))
@@ -263,17 +414,15 @@ export function evaluate(ctx, input) {
     targets.push(...entry.tokens.map((token) => locate(ctx, token, here)))
   }
   for (const at of targets) {
-    const location = locationDeny(ctx, at.abs)
+    const location = locationDeny(ctx, at)
     if (location) return deny(location.rule, location.message, at.subject)
-    const rule = matchPathRule(guards, at.subject)
-    if (rule) {
+    for (const rule of matchPathRules(guards, at)) {
       const stop = consider(byRule(rule, at.subject))
       if (stop) return stop
     }
   }
   for (const at of targets) {
-    if (at.rel === null) continue
-    const kind = PROTECTED_DIRS.has(at.rel.toLowerCase()) ? 'ハーネスのディレクトリ' : protectedKind(at.rel, guards.protect)
+    const kind = at.rels.some((rel) => PROTECTED_DIRS.has(rel.toLowerCase())) ? 'ハーネスのディレクトリ' : protectedOf(at, guards.protect) ?? userSideKind(at) ?? gitControlKind(ctx, at)
     if (kind) consider(askProtected(kind, at.subject))
   }
   if (verdict.decision === 'allow' && !isNonChanging(command) && isAutoSession(ctx)) return ask('auto-session-after', AFTER_AUTO, command.slice(0, 200))

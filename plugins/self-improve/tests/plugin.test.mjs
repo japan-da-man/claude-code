@@ -18,7 +18,8 @@ test('plugin.json: 名前・説明（先頭にタグ）・作者が、マーケ�
   assert.equal(plugin.name, 'self-improve')
   assert.match(plugin.description, /^\[skills\] \[hooks\] /)
   assert.deepEqual(plugin.author, { name: 'japan-da-man' })
-  assert.equal(plugin.version, undefined)
+  // 版を持つ（版を上げたときだけ、入れてある環境に更新が届く）
+  assert.match(plugin.version, /^2\.\d+\.\d+$/)
   assert.equal(JSON.parse(read('package.json')).scripts.test, 'node --test')
   // 外部の依存パッケージは入れない
   const pkg = JSON.parse(read('package.json'))
@@ -64,10 +65,10 @@ test('bin/harness-note: 実行でき、設計書 9 章のサブコマンドを�
   const help = spawnSync(NOTE, ['--help'], { encoding: 'utf8', env: t.env, cwd: t.repo })
   assert.equal(help.status, 0, help.stderr)
   const run = (args) => spawnSync(NOTE, args, { encoding: 'utf8', env: t.env, cwd: t.repo })
-  for (const args of [['keys'], ['list'], ['trial', 'list'], ['skill', 'list'], ['pending', 'list'], ['report', 'list'], ['targets'], ['status'], ['review'], ['episodes', 'some-key'], ['report', 'close']]) {
+  for (const args of [['keys'], ['list'], ['trial', 'list'], ['skill', 'list'], ['pending', 'list'], ['incident', 'list'], ['incident', 'list', '--all'], ['incident', 'import'], ['report', 'list'], ['targets'], ['status'], ['review'], ['episodes', 'some-key'], ['report', 'close']]) {
     assert.equal(run(args).status, 0, args.join(' '))
   }
-  for (const args of [['add'], ['trial', 'add'], ['trial', 'edit'], ['trial', 'remove'], ['skill', 'add'], ['skill', 'remove'], ['pending', 'add'], ['lock'], ['unlock'], ['nope'], ['trial', 'nope']]) {
+  for (const args of [['add'], ['trial', 'add'], ['trial', 'edit'], ['trial', 'remove'], ['skill', 'add'], ['skill', 'remove'], ['pending', 'add'], ['incident', 'add'], ['incident', 'set'], ['incident', 'show'], ['incident', 'nope'], ['promote'], ['promote', '--key', 'some-key', '--to', 'team'], ['lock'], ['unlock'], ['nope'], ['trial', 'nope']]) {
     const result = run(args)
     assert.equal(result.status, 1, args.join(' '))
     assert.match(result.stderr, /^harness-note: /)

@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  NOTE, ROOT, SNEAKY_WRITES, at, decisionOf, draft, events, finishAuto, guardRun, knownSession, makeEnv, note, repoId, runHook, script, startAuto,
+  NOTE, ROOT, SNEAKY_WRITES, withEnv as scoped, at, decisionOf, draft, events, finishAuto, guardRun, knownSession, makeEnv, note, repoId, runHook, script, startAuto,
   writeFiles,
 } from './helpers.mjs'
 
@@ -61,6 +61,59 @@ test('読み取りのずれで、禁止リストが隠れない（引用の中�
   }
   // ヒアドキュメントの本文に書いてあるだけなら、止めない
   assert.equal(decision(bash(t, "cat > notes.md <<'EOF'\ngit push --force は使わない\nEOF")), 'allow')
+})
+
+test('シンボリックリンクで保護を外せない：書き込み先は、リンクの名前と実体の両方で判定する', () => {
+  const t = makeEnv({ files: { 'AGENTS.md': '# 地図\n', 'harness/guards.json': { rules: [{ id: 'no-generated-edit', path: '^src/generated/', message: '生成し直してください' }] } } })
+  // CLAUDE.md -> AGENTS.md：リンクの名前への書き込みも、実体への書き込みも、CLAUDE.md への書き込みとして確認を挟む
+  symlinkSync('AGENTS.md', join(t.repo, 'CLAUDE.md'))
+  for (const [tool, input] of [
+    ['Write', { file_path: join(t.repo, 'CLAUDE.md') }],
+    ['Edit', { file_path: join(t.repo, 'AGENTS.md') }],
+    ['Bash', { command: 'echo "- 新しい行" >> CLAUDE.md' }],
+    ['Bash', { command: 'sed -i s/a/b/ AGENTS.md' }],
+  ]) {
+    const run = pre(t, tool, input)
+    assert.equal(decision(run), 'ask', JSON.stringify(input))
+    assert.match(run.json.hookSpecificOutput.permissionDecisionReason, /CLAUDE\.md（(CLAUDE|AGENTS)\.md）への書き込み/)
+  }
+  // リンクでなければ、AGENTS.md はふつうのファイル
+  const plain = makeEnv({ files: { 'AGENTS.md': '# 地図\n', 'CLAUDE.md': '# 地図\n' } })
+  assert.equal(decision(pre(plain, 'Edit', { file_path: join(plain.repo, 'AGENTS.md') })), 'allow')
+
+  // リポジトリの外を指すディレクトリのリンク：名前のパスにルールが当たる。ログには、リポジトリからの相対パスを残す（絶対パスを残さない）
+  const outside = join(t.base, 'outside')
+  mkdirSync(outside)
+  mkdirSync(join(t.repo, 'src'))
+  symlinkSync(outside, join(t.repo, 'src/generated'))
+  const viaLink = pre(t, 'Write', { file_path: join(t.repo, 'src/generated/api.ts') })
+  assert.equal(viaLink.status, 2)
+  assert.match(viaLink.stderr, /生成し直してください/)
+  assert.equal(events(t).at(-1).target, 'src/generated/api.ts')
+  // リポジトリの外から、リンクの実体を指して書いても同じ（実体の側で、同じ保護に当たる）
+  symlinkSync(join(t.repo, 'harness'), join(t.base, 'elsewhere'))
+  assert.equal(decision(pre(t, 'Write', { file_path: join(t.base, 'elsewhere/config.json') })), 'ask')
+  assert.equal(decision(bash(t, `echo x > ${join(t.base, 'elsewhere/guards.json')}`)), 'ask')
+
+  // 個人用の Skill の置き場所がリンク（dotfiles で管理）のとき：実体のパスを直接指しても、試用 Skill は書き換えられない
+  const linked = makeEnv({ config: AUTO })
+  const real = join(linked.base, 'dotfiles/skills')
+  mkdirSync(real, { recursive: true })
+  symlinkSync(real, join(linked.claudeHome, 'skills'))
+  startAuto(linked, ['migration-forgotten'])
+  draft(linked, 'migration-forgotten')
+  const added = note(linked, ['skill', 'add', '--session', 'auto-1', '--key', 'migration-forgotten', '--name', 'db-migration', '--description', 'demo-app リポジトリで DB のスキーマを変えるときに使う', '--body', '# 手順\n\n1. マイグレーションを生成する\n'], { now: at(62) })
+  assert.equal(added.status, 0, added.stderr)
+  finishAuto(linked)
+  for (const file of [join(real, 'demo-app-db-migration/SKILL.md'), join(linked.claudeHome, 'skills/demo-app-db-migration/SKILL.md')]) {
+    const run = pre(linked, 'Write', { file_path: file }, {}, 'human-1')
+    assert.equal(run.status, 2, file)
+    assert.match(run.stderr, /ルール：trial-skill/)
+  }
+  // リポジトリの中に置いたリンク経由でも同じ
+  symlinkSync(join(real, 'demo-app-db-migration'), join(linked.repo, 'skill-link'))
+  assert.equal(pre(linked, 'Edit', { file_path: join(linked.repo, 'skill-link/SKILL.md') }, {}, 'human-1').status, 2)
+  assert.equal(bash(linked, 'rm -rf skill-link/', {}, 'human-1').status, 2)
 })
 
 test('test-guards: リポジトリ固有のガードとテストケースも実行し、期待と違えば終了コード 1', () => {
@@ -152,12 +205,92 @@ test('ハーネスのファイルへの書き込みには permissionDecision: "a
   assert.deepEqual(events(t), [])
 })
 
-test('harness/guards.json：protect で確認を挟むパスを足し、disable_defaults で共通のルールを外せる', () => {
-  const t = makeEnv({ files: { 'harness/guards.json': { protect: ['^infra/'], disable_defaults: ['git-no-verify'], rules: [{ id: 'broken', pattern: '(', message: 'x' }] } } })
+test('ガードの定義は 4 か所から読み、すべて効かせる。拒否の記録に、どのファイルのルールかを残す', () => {
+  const rule = (id, path) => ({ id, path, message: `${id} のルール` })
+  const t = makeEnv({
+    files: { 'harness/guards.json': { protect: ['^infra/'], rules: [rule('team-rule', '^src/generated/'), { id: 'broken', pattern: '(', message: 'x' }] } },
+    userFiles: {
+      'guards.json': { protect: ['^secrets/'], rules: [rule('my-rule', '^vendor/'), { id: 'my-ask', decision: 'ask', pattern: '\\bterraform\\s+apply\\b', message: '適用の前に確かめる' }] },
+      'repos/demo-app/guards.json': { rules: [rule('my-repo-rule', '^legacy/')] },
+    },
+  })
+  const cases = [
+    [['Bash', { command: 'git push --force' }], 'deny', 'git-force-push', 'guards.default.json'],
+    [['Write', { file_path: join(t.repo, 'vendor/lib.js') }], 'deny', 'my-rule', '~/.claude/self-improve/guards.json'],
+    [['Edit', { file_path: join(t.repo, 'legacy/old.js') }], 'deny', 'my-repo-rule', '~/.claude/self-improve/repos/demo-app/guards.json'],
+    [['Bash', { command: 'rm src/generated/api.ts' }], 'deny', 'team-rule', 'harness/guards.json'],
+  ]
+  for (const [[tool, input], expected, id, file] of cases) {
+    const run = pre(t, tool, input)
+    assert.equal(decision(run), expected, id)
+    assert.match(run.stderr, new RegExp(`ルール：${id}）`))
+    const logged = events(t).at(-1)
+    assert.deepEqual([logged.type, logged.rule, logged.source], ['guard_denied', id, file])
+  }
+  // 確認にするルールと、確認を挟むパス（protect）は、どのファイルに書いても効く
+  assert.equal(decision(bash(t, 'terraform apply -auto-approve')), 'ask')
   assert.equal(decision(pre(t, 'Write', { file_path: join(t.repo, 'infra/main.tf') })), 'ask')
-  assert.equal(decision(bash(t, 'git commit --no-verify -m x')), 'allow')
-  // 壊れたルールは読み飛ばし、ほかのルールは効く
-  assert.equal(decision(bash(t, 'git push -f')), 'deny')
+  assert.equal(decision(pre(t, 'Write', { file_path: join(t.repo, 'secrets/key.txt') })), 'ask')
+  // 壊れたルールは読み飛ばし、ほかのルールは効く。組み込みの判定（プラグイン自身のファイルなど）は、source が builtin
+  assert.equal(pre(t, 'Write', { file_path: join(ROOT, 'guards.default.json') }).status, 2)
+  assert.equal(events(t).at(-1).source, 'builtin')
+
+  // user 側のリポジトリごとのファイルは、同じ名前のリポジトリにだけ効く
+  const other = makeEnv({ name: 'other-app', userFiles: { 'repos/demo-app/guards.json': { rules: [rule('my-repo-rule', '^legacy/')] } } })
+  assert.equal(decision(pre(other, 'Edit', { file_path: join(other.repo, 'legacy/old.js') })), 'allow')
+})
+
+test('共通リストのルールを外せる（disable_defaults）のは、user 側のファイルだけ。リポジトリのファイルに書いても外れない', () => {
+  const fromRepo = makeEnv({ files: { 'harness/guards.json': { disable_defaults: ['git-no-verify', 'git-force-push'] } } })
+  assert.equal(decision(bash(fromRepo, 'git commit --no-verify -m x')), 'deny')
+  assert.equal(decision(bash(fromRepo, 'git push --force')), 'deny')
+  const fromUser = makeEnv({ userFiles: { 'guards.json': { disable_defaults: ['git-no-verify'] }, 'repos/demo-app/guards.json': { disable_defaults: ['env-file-write'] } } })
+  assert.equal(decision(bash(fromUser, 'git commit --no-verify -m x')), 'allow')
+  assert.equal(decision(pre(fromUser, 'Write', { file_path: join(fromUser.repo, '.env') })), 'allow')
+  assert.equal(decision(bash(fromUser, 'git push --force')), 'deny')
+})
+
+test('user 側のファイル（~/.claude/self-improve/ の下）と ~/.claude/CLAUDE.md への書き込みには、確認を挟む', () => {
+  const t = makeEnv({ config: { exclude: [] } })
+  writeFiles(t.claudeHome, { 'CLAUDE.md': '# 自分の決まり\n' })
+  const asked = [
+    ['Write', { file_path: join(t.user, 'config.json') }],
+    ['Edit', { file_path: join(t.user, 'guards.json') }],
+    ['Write', { file_path: join(t.user, 'repos/demo-app/config.json') }],
+    ['Edit', { file_path: join(t.user, 'repos/demo-app/rules.md') }],
+    ['Edit', { file_path: join(t.user, 'incidents/INC-2026-0001.md') }],
+    ['Edit', { file_path: join(t.claudeHome, 'CLAUDE.md') }],
+    ['Write', { file_path: '~/.claude/self-improve/config.json' }],
+    // Bash で書き換えるコマンドも同じ。~ や $HOME で書いても、大文字小文字を変えても、確認をすり抜けない
+    ['Bash', { command: 'echo "{}" > ~/.claude/self-improve/config.json' }],
+    ['Bash', { command: 'sed -i s/7/0/ $HOME/.claude/self-improve/repos/demo-app/config.json' }],
+    ['Bash', { command: 'rm ${HOME}/.claude/self-improve/guards.json' }],
+    ['Bash', { command: 'echo "- 新しい行" >> "$HOME/.claude/CLAUDE.md"' }],
+    ['Bash', { command: `cp /tmp/x ${join(t.home, '.CLAUDE/Self-Improve/Config.json')}` }],
+    ['Write', { file_path: join(t.home, '.claude/SELF-IMPROVE/guards.json') }],
+    ['Edit', { file_path: join(t.home, '.claude/claude.md') }],
+    ['Bash', { command: 'rm -rf ~/.claude/self-improve' }],
+  ]
+  for (const [tool, input] of asked) {
+    const run = pre(t, tool, input)
+    assert.equal(decision(run), 'ask', JSON.stringify(input))
+    assert.match(run.json.hookSpecificOutput.permissionDecisionReason, /self-improve の user 側のファイル|user の CLAUDE\.md/)
+  }
+  // 置き場所がリンクのとき（dotfiles で管理）：実体のパスを直接指しても、確認を挟む
+  const linked = makeEnv()
+  const real = join(linked.base, 'dotfiles/self-improve')
+  mkdirSync(real, { recursive: true })
+  symlinkSync(real, linked.user)
+  assert.equal(decision(pre(linked, 'Write', { file_path: join(real, 'config.json') })), 'ask')
+  assert.equal(decision(pre(linked, 'Write', { file_path: join(linked.user, 'config.json') })), 'ask')
+  // user 側でも、読むだけ・関係のないファイルは通す（~/.claude の下への書き込みには、Claude Code 自身の確認が別に出る）
+  const passed = [
+    ['Bash', { command: 'cat ~/.claude/self-improve/config.json' }],
+    ['Read', { file_path: join(t.user, 'config.json') }],
+    ['Write', { file_path: join(t.claudeHome, 'notes.md') }],
+    ['Write', { file_path: join(t.home, 'self-improve/config.json') }],
+  ]
+  for (const [tool, input] of passed) assert.equal(decision(pre(t, tool, input)), 'allow', JSON.stringify(input))
 })
 
 test('プラグイン自身のファイル、データ領域、試用 Skill への直接の書き込みは拒否する', () => {
@@ -494,8 +627,8 @@ test('読めない lock.json は、ロックなしではなく拒否の側に倒
   assert.equal(note(t, ['status', '--json', '--session', 'human-1']).json.lock.broken, true)
 })
 
-test('harness/config.json がないリポジトリと HARNESS_DISABLE=1 では、どのツールにも何もしない', () => {
-  const none = makeEnv({ initialized: false })
+test('git リポジトリでない場所と HARNESS_DISABLE=1 では、どのツールにも何もしない', () => {
+  const none = makeEnv({ git: false })
   for (const [tool, input] of [['Bash', { command: 'git push --force origin main' }], ['mcp__x__y', {}], ['Write', { file_path: join(none.repo, '.env') }]]) {
     const off = pre(none, tool, input)
     assert.deepEqual([off.status, off.stdout, off.stderr], [0, '', ''])
@@ -520,28 +653,30 @@ test('harness/config.json がないリポジトリと HARNESS_DISABLE=1 では�
 test('早い判定：することがないと言い切れるときだけ、lib を読み込まずに抜ける（迷うときは先へ進む）', async () => {
   const { nothingToDo } = await import('../scripts/guard-harness.mjs')
   const t = makeEnv({ config: AUTO })
-  const none = makeEnv({ initialized: false })
-  const saved = { ...process.env }
-  const withEnv = (env, fn) => {
-    for (const key of ['HARNESS_DATA_DIR', 'CLAUDE_PLUGIN_DATA', 'CLAUDE_PROJECT_DIR', 'HARNESS_DISABLE', 'HARNESS_TEST']) delete process.env[key]
-    Object.assign(process.env, env)
+  const none = makeEnv({ git: false })
+  // テストのプロセスの環境を、一時ディレクトリに向けて呼ぶ（実際の ~/.claude の設定を読まないように）。
+  // データ領域の場所は、hook には CLAUDE_PLUGIN_DATA（テストでは HARNESS_DATA_DIR）で渡る。
+  const withEnv = (env, fn) => scoped(t, () => {
+    const before = process.cwd()
+    process.chdir(none.repo)
     try {
+      delete process.env.HARNESS_DATA_DIR
+      Object.assign(process.env, env)
       return fn()
     } finally {
-      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]
-      Object.assign(process.env, saved)
+      process.chdir(before)
     }
-  }
+  })
   const input = (tool, session = 'human-1', cwd = t.repo) => ({ session_id: session, cwd, tool_name: tool, tool_input: {} })
   const data = { HARNESS_DATA_DIR: t.data, HARNESS_TEST: '1' }
   withEnv(data, () => {
-    // init していない場所では、どのツールでも抜ける
+    // self-improve が動かない場所（git リポジトリでない）では、どのツールでも抜ける
     for (const tool of ['Read', 'Bash', 'Write', 'mcp__x__y']) assert.equal(nothingToDo(input(tool, 'human-1', none.repo)), true, tool)
-    // セッションを始めた場所（CLAUDE_PROJECT_DIR）が init 済みなら、cwd がどこでも抜けない
+    // セッションを始めた場所（CLAUDE_PROJECT_DIR）が動く場所なら、cwd がどこでも抜けない
     process.env.CLAUDE_PROJECT_DIR = t.repo
     assert.equal(nothingToDo(input('Bash', 'human-1', none.repo)), false)
     delete process.env.CLAUDE_PROJECT_DIR
-    // init 済み：ファイルの書き込みと Bash は、必ず先へ進む。ほかのツールは、ロックも lock を試みた記録もなければ抜ける
+    // 動く場所：ファイルの書き込みと Bash は、必ず先へ進む。ほかのツールは、ロックも lock を試みた記録もなければ抜ける
     for (const tool of ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']) assert.equal(nothingToDo(input(tool)), false, tool)
     for (const tool of ['Read', 'Grep', 'Glob', 'Skill', 'Agent', 'mcp__github__create_pull_request']) assert.equal(nothingToDo(input(tool)), true, tool)
     assert.equal(nothingToDo(input('Read', 'human-1', join(t.repo, 'harness'))), true)
@@ -578,4 +713,87 @@ test('壊れた入力でも、作業は止めない', () => {
   assert.equal(decision(pre(t, 'Bash', {})), 'allow')
   assert.equal(decision(pre(t, 'Write', {})), 'allow')
   knownSession(t, 'x')
+})
+
+test('中-1：コマンド置換の中に置いた引数でも、共通リストをすり抜けない（main と同じく拒否）。HEREDOC 形式のコミットは誤って止めない', () => {
+  const t = makeEnv()
+  for (const command of ['git push $(echo --force) origin main', 'git push `echo --force` origin main', 'git push "$(echo --force)" origin main', 'git commit $(echo --no-verify) -m x']) {
+    const run = bash(t, command)
+    assert.equal(decision(run), 'deny', command)
+    assert.match(run.stderr, /ルール：git-(force-push|no-verify)）/, command)
+  }
+  // コミットメッセージの値（-m、--message、-F、--file）の置換は、中身に戻さない（本文に --no-verify や -n と書いても止めない）
+  const heredoc = (flag) => `git commit ${flag} "$(cat <<'EOF'\nfix: --no-verify と git push --force を止める\n\n-n も\nEOF\n)" && git log -n 3`
+  for (const flag of ['-m', '--message', '-am']) assert.equal(decision(bash(t, heredoc(flag))), 'allow', flag)
+  assert.equal(decision(bash(t, 'git commit --message="$(cat msg.txt)" && git log -n 3')), 'allow')
+  assert.equal(decision(bash(t, 'git commit -F "$(echo msg.txt)" && git log -n 3')), 'allow')
+  // メッセージのあとに付けたフラグは、これまでどおり止める
+  assert.equal(decision(bash(t, `${heredoc('-m').replace(' && git log -n 3', '')} --no-verify`)), 'deny')
+})
+
+test('中-3：パスのルールは、当たったものをすべて判定に通す（拒否が 1 つでもあれば拒否。共通リストの確認に負けない）', () => {
+  const env = { id: 'no-env', path: '(^|/)\\.env$', message: '.env は書きません。値は 1Password に置いてください' }
+  for (const [where, files] of [
+    ['user', { userFiles: { 'guards.json': { rules: [env] } } }],
+    ['user-repo', { userFiles: { 'repos/demo-app/guards.json': { rules: [env] } } }],
+    ['repo', { files: { 'harness/guards.json': { rules: [env] } } }],
+  ]) {
+    const t = makeEnv(files)
+    for (const [tool, input] of [['Write', { file_path: join(t.repo, '.env') }], ['Edit', { file_path: join(t.repo, 'apps/api/.env') }], ['Bash', { command: 'echo A=1 >> .env' }]]) {
+      const run = pre(t, tool, input)
+      assert.equal(decision(run), 'deny', `${where} ${tool}`)
+      assert.match(run.stderr, /ルール：no-env）/)
+    }
+    // 当たらないパスは、これまでどおり共通リストの確認
+    assert.equal(decision(pre(t, 'Write', { file_path: join(t.repo, '.env.local') })), 'ask', where)
+  }
+  // user 側の確認とリポジトリの拒否が両方当たれば、拒否
+  const both = makeEnv({
+    userFiles: { 'guards.json': { rules: [{ id: 'gen-ask', decision: 'ask', path: '^src/generated/', message: '確かめる' }] } },
+    files: { 'harness/guards.json': { rules: [{ id: 'gen-deny', path: '^src/generated/', message: '生成し直す' }] } },
+  })
+  assert.match(pre(both, 'Write', { file_path: join(both.repo, 'src/generated/a.ts') }).stderr, /ルール：gen-deny）/)
+})
+
+test('中-4：.git/commondir、worktree の .git のファイル、.git/config への書き込みには確認を挟む（ほかの .git/ の下は、そのまま）', () => {
+  const t = makeEnv()
+  writeFiles(t.repo, { '.git/config': '[core]\n', '.git/HEAD': 'ref: refs/heads/main\n' })
+  const asked = [
+    ['Write', { file_path: join(t.repo, '.git/commondir') }],
+    ['Edit', { file_path: join(t.repo, '.git/config') }],
+    ['Write', { file_path: join(t.repo, '.GIT/Config') }],
+    ['Write', { file_path: join(t.repo, '.git/worktrees/wt/commondir') }],
+    ['Bash', { command: 'echo nope > .git/commondir' }],
+    ['Bash', { command: "sed -i 's/a/b/' .git/config" }],
+    ['Bash', { command: 'cp /tmp/x .git/commondir' }],
+    ['Bash', { command: 'cd .git && printf x > commondir' }],
+    ['Bash', { command: 'rm -rf .git' }],
+  ]
+  for (const [tool, input] of asked) {
+    const run = pre(t, tool, input)
+    assert.equal(decision(run), 'ask', JSON.stringify(input))
+    assert.match(run.json.hookSpecificOutput.permissionDecisionReason, /git の設定（\.git\/commondir、worktree の \.git のファイル、\.git\/config）/)
+  }
+  // git 自身が書くものと、ほかの .git/ の下は、これまでどおり
+  for (const [tool, input] of [
+    ['Write', { file_path: join(t.repo, '.git/info/exclude') }],
+    ['Bash', { command: 'git config user.name x' }],
+    ['Bash', { command: 'git commit -m x && git push -u origin main' }],
+    ['Bash', { command: 'cat .git/config' }],
+  ]) assert.equal(decision(pre(t, tool, input)), 'allow', JSON.stringify(input))
+
+  // worktree：その .git のファイルと、本体の側にある gitdir の commondir
+  const worktree = join(t.base, 'wt')
+  mkdirSync(join(t.repo, '.git/worktrees/wt'), { recursive: true })
+  writeFileSync(join(t.repo, '.git/worktrees/wt/commondir'), '../..\n')
+  mkdirSync(worktree)
+  writeFileSync(join(worktree, '.git'), `gitdir: ${join(t.repo, '.git/worktrees/wt')}\n`)
+  const wt = { ...t, repo: worktree }
+  const project = { env: { CLAUDE_PROJECT_DIR: worktree } }
+  for (const [tool, input] of [
+    ['Write', { file_path: join(worktree, '.git') }],
+    ['Bash', { command: 'echo "gitdir: /tmp/elsewhere" > .git' }],
+    ['Edit', { file_path: join(t.repo, '.git/worktrees/wt/commondir') }],
+    ['Edit', { file_path: join(t.repo, '.git/config') }],
+  ]) assert.equal(decision(pre(wt, tool, input, project)), 'ask', JSON.stringify(input))
 })

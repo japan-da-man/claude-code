@@ -3,22 +3,28 @@
 //
 //   node test-guards.mjs [リポジトリのパス] [--json]
 //
-// 実行するのは、共通リストのテスト（guards.default.test.json）と、リポジトリの harness/guards.test.json。
-// init していない場所では、一時的なリポジトリで共通リストのテストだけを実行する。
+// 実行するのは、共通リストのテスト（guards.default.test.json）と、そのリポジトリで効く 3 か所のテストケース
+// （user 全体、user のリポジトリごと、リポジトリの harness/guards.test.json。あるものだけ）。
 // テストケースの形：{ "name": "...", "tool": "Bash", "input": { "command": "..." }, "expect": "deny" | "ask" | "allow" }
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PLUGIN_ROOT, findRepo, isMain, loadConfig, readJson } from './lib/core.mjs'
+import { PLUGIN_ROOT, isMain, makeContext, readJson, tildePath } from './lib/core.mjs'
+import { gitRootOf } from './lib/scope.mjs'
 
 const GUARD = join(PLUGIN_ROOT, 'scripts', 'guard-harness.mjs')
 export const DEFAULT_TESTS = join(PLUGIN_ROOT, 'guards.default.test.json')
 
-export function decide(repoRoot, dataDir, test) {
+// ガードに入力を 1 つ流して、deny / ask / allow のどれになったかを返す。拒否は記録しない（HARNESS_GUARD_DRYRUN）。
+// テスト用の環境変数（HARNESS_GUARD_DRYRUN、HARNESS_CLAUDE_HOME）は、テストの印（HARNESS_TEST=1）があるときだけ読まれる。
+// env で、ホームと user 側の設定の場所を差し替えられる（共通リストは、利用者の設定に左右されない場所で確かめる）。
+// 外から引き継いだテスト用の値（HARNESS_CLAUDE_HOME、HARNESS_NOW）は使わない（実際の設定のまま確かめるため）。
+export function decide(repoRoot, dataDir, test, extraEnv = {}) {
   const input = { session_id: 'test-guards', cwd: repoRoot, hook_event_name: 'PreToolUse', tool_name: test.tool, tool_input: test.input ?? {} }
-  const env = { ...process.env, HARNESS_GUARD_DRYRUN: '1', HARNESS_DATA_DIR: dataDir }
-  delete env.HARNESS_DISABLE
+  const env = { ...process.env }
+  for (const key of ['HARNESS_DISABLE', 'HARNESS_PROJECT_DIR', 'HARNESS_CLAUDE_HOME', 'HARNESS_NOW']) delete env[key]
+  Object.assign(env, { HARNESS_TEST: '1', HARNESS_GUARD_DRYRUN: '1', HARNESS_DATA_DIR: dataDir, CLAUDE_PROJECT_DIR: repoRoot }, extraEnv)
   const run = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env })
   if (run.status === 2) return { decision: 'deny', detail: run.stderr.trim() }
   if (run.status !== 0) return { decision: 'error', detail: run.stderr.trim() }
@@ -31,37 +37,66 @@ export function decide(repoRoot, dataDir, test) {
   return { decision: 'allow', detail: '' }
 }
 
+// 渡された場所のリポジトリのコンテキスト。セッションを始めた場所（CLAUDE_PROJECT_DIR など）ではなく、
+// 引数で渡された場所そのもので決める（別のリポジトリのセッションから、パスを指定して実行できるように）。
+function contextAt(start) {
+  const found = gitRootOf(start)
+  if (!found) return null
+  const saved = { CLAUDE_PROJECT_DIR: process.env.CLAUDE_PROJECT_DIR, HARNESS_PROJECT_DIR: process.env.HARNESS_PROJECT_DIR }
+  process.env.CLAUDE_PROJECT_DIR = found.root
+  delete process.env.HARNESS_PROJECT_DIR
+  try {
+    return makeContext(found.root)
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+// テストケースを実行する。
+//   - 共通リスト（guards.default.test.json）は、空のリポジトリと空の user 側の設定で確かめる（利用者のガードや除外に左右されない）
+//   - start が self-improve の動くリポジトリなら、そこで効く 3 か所のテストケースも、実際の設定のまま確かめる：
+//     ~/.claude/self-improve/guards.test.json、~/.claude/self-improve/repos/<名前>/guards.test.json、harness/guards.test.json
 export function runGuardTests(start) {
   const scratch = mkdtempSync(join(tmpdir(), 'self-improve-guards-'))
   try {
-    const found = findRepo(start)
-    const initialized = Boolean(found && loadConfig(found.root))
-    let root = found?.root
-    if (!initialized) {
-      root = join(scratch, 'repo')
-      mkdirSync(join(root, '.git'), { recursive: true })
-      mkdirSync(join(root, 'harness'), { recursive: true })
-      writeFileSync(join(root, 'harness', 'config.json'), '{}\n')
-    }
-    const suites = [{ source: 'guards.default.test.json', tests: readJson(DEFAULT_TESTS, null) }]
-    if (initialized) suites.push({ source: 'harness/guards.test.json', tests: readJson(join(root, 'harness', 'guards.test.json'), []) })
     const results = []
     const errors = []
-    for (const suite of suites) {
-      if (!Array.isArray(suite.tests)) {
-        errors.push(`${suite.source} を読めません（テストケースの配列にしてください）`)
-        continue
+    const runSuite = (source, tests, root, env) => {
+      if (!Array.isArray(tests)) {
+        errors.push(`${source} を読めません（テストケースの配列にしてください）`)
+        return
       }
-      for (const test of suite.tests) {
+      for (const test of tests) {
         if (!test || !test.tool || !['deny', 'ask', 'allow'].includes(test.expect)) {
-          errors.push(`${suite.source} の「${test?.name ?? '（名前なし）'}」：tool と expect（deny / ask / allow）が必要です`)
+          errors.push(`${source} の「${test?.name ?? '（名前なし）'}」：tool と expect（deny / ask / allow）が必要です`)
           continue
         }
-        const actual = decide(root, join(scratch, 'data'), test)
-        results.push({ source: suite.source, name: test.name ?? '', expect: test.expect, actual: actual.decision, detail: actual.detail, ok: actual.decision === test.expect })
+        const actual = decide(root, join(scratch, 'data'), test, env)
+        results.push({ source, name: test.name ?? '', expect: test.expect, actual: actual.decision, detail: actual.detail, ok: actual.decision === test.expect })
       }
     }
-    return { ok: errors.length === 0 && results.every((r) => r.ok), initialized, results, errors }
+
+    const blank = join(scratch, 'repo')
+    const home = join(scratch, 'home')
+    mkdirSync(join(blank, '.git'), { recursive: true })
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    runSuite('guards.default.test.json', readJson(DEFAULT_TESTS, null), blank, { HOME: home, HARNESS_CLAUDE_HOME: join(home, '.claude') })
+
+    const ctx = contextAt(start)
+    if (ctx) {
+      const own = [
+        [join(ctx.user.dir, 'guards.test.json'), tildePath(join(ctx.user.dir, 'guards.test.json'))],
+        [join(ctx.user.repoDir, 'guards.test.json'), tildePath(join(ctx.user.repoDir, 'guards.test.json'))],
+        [join(ctx.repo.root, 'harness', 'guards.test.json'), 'harness/guards.test.json'],
+      ]
+      for (const [file, label] of own) {
+        if (existsSync(file)) runSuite(label, readJson(file, null), ctx.repo.root, {})
+      }
+    }
+    return { ok: errors.length === 0 && results.every((r) => r.ok), repo: ctx ? ctx.repo.name : null, results, errors }
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }
@@ -78,7 +113,7 @@ if (isMain(import.meta.url)) {
     }
     for (const e of result.errors) process.stdout.write(`NG  ${e}\n`)
     const failed = result.results.filter((r) => !r.ok).length + result.errors.length
-    process.stdout.write(`${result.results.length} 件中 ${result.results.length - result.results.filter((r) => !r.ok).length} 件が期待どおり${failed ? `、問題 ${failed} 件` : ''}。${result.initialized ? '' : '（init していない場所なので、共通リストだけを実行しました）'}\n`)
+    process.stdout.write(`${result.results.length} 件中 ${result.results.length - result.results.filter((r) => !r.ok).length} 件が期待どおり${failed ? `、問題 ${failed} 件` : ''}。${result.repo ? '' : '（self-improve の動くリポジトリではないので、共通リストだけを実行しました）'}\n`)
   }
   process.exitCode = result.ok ? 0 : 1
 }

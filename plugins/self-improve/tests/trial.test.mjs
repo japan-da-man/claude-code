@@ -14,7 +14,7 @@ test('trial add: データ領域の trial/<リポジトリID>/rules/ に置き�
   assert.match(run.stdout, /- ルート定義は src\/routes\/ に置く（下書き:route-placement）/)
   assert.deepEqual(dataFiles(t, 'trial'), [`${repoId(t)}/rules/route-placement.json`])
   // リポジトリの中には何も書かない
-  assert.deepEqual(readdirSync(t.repo).sort(), ['.git', 'harness'])
+  assert.deepEqual(readdirSync(t.repo).sort(), ['.git'])
 
   const withRef = trialAdd(t, 'migration-forgotten', 'スキーマを変えたらマイグレーションを生成する', { now: at(1) }, ['--ref', 'INC-2026-0007'])
   assert.match(withRef.stdout, /（INC-2026-0007）/)
@@ -136,7 +136,7 @@ test('trial add（人）: 件数の上限では追加せず、行数の目安を
   assert.doesNotMatch(first.stdout, /警告/)
   const second = trialAdd(t, 'rule-two', 'ルール 2')
   assert.match(second.stdout, /追加しました/)
-  assert.match(second.stdout, /警告：常時ロードのルールが行数の目安を超えます（paths なしのルール 0 行＋試用ルール 1 行、目安 1 行）。人が入れる分は止めません/)
+  assert.match(second.stdout, /警告：self-improve が読み込ませるルールが行数の目安を超えます（試用ルール 1 行＋自分専用のルール 0 行、目安 1 行）。人が入れる分は止めません/)
   const third = trialAdd(t, 'rule-three', 'ルール 3')
   assert.equal(third.status, 0)
   assert.match(third.stdout, /見送り：試用ルールが上限（2 件）/)

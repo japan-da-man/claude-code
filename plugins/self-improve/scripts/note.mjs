@@ -14,7 +14,12 @@
 //   harness-note pending list | show <K> | remove <K>
 //   harness-note report write --body <本文|-> | report list | report show [名前]
 //   harness-note lock --session <ID> | unlock [--session <ID>]
-//   harness-note targets | status | review | review done <変更ID> --decision keep|edit|remove|promote|apply|dismiss [--incident INC-..] [--path P]
+//   harness-note incident add --key K --root-cause R --asked .. --expected .. --actual .. [--evidence ..] [--status S --control C]
+//   harness-note incident add --from-draft --key K     下書きから起票する（下書きの値を引き継ぐ）
+//   harness-note incident list [--all] | show <ID> | set <ID> --status S [--control C] | import
+//   harness-note promote --key K --to personal|team [--path <移した先>] [--incident INC-..]
+//   harness-note verify [show] | verify trust     リポジトリの検証コマンド（harness/config.json の verify）の一覧と、実行の許可
+//   harness-note targets | status | review | review done <変更ID> --decision keep|edit|remove|apply|dismiss [--incident INC-..]
 //
 //   harness-note report close            セッション開始時の知らせ（報告の 1 行など）を閉じる
 //
@@ -23,11 +28,13 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  activeLock, dayOf, daysBetween, disabled, iso, isKnownSession, isLocked, listFiles, makeContext, readStdin, safeId, sessionLock,
+  activeLock, dayOf, daysBetween, inactiveReason, iso, isKnownSession, isLocked, listFiles, makeContext, parseFrontmatter, readStdin,
+  recordVerifyTrust, safeId, sessionLock, tildePath, verifyTrustFile,
 } from './lib/core.mjs'
 import { UsageError, parseArgs } from './lib/args.mjs'
 import { TEXT_MAX, addCandidate, loadCandidates, markCandidates, rekey, summarizeKeys, validKey } from './lib/candidates.mjs'
-import { INCIDENT_REF } from './lib/content.mjs'
+import { INCIDENT_ID, INCIDENT_STATUSES, addIncident, getIncident, importIncidents, listIncidents, repoIncidents, updateIncident } from './lib/incidents.mjs'
+import { guardFiles } from './lib/guard.mjs'
 import {
   addRule, addSkill, editRule, listRules, listSkills, measureAlwaysLoaded, parseSkillMarkdown, readSkill, removeRule,
   removeSkill, renderRule, ruleCapacity,
@@ -35,7 +42,7 @@ import {
 import {
   DECISIONS, PROPOSAL_KINDS, ROOT_CAUSES, SIGNALS, acquireLock, addPending, autoGate, blockedReasons, closeNotices, computeTargets,
   decisionStats, intervalState, isAutoSession, listPending, loadAuto, markPendingTrial, readPending, readReport, registerChange,
-  registerManual, rejectCause, releaseLock, removePending, reviewDone, reviewItems, summaryLine, unreviewed, updateAuto, writeReport,
+  promote, registerManual, rejectCause, releaseLock, removePending, reviewDone, reviewItems, summaryLine, unreviewed, updateAuto, writeReport,
 } from './lib/auto.mjs'
 
 let stdinCache = null
@@ -166,6 +173,10 @@ function cmdAdd(ctx, flags) {
   }
   if (activeLock(ctx) && estimated(session)) {
     return refuse('記録しません：自動改善が実行中で、どのセッションからの記録かを確かめられません。--session <セッションID> を付けてください。付けられなければ、何もせず終了してよい。')
+  }
+  // user の設定が読めないあいだは、記録を止めている（除外の一覧を信じられないため）。
+  if (!ctx.recording) {
+    return refuse('記録しません：~/.claude/self-improve/config.json を読めないので、記録を止めています。そのまま終了してよい。')
   }
   const category = r.required('category')
   const categories = ctx.config.candidates.categories
@@ -314,7 +325,6 @@ function cmdEpisodes(ctx, positional, flags) {
 
 // ---- 試用ルール ----
 
-const INCIDENT_ID = INCIDENT_REF
 
 function cmdTrial(ctx, positional, flags) {
   const sub = positional[0]
@@ -355,7 +365,7 @@ function cmdTrial(ctx, positional, flags) {
         return refuse(`見送り：試用ルールが上限（${max} 件）に達しています。先に /self-improve:review で昇格するか消してください。`)
       }
       const capacity = ruleCapacity(ctx)
-      if (!capacity.ok) notes.push(`警告：${capacity.reason}。人が入れる分は止めませんが、昇格して paths を付けるか、棚卸しを検討してください。`)
+      if (!capacity.ok) notes.push(`警告：${capacity.reason}。人が入れる分は止めませんが、/self-improve:review で、チームへ昇格するか、減らすことを検討してください。`)
     }
     const result = sub === 'add'
       ? addRule(ctx, { key, text, ref: ref ?? null, by })
@@ -426,7 +436,7 @@ function cmdSkill(ctx, positional, flags) {
     const r = makeReader(flags, ['key', 'name', 'description', 'body', 'file'])
     const key = requireKey(r.required('key'))
     if (!locked) {
-      return refuse('見送り：試用 Skill を置けるのは、自動改善のセッションだけです。人が始める振り返りでは、Skill は .claude/skills/ に、差分の承認を通して置いてください。')
+      return refuse('見送り：試用 Skill を置けるのは、自動改善のセッションだけです。人が始める振り返りでは、Skill は、自分専用なら ~/.claude/skills/ に、チームで使うならリポジトリの .claude/skills/ に、差分の承認を通して置いてください。')
     }
     let input
     if (r.has('file')) {
@@ -601,10 +611,10 @@ function gateSummary(ctx) {
     max_trial_rules: ctx.config.auto.max_trial_rules,
     trial_skills: listSkills(ctx).length,
     max_trial_skills: ctx.config.auto.max_trial_skills,
+    // self-improve が読み込ませる行数（試用ルール＋自分専用のルール）と、その目安。
     rule_lines: measure.rule_lines,
+    personal_rules: measure.personal_rules,
     rule_limit: measure.rule_limit,
-    claude_md_lines: measure.claude_md,
-    claude_md_limit: measure.claude_md_limit,
     blocked: blockedReasons(ctx, state),
   }
 }
@@ -638,7 +648,7 @@ function cmdLock(ctx, flags) {
     `対象（${ctx.config.auto.max_per_run} 件まで。件数の多い順にスクリプトが選びました。これ以外は扱いません）：`,
     ...(result.lock.targets.length ? result.lock.targets.map(describeTarget) : ['  なし（追加・編集はせず、報告だけ書いて終了してください）']),
     `未確認の自動変更：${g.unreviewed} 件（上限 ${g.max_unreviewed} 件）${full ? ' → 上限に達しています。追加も編集もせず、報告だけにしてください' : ''}`,
-    `試用ルール ${g.trial_rules}/${g.max_trial_rules} 件、試用Skill ${g.trial_skills}/${g.max_trial_skills} 件、常時ロードのルール ${g.rule_lines}/${g.rule_limit} 行`,
+    `試用ルール ${g.trial_rules}/${g.max_trial_rules} 件、試用Skill ${g.trial_skills}/${g.max_trial_skills} 件、読み込ませるルール（試用＋自分専用）${g.rule_lines}/${g.rule_limit} 行`,
     'このセッションでは、Read・Grep・Glob と harness-note 以外のツールは拒否されます。harness-note には、毎回 --session を付けてください。最後に report write、そのあとに unlock を実行します。',
   ].join('\n'))
   return 0
@@ -677,8 +687,17 @@ function cmdStatus(ctx, flags) {
     data_dir: ctx.data,
     data_dir_source: ctx.dataSource,
     session,
-    disabled: disabled(),
-    config_error: ctx.config.error,
+    // user 側の置き場所と、設定の読み込みの結果。recording が false なら、記録と掃除を止めている。
+    user_dir: tildePath(ctx.user.dir),
+    repo_dir: tildePath(ctx.user.repoDir),
+    incidents_dir: tildePath(ctx.user.incidents),
+    recording: ctx.recording,
+    config_files: Object.fromEntries(Object.entries(ctx.config.files).map(([k, f]) => [k, { path: k === 'repo' ? 'harness/config.json' : tildePath(f), exists: existsSync(f) }])),
+    config_errors: ctx.config.errors,
+    // リポジトリの検証コマンドの件数と、実行を許可しているか（harness-note verify trust）。
+    verify: { count: ctx.config.verify.length, trusted: ctx.config.verify_trust.trusted, changed: ctx.config.verify_trust.changed },
+    config_notes: ctx.config.notes,
+    guard_files: guardFiles(ctx).map((g) => ({ source: g.source, path: g.label, exists: existsSync(g.file) })),
     // ロックの ID は全文では出さない（ほかのセッションが名乗れないように）。
     lock: lock ? { session: lock.broken ? null : short(lock.session_id), at: lock.at, mine: lock.session_id === session.id, broken: Boolean(lock.broken) } : null,
     auto_session: isAutoSession(ctx, session.id),
@@ -695,11 +714,15 @@ function cmdStatus(ctx, flags) {
     `セッション：${session.id}（${{ flag: '--session', env: '環境変数', recent: '直近のセッションから推定', unknown: '不明' }[session.source]}）`,
     `ロック：${lock ? (lock.broken ? 'ファイルを読めません（書き込みは拒否されます）' : `${short(lock.session_id)}… が ${lock.at} から${value.lock.mine ? '（このセッション）' : ''}`) : 'なし'}`,
     `自動改善：${value.interval.enabled ? `間隔 ${ctx.config.auto.interval_days} 日、前回 ${value.interval.last_run_at ?? 'なし'}${value.interval.next_run_from ? `、次に実行できるのは ${value.interval.next_run_from} 以降` : ''}` : '停止中（interval_days が 0）'}`,
-    `未確認の自動変更 ${value.gates.unreviewed}/${value.gates.max_unreviewed} 件、試用ルール ${value.gates.trial_rules}/${value.gates.max_trial_rules} 件、試用Skill ${value.gates.trial_skills}/${value.gates.max_trial_skills} 件、常時ロードのルール ${value.gates.rule_lines}/${value.gates.rule_limit} 行、CLAUDE.md ${value.gates.claude_md_lines}/${value.gates.claude_md_limit} 行`,
+    `設定：${Object.values(value.config_files).filter((f) => f.exists).map((f) => f.path).join('、') || 'なし（初期値で動いています）'}。リポジトリごとの置き場所：${value.repo_dir}`,
+    `ガードの定義：${value.guard_files.filter((g) => g.exists).map((g) => g.path).join('、')}`,
+    `検証コマンド：${value.verify.count ? `${value.verify.count} 件、${value.verify.trusted ? '許可済み' : `${value.verify.changed ? '中身が変わったので' : ''}許可待ち（実行していません。harness-note verify で中身を確かめ、verify trust で許可します）`}` : 'なし'}`,
+    `未確認の自動変更 ${value.gates.unreviewed}/${value.gates.max_unreviewed} 件、試用ルール ${value.gates.trial_rules}/${value.gates.max_trial_rules} 件、試用Skill ${value.gates.trial_skills}/${value.gates.max_trial_skills} 件、読み込ませるルール（試用＋自分専用）${value.gates.rule_lines}/${value.gates.rule_limit} 行`,
     ...(value.gates.blocked.length && value.interval.enabled ? [`自動改善は、いま試用を追加しません：${value.gates.blocked.join('。')}`] : []),
     `new の改善候補 ${value.candidates.new} 件、対象になる原因キー：${value.targets.join('、') || 'なし'}`,
     `自動改善の採否：残した ${value.decisions.kept} 件、消した ${value.decisions.removed} 件`,
-    ...(ctx.config.error ? [`警告：harness/config.json を読めません（${ctx.config.error}）。初期値で動いています`] : []),
+    ...ctx.config.errors.map((e) => `警告：${e}`),
+    ...ctx.config.notes.map((n) => `注意：${n}`),
   ].join('\n'))
   return 0
 }
@@ -715,10 +738,11 @@ function cmdReview(ctx, positional, flags) {
     if (!quiet) closeNotices(ctx)
     return json(items), 0
   }
-  const r = makeReader(flags, ['decision', 'incident', 'path'])
+  const r = makeReader(flags, ['decision', 'incident'])
   const id = positional[1]
-  if (!id) throw new UsageError('使い方：harness-note review done <変更ID> --decision keep|edit|remove|promote|apply|dismiss')
+  if (!id) throw new UsageError('使い方：harness-note review done <変更ID> --decision keep|edit|remove|apply|dismiss')
   const decision = r.required('decision')
+  if (decision === 'promote') throw new UsageError('昇格は、harness-note promote --key <原因キー> --to personal|team で行います（確認済みにもなります）')
   if (!DECISIONS.includes(decision)) throw new UsageError(`--decision は次のどれかです：${DECISIONS.join('、')}`)
   const incident = r.one('incident')
   if (incident && !INCIDENT_ID.test(incident)) throw new UsageError('--incident は失敗票の ID（INC-YYYY-NNNN）です')
@@ -726,9 +750,203 @@ function cmdReview(ctx, positional, flags) {
   if (writer.locked) return refuse('見送り：自動改善のセッションでは、確認の結果を記録しません。確認は人が行います。')
   const refusal = humanOnlyRefusal(ctx, writer)
   if (refusal) return refuse(refusal)
-  const result = reviewDone(ctx, id, decision, { incident, path: r.one('path') })
+  const result = reviewDone(ctx, id, decision, { incident })
   if (!result.ok) return fail(result.errors)
   out([`${id}（${result.change.cause_key}）を確認済みにしました：${decision}`, ...result.notes].join('\n'))
+  return 0
+}
+
+// ---- 失敗票 ----
+
+// 失敗票は、全リポジトリの分を user 側（~/.claude/self-improve/incidents/）に置く。起票は人だけの操作。
+function cmdIncident(ctx, positional, flags) {
+  const sub = positional[0]
+  if (sub === 'list') {
+    makeReader(flags, ['all'])
+    const rows = (flags.all ? listIncidents(ctx) : repoIncidents(ctx)).map((i) => ({
+      id: i.id, repo: i.data.repo ?? null, cause_key: i.data.cause_key ?? null, status: i.data.status ?? null, control: i.data.control ?? null, date: i.data.date ?? null,
+    }))
+    if (flags.json) return json(rows), 0
+    if (!rows.length) return out(flags.all ? '失敗票はありません。' : 'このリポジトリの失敗票はありません（全リポジトリの分は --all）。'), 0
+    for (const row of rows) out(`- ${row.id}［${row.status}］${row.cause_key}（${row.repo}、${row.date}）${row.control && row.control !== 'null' ? ` → ${row.control}` : ''}`)
+    return 0
+  }
+  if (sub === 'show') {
+    makeReader(flags, [])
+    const incident = getIncident(ctx, positional[1])
+    if (!incident) return fail(`失敗票 ${positional[1] ?? ''} がありません`)
+    out(incident.text.trimEnd())
+    return 0
+  }
+  if (sub === 'set') {
+    const r = makeReader(flags, ['status', 'control'])
+    const id = positional[1]
+    if (!id || !INCIDENT_ID.test(id)) throw new UsageError('使い方：harness-note incident set <INC-YYYY-NNNN> --status <状態> [--control <足した制御の場所>]')
+    const changes = {}
+    if (r.has('status')) {
+      const status = r.one('status')
+      if (!INCIDENT_STATUSES.includes(status)) throw new UsageError(`--status は次のどれかです：${INCIDENT_STATUSES.join('、')}`)
+      changes.status = status
+    }
+    if (r.has('control')) changes.control = r.one('control')
+    if (!Object.keys(changes).length) throw new UsageError('--status か --control が必要です')
+    const refusal = humanOnlyRefusal(ctx, writerSession(ctx, flags))
+    if (refusal) return refuse(refusal)
+    const result = updateIncident(ctx, id, changes)
+    if (!result.ok) return fail(result.errors)
+    out(`失敗票 ${id} を更新しました（${Object.entries(changes).map(([k, v]) => `${k}: ${v}`).join('、')}）。`)
+    return 0
+  }
+  if (sub === 'import') {
+    // 1.x の失敗票（リポジトリの harness/incidents/）を、user 側へ取り込む。
+    makeReader(flags, [])
+    const refusal = humanOnlyRefusal(ctx, writerSession(ctx, flags))
+    if (refusal) return refuse(refusal)
+    const result = importIncidents(ctx)
+    const lines = []
+    const renamed = result.imported.filter((i) => i.from !== i.id)
+    // 番号を振り直した票を指している試用ルールは、新しい ID に付け替える。
+    for (const rule of listRules(ctx)) {
+      const moved = renamed.find((i) => i.from === rule.ref)
+      if (moved) {
+        editRule(ctx, { key: rule.cause_key, text: null, ref: moved.id, by: rule.by })
+        lines.push(`試用ルール ${rule.cause_key} の失敗票 ID を ${moved.id} に付け替えました`)
+      }
+    }
+    // 取り込み元のリポジトリを、どの出力にも書く（他人のリポジトリの票が、user 全体の票に混ざっていないかを確かめられるように）。
+    const from = `リポジトリ ${ctx.repo.name} の harness/incidents/`
+    if (result.imported.length) {
+      lines.unshift(`失敗票を ${result.imported.length} 件取り込みました（取り込み元：${from}、取り込み先：${tildePath(ctx.user.incidents)}）：${result.imported.map((i) => (i.from === i.id ? i.id : `${i.from} → ${i.id}`)).join('、')}`)
+      lines.push('もとのファイル（harness/incidents/）は消していません。取り込んだ内容を確かめてから、リポジトリから消してください。')
+      if (renamed.length) lines.push('番号を振り直した票があります（ほかのリポジトリの票と番号が重なったため）。リポジトリのファイルに古い ID を書いていれば、直してください。')
+    }
+    if (result.skipped.length) lines.push(`取り込み済みなので飛ばしました（${from}）：${result.skipped.map((i) => i.from).join('、')}`)
+    if (!result.imported.length && !result.skipped.length && !result.errors.length) lines.push(`取り込む失敗票はありません（${from} に INC-YYYY-NNNN.md がありません）。`)
+    if (lines.length) out(lines.join('\n'))
+    return result.errors.length ? fail(result.errors) : 0
+  }
+  if (sub !== 'add') throw new UsageError('使い方：harness-note incident add|list|show|set|import')
+
+  const r = makeReader(flags, ['key', 'from-draft', 'status', 'control', 'root-cause', 'category', 'signal', 'severity', 'area', 'asked', 'expected', 'actual', 'evidence'])
+  const key = requireKey(r.required('key'))
+  const pick = (name, allowed, label) => {
+    const value = r.one(name)
+    if (value !== null && !allowed.includes(value)) throw new UsageError(`--${name} は次のどれかです：${allowed.join('、')}`)
+    return value
+  }
+  const flagsFields = {
+    status: pick('status', INCIDENT_STATUSES),
+    root_cause: pick('root-cause', ROOT_CAUSES),
+    signal: pick('signal', SIGNALS),
+    severity: pick('severity', ['normal', 'high']),
+    category: pick('category', ctx.config.candidates.categories),
+    control: r.one('control'),
+    area: r.one('area'),
+  }
+  if (flagsFields.area && !/^[A-Za-z0-9_./-]{1,40}$/.test(flagsFields.area)) throw new UsageError('--area は英数字の短い名前にしてください')
+  const given = Object.fromEntries(Object.entries(flagsFields).filter(([, v]) => v !== null))
+  let fields
+  let body
+  if (r.has('from-draft')) {
+    // 下書きから起票する。下書きに入っている値（status、control、root_cause、試用を始めた日など）を引き継ぐ。
+    const draft = readPending(ctx, key)
+    if (draft === null) return fail(`${key} の下書きがありません（harness-note pending list で確かめてください）`)
+    const parsed = parseFrontmatter(draft)
+    const d = parsed.data ?? {}
+    const keep = (name) => (d[name] === undefined || d[name] === null || d[name] === 'null' ? {} : { [name]: d[name] })
+    fields = {
+      ...keep('area'), ...keep('category'), ...keep('signal'), ...keep('root_cause'), ...keep('severity'), ...keep('status'), ...keep('control'),
+      ...keep('applied_by'), ...keep('trial_started_at'), ...keep('promoted_at'),
+      ...given, cause_key: key,
+    }
+    body = parsed.body
+  } else {
+    if (!given.root_cause) throw new UsageError('--root-cause が必要です（下書きから起票するなら --from-draft）')
+    const category = given.category ?? loadCandidates(ctx).filter((c) => c.cause_key === key).at(-1)?.category ?? null
+    if (!category) throw new UsageError(`--category が必要です（${ctx.config.candidates.categories.join('、')}）`)
+    fields = { ...given, category, cause_key: key }
+    const evidence = r.text('evidence')
+    body = [
+      '## 何を頼んだか', '', r.required('asked', r.text), '',
+      '## 期待した結果', '', r.required('expected', r.text), '',
+      '## 実際の結果', '', r.required('actual', r.text), '',
+      '## 根拠', '', evidence ?? '', '',
+    ].join('\n')
+  }
+  if ((fields.status === 'trial' || fields.status === 'converted') && !fields.control) {
+    throw new UsageError(`status が ${fields.status} のときは、--control（足した制御の場所）が必要です`)
+  }
+  const refusal = humanOnlyRefusal(ctx, writerSession(ctx, flags))
+  if (refusal) return refuse(refusal)
+  const result = addIncident(ctx, { fields, body })
+  if (!result.ok) return fail(result.errors)
+  const lines = [`失敗票を起票しました：${result.id}（${tildePath(result.file)}）`]
+  if (result.related.length) lines.push(`同じ原因の失敗票（このリポジトリ）：${result.related.join('、')}`)
+  if (r.has('from-draft') && removePending(ctx, key)) lines.push('下書きは、起票したので捨てました。')
+  out(lines.join('\n'))
+  return 0
+}
+
+// ---- 検証コマンドの許可 ----
+
+// リポジトリの harness/config.json の verify は、人が許可した中身と一致するときだけ実行する。
+//   harness-note verify          いまの検証コマンドの一覧と、許可されているか
+//   harness-note verify trust    一覧を出してから、いまの中身を許可したと記録する（人だけの操作）
+function describeVerify(ctx) {
+  return ctx.config.verify.map((v, i) => `${i + 1}. ${v.name}：${v.run}（制限時間 ${v.timeout_sec} 秒）`)
+}
+function cmdVerify(ctx, positional, flags) {
+  const sub = positional[0] ?? 'show'
+  const trust = ctx.config.verify_trust
+  if (sub === 'show') {
+    makeReader(flags, [])
+    const value = { verify: ctx.config.verify, trusted: trust.trusted, changed: trust.changed, hash: trust.hash, trust_file: tildePath(verifyTrustFile(ctx.repo)) }
+    if (flags.json) return json(value), 0
+    if (!ctx.config.verify.length) return out('検証コマンドは設定されていません（harness/config.json の verify が空か、ファイルがありません）。'), 0
+    out([
+      `harness/config.json の検証コマンド（リポジトリの根で、上から順に実行します）：`,
+      ...describeVerify(ctx),
+      trust.trusted
+        ? '許可済みです。変更のあったターンの終わりに実行します。'
+        : `${trust.changed ? '前に許可したときから中身が変わっています。' : 'まだ許可されていません。'}実行していません。許可するには harness-note verify trust を実行します。`,
+    ].join('\n'))
+    return 0
+  }
+  if (sub !== 'trust') throw new UsageError('使い方：harness-note verify [show] | verify trust')
+  makeReader(flags, [])
+  if (!ctx.config.verify.length) return refuse('許可するものはありません（harness/config.json の verify が空か、ファイルがありません）。')
+  // 人だけの操作。自動改善のセッション、lock を試みたセッション、自動改善の実行中は、見送る。
+  const writer = writerSession(ctx, flags)
+  const refusal = humanOnlyRefusal(ctx, writer)
+  if (refusal) return refuse(refusal)
+  // セッションを確かめられないとき（ID が推定）は、自動改善のセッションかどうかを見分けられないので、記録しない。
+  if (estimated(writer.session)) return refuse('見送り：どのセッションからの操作かを確かめられないので、許可は記録しません。harness-note verify trust --session <セッションID> の形で呼んでください。')
+  const lines = ['次の検証コマンドを、変更のあったターンの終わりに実行します（リポジトリの根で、上から順に）：', ...describeVerify(ctx)]
+  if (trust.trusted) {
+    lines.push('この中身は、すでに許可済みです。')
+  } else {
+    const file = recordVerifyTrust(ctx)
+    lines.push(`この中身を許可したと記録しました（${tildePath(file)}）。harness/config.json の verify が変わったときは、もう一度許可が要ります。`)
+  }
+  out(lines.join('\n'))
+  return 0
+}
+
+// ---- 昇格 ----
+
+// 試用を、自分専用（personal）かチーム（team）へ昇格する。人だけの操作。未確認の変更があれば、確認済みにもなる。
+function cmdPromote(ctx, flags) {
+  const r = makeReader(flags, ['key', 'to', 'path', 'incident'])
+  const key = requireKey(r.required('key'))
+  const to = r.required('to')
+  if (!['personal', 'team'].includes(to)) throw new UsageError('--to は personal（自分専用）か team（チーム）です')
+  const incident = r.one('incident')
+  if (incident && !INCIDENT_ID.test(incident)) throw new UsageError('--incident は失敗票の ID（INC-YYYY-NNNN）です')
+  const refusal = humanOnlyRefusal(ctx, writerSession(ctx, flags))
+  if (refusal) return refuse(refusal)
+  const result = promote(ctx, { key, to, path: r.one('path'), incident })
+  if (!result.ok) return fail(result.errors)
+  out([`${key} を${to === 'personal' ? '自分専用' : 'チーム'}へ昇格しました。`, ...result.notes].join('\n'))
   return 0
 }
 
@@ -740,7 +958,10 @@ const USAGE = `harness-note <サブコマンド>
   trial add|edit|remove|list            試用ルール
   skill add|remove|list                 試用 Skill
   pending add|list|show|remove          失敗票の下書き
-  report write|list|show                自動改善の記録
+  incident add|list|show|set|import     失敗票（全リポジトリの分を user 側に置く。import は 1.x の票の取り込み）
+  promote                               試用を、自分専用かチームへ昇格する
+  verify [show] | verify trust          リポジトリの検証コマンドの一覧と、実行の許可（許可は人だけの操作）
+  report write|list|show|close          自動改善の記録、知らせを閉じる
   lock / unlock / targets / status      自動改善のセッション
   review / review done                  未確認の自動変更`
 
@@ -758,9 +979,7 @@ function main(argv) {
     return 0
   }
   const ctx = makeContext(process.cwd())
-  if (!ctx) {
-    return fail('このリポジトリでは使えません（harness/config.json がありません）。先に /self-improve:init を実行してください')
-  }
+  if (!ctx) return fail(`ここでは使えません：${inactiveReason(process.cwd()) ?? 'self-improve が動いていません'}`)
   try {
     switch (command) {
       case 'add': return cmdAdd(ctx, flags)
@@ -773,6 +992,9 @@ function main(argv) {
       case 'skill': return cmdSkill(ctx, positional, flags)
       case 'pending': return cmdPending(ctx, positional, flags)
       case 'report': return cmdReport(ctx, positional, flags)
+      case 'incident': return cmdIncident(ctx, positional, flags)
+      case 'promote': return cmdPromote(ctx, flags)
+      case 'verify': return cmdVerify(ctx, positional, flags)
       case 'lock': return cmdLock(ctx, flags)
       case 'unlock': return cmdUnlock(ctx, flags)
       case 'targets': return cmdTargets(ctx, flags)

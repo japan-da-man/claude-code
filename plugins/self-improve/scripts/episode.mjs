@@ -69,13 +69,12 @@ export function writeEpisode(ctx, { sessionId, promptId, turnKey, startedAt, pro
   return id
 }
 
-// 保持期間（初期値 90 日）を過ぎた事象メモと生ログを消す。
-export function pruneEpisodes(ctx) {
-  const days = ctx.config.episode_retention_days
+// 保持期間（初期値 90 日）を過ぎた事象メモと生ログを消す。dirs は、そのリポジトリのデータの置き場所。
+export function pruneRecords(dirs, days) {
   if (!days) return 0
   const cutoff = now().getTime() - days * DAY_MS
   let removed = 0
-  for (const [dir, ext] of [[ctx.dirs.episodes, '.md'], [ctx.dirs.events, '.jsonl']]) {
+  for (const [dir, ext] of [[dirs.episodes, '.md'], [dirs.events, '.jsonl']]) {
     for (const file of listFiles(dir, (f) => f.endsWith(ext))) {
       const path = join(dir, file)
       try {
