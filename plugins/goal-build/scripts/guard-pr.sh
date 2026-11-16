@@ -13,14 +13,12 @@ fi
 
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
 
-# gh の前の区切り: 行頭・; & | ( ` " ' / ・空白（bash -c "…"、$(…)、/usr/bin/gh なども拾う）
-# gh と pr の間のオプション: -R owner/repo、--repo=owner/repo など
-re=$(cat <<'EOF'
-(^|[;&|(`"'/]|[[:space:]])gh([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+pr[[:space:]]+(create|merge)([^[:alnum:]_-]|$)
-EOF
-)
+# パターンは pr-pattern.ere に置く（macOS の bash 3.2 は、$( ) の中のヒアドキュメントにある
+# 対にならない引用符を読み違えるため）。gh の前の区切り: 行頭・; & | ( ` " ' / ・空白
+# （bash -c "…"、$(…)、/usr/bin/gh なども拾う）。gh と pr の間のオプション: -R owner/repo など
+pattern="$(dirname "$0")/pr-pattern.ere"
 
-if printf '%s' "$cmd" | grep -Eq "$re"; then
+if printf '%s' "$cmd" | grep -Eqf "$pattern"; then
   echo "goal-build: フローの実行中は PR の作成とマージを禁止しています。/goal-build:report で報告して止まってください。PR は人が /goal-build:finish のあとで作ります。" >&2
   exit 2
 fi
