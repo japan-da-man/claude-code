@@ -394,3 +394,20 @@ test('prompt_id が渡らない版でも、ターンの始まりの時刻で区�
   assert.equal(outcome(s.stop(undefined, 'x', { now: at(22) })), 'ask')
   assert.ok(repoId(t))
 })
+
+test('確認の依頼文に、報告のしかたの指示が入っている：記録したら、ユーザーの使っている言語で 1 行だけ報告する（2.0.1）', () => {
+  const t = makeEnv()
+  const s = session(t)
+  s.prompt('p1', 'Add an endpoint that lists users', { now: at(0) })
+  signal(s, 'p1')
+  const message = ask(s.stop('p1', 'Done.', { now: at(2) }))
+  // 手順 4：依頼文そのものは日本語だが、報告は、会話でユーザーが使っている言語に合わせる。例も添える
+  assert.match(message, /^4\. 記録したら、ユーザーへの報告は、この会話でユーザーが使っている言語で 1 行だけ書く（例：「改善候補を 1 件記録しました：<原因キー>」）$/m)
+  // 手順は 1〜4 の順に並び、4 が最後
+  const steps = [...message.matchAll(/^(\d)\. /gm)].map((m) => Number(m[1]))
+  assert.deepEqual(steps, [1, 2, 3, 4])
+  assert.ok(message.trimEnd().split('\n').at(-1).startsWith('4. '))
+  // 記録するものがないときは、何も書かずに終わる、という指示は変えない
+  assert.match(message, /なければ何も記録せず、説明も足さずに、そのまま終了してください/)
+  assert.match(message, /^3\. このセッションで記録できるのは、あと 3 件。記録したら、ほかの作業はせずに終了する$/m)
+})
