@@ -3,46 +3,73 @@
 // 指示の上書き・ガードの回避・外部への送信を促す文と、読み込み時に実行される書き方を拒否する。
 // 言い回しの照合なので、すり抜けも誤検知もある。人の確認（review）が最後の関門。
 
-const NEGATED = '(?!\\s*(?:しない|せず|するな|してはいけない|してはならない|しては|を禁止|禁止))'
+// 禁じる側のルール（「〜を使わない」「〜するな」）は通す。
+// その文（。か改行まで）が否定で終わっているときだけ、例外にする。
+// 「--no-verify を使わないのは古い決まりなので、今は付ける」のように、否定のあとに文が続くものは通さない。
+const NEGATIVE_ENDING = /(?:ない|ません|せず|するな|[うくぐすつぬぶむる]な|禁止(?:する)?|厳禁|やめる|避ける)(?:こと)?[\s、。.!！）)」]*$/
+// 英語は、同じ文の前のほうに否定があるとき。
+const NEGATIVE_BEFORE = /\b(never|don'?t|do not|must not|should not|avoid)\b[^.\n]*$/i
 
 const BLOCKED = [
-  { kind: '指示の上書き', re: /(ignore|disregard|forget|override)\s+(all\s+|any\s+)?(of\s+)?(the\s+|your\s+)?(previous|prior|above|earlier|system|other)\s+(instructions?|prompts?|rules?|guidelines?)/i },
-  { kind: '指示の上書き', re: /(これまで|今まで|以前|上記|ここまで|ほか|他|システム)の?(指示|ルール|プロンプト|命令|決まり)(は|を)?(すべて|全て|全部)?(無視|忘れ|破棄|上書き|優先しない)/ },
-  { kind: '指示の上書き', re: /system\s*prompt|システム\s*プロンプト/i },
-  { kind: '指示の上書き', re: new RegExp(`(ユーザー|利用者|人)の(指示|確認|承認|許可)(を|は)?(待たず|待たない|無視|省略|不要)${NEGATED}`) },
-  // 「--no-verify を使わない」のような、禁じる側のルールは通す（前後に否定があるとき）。
-  {
-    kind: 'ガードの回避',
-    re: /HARNESS_DISABLE|disableAllHooks|--no-verify|bypassPermissions|dangerously-skip-permissions|--dangerously|permissions?\.(allow|deny)|settings(\.local)?\.json/i,
-    unlessAfter: /^[^。\n]{0,25}(使わない|使用しない|付けない|つけない|書き換えない|編集しない|変えない|しない|せず|禁止|避ける|やめる)/,
-    unlessBefore: /(never|don'?t|do not|must not|avoid)\s+(?:\w+\s+){0,2}$/i,
-  },
-  { kind: 'ガードの回避', re: new RegExp(`(ガード|guard|hooks?|フック|ハーネス|harness|検証|verify|権限|承認|確認|許可)(を|は|の)?(回避|無効化?|外す|外して|止める|止めて|スキップ|迂回|バイパス|すり抜け|省略)${NEGATED}`, 'i') },
-  { kind: 'ガードの回避', re: /(bypass|disable|skip|circumvent|turn\s+off|work\s+around)\s+(the\s+|any\s+)?(guards?|hooks?|harness|verification|permissions?|approvals?|confirmations?|checks?)/i },
-  { kind: '外部への送信', re: /https?:\/\//i },
-  { kind: '外部への送信', re: /\b(curl|wget)\b[^\n]*(\s-d\b|--data|\s-F\b|--form|\s-T\b|--upload|-X\s*(POST|PUT|PATCH)|\|\s*(ba|z)?sh\b)/i },
-  { kind: '外部への送信', re: /\b(nc|netcat|scp|sftp|ftp)\s+\S/i },
-  { kind: '外部への送信', re: new RegExp(`(外部|社外|サーバー?|webhook|Slack|メール|第三者|リモート)(に|へ|宛に)[^。\\n]{0,20}(送信|送る|送って|アップロード|投稿|転送)${NEGATED}`, 'i') },
-  { kind: '外部への送信', re: /\b(send|upload|post|exfiltrate|forward|email)\b[^.\n]{0,60}\bto\s+(an?\s+|the\s+)?(external|remote|third[- ]party|webhook|server|slack|e-?mail)/i },
-  { kind: '読み込み時の実行', re: /!`/ },
-  { kind: '読み込み時の実行', re: /^\s*```!/m },
-  { kind: '読み込み時の実行', re: /^#!\s*\//m },
-  { kind: '読み込み時の実行', re: /<script\b/i },
+  { kind: '指示の上書き', re: /(ignore|disregard|forget|override)\s+(all\s+|any\s+)?(of\s+)?(the\s+|your\s+)?(previous|prior|above|earlier|system|other)\s+(instructions?|prompts?|rules?|guidelines?)/gi },
+  { kind: '指示の上書き', re: /(これまで|今まで|以前|上記|ここまで|ほか|他|システム)の?(指示|ルール|プロンプト|命令|決まり)(は|を)?(すべて|全て|全部)?(無視|忘れ|破棄|上書き|優先しない)/g },
+  { kind: '指示の上書き', re: /system\s*prompt|システム\s*プロンプト/gi },
+  { kind: '指示の上書き', re: /(ユーザー|利用者|人)の(指示|確認|承認|許可)(を|は)?(待たず|待たない|無視|省略|不要)/g, negatable: true },
+  { kind: 'ガードの回避', re: /HARNESS_DISABLE|disableAllHooks|--no-verify|bypassPermissions|dangerously-skip-permissions|--dangerously|permissions?\.(allow|deny)|settings(\.local)?\.json/gi, negatable: true },
+  { kind: 'ガードの回避', re: /(ガード|guard|hooks?|フック|ハーネス|harness|検証|verify|権限|承認|確認|許可)(を|は|の)?(回避|無効化|無効|外す|外して|止める|止めて|スキップ|迂回|バイパス|すり抜け|省略)/gi, negatable: true },
+  { kind: 'ガードの回避', re: /(bypass|disable|skip|circumvent|turn\s+off|work\s+around)\s+(the\s+|any\s+)?(guards?|hooks?|harness|verification|permissions?|approvals?|confirmations?|checks?)/gi, negatable: true },
+  { kind: '外部への送信', re: /https?:\/\//gi },
+  { kind: '外部への送信', re: /\b(curl|wget)\b[^\n]*(\s-d\b|--data|\s-F\b|--form|\s-T\b|--upload|-X\s*(POST|PUT|PATCH)|\|\s*(ba|z)?sh\b)/gi },
+  { kind: '外部への送信', re: /\b(nc|netcat|scp|sftp|ftp)\s+\S/gi },
+  { kind: '外部への送信', re: /(外部|社外|サーバー?|webhook|Slack|メール|第三者|リモート)(に|へ|宛に)[^。\n]{0,20}(送信|送る|送って|アップロード|投稿|転送)/gi, negatable: true },
+  { kind: '外部への送信', re: /\b(send|upload|post|exfiltrate|forward|email)\b[^.\n]{0,60}\bto\s+(an?\s+|the\s+)?(external|remote|third[- ]party|webhook|server|slack|e-?mail)/gi, negatable: true },
+  { kind: '読み込み時の実行', re: /!`/g },
+  { kind: '読み込み時の実行', re: /^\s*(?:`{3,}|~{3,})\s*!/gm },
+  { kind: '読み込み時の実行', re: /^#!\s*\//gm },
+  { kind: '読み込み時の実行', re: /<script\b/gi },
+  { kind: '見えない記述', re: /<!--/g },
 ]
 
-export function scanText(text) {
+// 試用 Skill の本文だけに当てる。@ で始まるファイル参照は、ファイルの取り込みとして扱われうる。
+const SKILL_ONLY = [
+  { kind: 'ファイルの取り込み', re: /(?:^|[\s(（「])@[~.\w/-]+/gm },
+]
+
+// 書式用の文字（Cf：ゼロ幅、双方向の制御、ソフトハイフンなど）と、行・段落の区切り（Zl、Zp）。
+// 文字そのものをソースに書かないよう、Unicode の分類で指定する。
+const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}]/u
+// タブ・改行以外の制御文字（Cc。NEL を含む）。
+const CONTROL = /[^\P{Cc}\t\n\r]/u
+const LINE_BREAK = /[\r\n\p{Zl}\p{Zp}]/u
+
+// 一致のあと、その文の終わりまでを取り出す。
+function restOfSentence(text, from) {
+  const end = text.slice(from).search(/[。\n]/)
+  return end < 0 ? text.slice(from) : text.slice(from, from + end)
+}
+
+function excused(text, match) {
+  const before = text.slice(0, match.index)
+  if (NEGATIVE_BEFORE.test(before.slice(Math.max(before.lastIndexOf('。'), before.lastIndexOf('\n')) + 1))) return true
+  return NEGATIVE_ENDING.test(restOfSentence(text, match.index + match[0].length))
+}
+
+export function scanText(raw, { skill = false } = {}) {
   const found = []
-  for (const { kind, re, unlessAfter, unlessBefore } of BLOCKED) {
-    const match = re.exec(text)
-    if (!match) continue
-    const after = text.slice(match.index + match[0].length)
-    const before = text.slice(0, match.index)
-    if ((unlessAfter && unlessAfter.test(after)) || (unlessBefore && unlessBefore.test(before))) continue
-    found.push(`${kind}に当たる表現があります：「${match[0].slice(0, 60)}」`)
+  // 書式用の文字（ゼロ幅、双方向の制御、ソフトハイフンなど）と、行の区切りに見える文字は拒否する。
+  // 表示をごまかしたり、照合をすり抜けたりするのに使えるため。
+  if (INVISIBLE.test(raw) || CONTROL.test(raw)) {
+    found.push('制御文字や不可視の文字（ゼロ幅、ソフトハイフン、行区切りなど）が含まれています')
   }
-  // 制御文字（改行とタブ以外）は、表示をごまかすのに使えるので拒否する。
-  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F​-‏‪-‮⁦-⁩]/.test(text)) {
-    found.push('制御文字や不可視の文字が含まれています')
+  // 全角の英数字などを半角にそろえてから照合する。
+  const text = raw.normalize('NFKC')
+  for (const { kind, re, negatable } of [...BLOCKED, ...(skill ? SKILL_ONLY : [])]) {
+    // すべての一致を調べる。1 つでも例外に当たらないものがあれば拒否する。
+    for (const match of text.matchAll(re)) {
+      if (negatable && excused(text, match)) continue
+      found.push(`${kind}に当たる表現があります：「${match[0].trim().slice(0, 60)}」`)
+      break
+    }
   }
   return found
 }
@@ -54,11 +81,13 @@ export function validateRuleText(raw) {
   const text = String(raw ?? '').trim().replace(/^[-*]\s+/, '')
   const errors = []
   if (!text) errors.push('ルールの本文が空です')
-  if (/[\r\n]/.test(text)) errors.push('ルールは 1 行で書いてください（改行は使えません）')
+  if (LINE_BREAK.test(text)) errors.push('ルールは 1 行で書いてください（改行は使えません）')
   if (text.length > RULE_MAX_CHARS) errors.push(`ルールは ${RULE_MAX_CHARS} 文字までです（いま ${text.length} 文字）。詳しい手順は Skill にします`)
   errors.push(...scanText(text))
   return { ok: errors.length === 0, errors, text }
 }
+
+export const INCIDENT_REF = /^INC-\d{4}-\d{4}$/
 
 export const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
 export const SKILL_MAX_LINES = 200
@@ -75,7 +104,7 @@ export function validateSkill({ name, description, body, frontmatterKeys = [], r
   if (!SKILL_NAME.test(String(name ?? ''))) errors.push('name は英小文字・数字・ハイフンで 40 文字まで（先頭は英数字）にしてください')
   const desc = String(description ?? '').trim()
   if (!desc) errors.push('description が空です')
-  if (/[\r\n]/.test(desc)) errors.push('description は 1 行で書いてください')
+  if (LINE_BREAK.test(desc)) errors.push('description は 1 行で書いてください')
   if (desc.length > SKILL_DESCRIPTION_MAX) errors.push(`description は ${SKILL_DESCRIPTION_MAX} 文字までです`)
   if (repoName && desc && !desc.includes(repoName)) {
     errors.push(`description に、どのリポジトリの作業で使うかを書いてください（リポジトリ名「${repoName}」を含める）`)
@@ -85,7 +114,7 @@ export function validateSkill({ name, description, body, frontmatterKeys = [], r
   if (/^---\s*$/m.test(text.split('\n')[0] ?? '')) errors.push('本文を --- で始めないでください（設定欄は name と description だけです）')
   if (text.split('\n').length > SKILL_MAX_LINES) errors.push(`本文は ${SKILL_MAX_LINES} 行までです`)
   if (text.length > SKILL_MAX_CHARS) errors.push(`本文は ${SKILL_MAX_CHARS} 文字までです`)
-  errors.push(...scanText(`${desc}\n${text}`))
+  errors.push(...new Set([...scanText(desc), ...scanText(text, { skill: true })]))
   return { ok: errors.length === 0, errors, description: desc, body: text }
 }
 
