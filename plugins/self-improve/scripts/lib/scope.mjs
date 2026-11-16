@@ -8,13 +8,18 @@
 //   - ホームディレクトリそのもの（ホームを git で管理している場合）と、node_modules の中は、組み込みで除外する
 //   - セッションを始めたリポジトリが除外されていれば、そのセッション全体を止める
 //   - git リポジトリでない場所と、HARNESS_DISABLE=1 では、何もしない
+//   - .git があるのに、git の共通ディレクトリを解決できないとき（commondir や、worktree の .git のファイルが壊れている）は、
+//     上の階層へ探しに行かず、その場所をリポジトリとして扱う（閉じる側に倒す。書き換えただけで、ガードが外れないように）
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 // ~/.claude に当たる場所。テストでは HARNESS_CLAUDE_HOME で一時ディレクトリに向ける。
+// HARNESS_CLAUDE_HOME はテスト用なので、テストの印（HARNESS_TEST=1）があるときだけ読む（HARNESS_NOW と同じ扱い）。
+// ふだんも読むと、環境変数 1 つで、user 側の置き場所（exclude、disable_defaults、失敗票）を別の場所へ向けられる。
 export function claudeHome() {
-  return resolve(process.env.HARNESS_CLAUDE_HOME || process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'))
+  const forTest = process.env.HARNESS_TEST === '1' ? process.env.HARNESS_CLAUDE_HOME : null
+  return resolve(forTest || process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'))
 }
 // user 単位の設定・ガード・失敗票の置き場所。
 export function userDir() {
@@ -29,6 +34,11 @@ export function isInside(parent, child) {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
+// 大文字小文字を区別しないファイルシステム（macOS、Windows の既定）か。区別しないなら、パスを比べる前に小文字にそろえる
+// （exclude に ~/Work と書いて、実体が ~/work でも外れるように。ガードの書き込みの確認と同じ考え方）。
+const foldsCase = () => process.platform === 'darwin' || process.platform === 'win32'
+const fold = (path) => (foldsCase() ? path.toLowerCase() : path)
+
 function real(path) {
   try {
     return realpathSync(path)
@@ -38,26 +48,30 @@ function real(path) {
 }
 
 // git の共通ディレクトリ（worktree でも本体と同じになる）。git コマンドは呼ばない。
+// 解決できないとき（worktree の .git のファイルが読めない・形が違う、gitdir や commondir の先がない）は、
+// 解決できたところまで（gitdir か、.git そのもの）を返す。null は返さない（上の階層へ探しに行かせないため）。
 function commonDirOf(dotgit, stat) {
-  let gitdir = dotgit
+  const self = real(dotgit) ?? resolve(dotgit)
+  let gitdir = self
   if (stat.isFile()) {
     let text = ''
     try {
       text = readFileSync(dotgit, 'utf8')
     } catch {
-      return null
+      return self
     }
     const match = /^gitdir:\s*(.+?)\s*$/m.exec(text)
-    if (!match) return null
-    gitdir = resolve(dirname(dotgit), match[1])
+    if (!match) return self
+    gitdir = real(resolve(dirname(dotgit), match[1]))
+    if (!gitdir) return self
   }
   try {
     const common = readFileSync(join(gitdir, 'commondir'), 'utf8').trim()
-    if (common) gitdir = resolve(gitdir, common)
+    if (common) return real(resolve(gitdir, common)) ?? gitdir
   } catch {
     // commondir がなければ、その gitdir が共通ディレクトリ
   }
-  return real(gitdir)
+  return gitdir
 }
 
 // start から上へたどって、git リポジトリの根を探す。なければ null。
@@ -72,10 +86,8 @@ export function gitRootOf(start) {
     } catch {
       // 上の階層を探す
     }
-    if (stat) {
-      const commonDir = commonDirOf(dotgit, stat)
-      if (commonDir) return { root: dir, commonDir }
-    }
+    // .git があれば、共通ディレクトリを解決できなくても、ここをリポジトリとする（git も、上の階層へは探しに行かない）。
+    if (stat) return { root: dir, commonDir: commonDirOf(dotgit, stat) }
     const parent = dirname(dir)
     if (parent === dir) return null
     dir = parent
@@ -94,7 +106,8 @@ function expandTilde(path) {
 //   exists   ファイルがある
 //   error    読めない理由（JSON として読めない、オブジェクトでない、exclude を解釈できない）。あれば、記録と掃除を止める
 //   raw      読めた中身（読めなければ {}）
-//   exclude  除外するパス（絶対パス。実体のパスに直してある）
+//   exclude  除外するパス（絶対パス。実体のパスに直してある）。exclude に解釈できない値が混ざっていても、
+//            正しく書けている値は入れる（その場所は除外する。除外したつもりの場所で、記録もガードも動かないように）
 //   notes    知らせるだけのこと（exclude に書いたパスが見つからない、など）
 export function readUserConfig() {
   const file = userConfigPath()
@@ -116,7 +129,8 @@ export function readUserConfig() {
   }
   out.raw = raw
   if (raw.exclude === undefined) return out
-  // exclude を解釈できないときは、どこを止めたいのかが分からない。読めない設定と同じに扱う。
+  // exclude が配列でないときは、どこを止めたいのかが分からない。読めない設定と同じに扱う（どこも除外せず、記録を止める）。
+  // 配列の一部の値だけを解釈できないときは、error を立てて記録を止めるが、正しく書けている値の除外は効かせる。
   if (!Array.isArray(raw.exclude)) return { ...out, error: 'exclude は、パスの配列で書いてください（例："exclude": ["~/work/client-x"]）' }
   const bad = []
   for (const entry of raw.exclude) {
@@ -141,11 +155,14 @@ export function readUserConfig() {
 
 // そのリポジトリを除外するか。除外するなら理由、しないなら null。
 // exclude に書いたパスの下にあるリポジトリを除外する。worktree は、本体（git の共通ディレクトリ）が下にあれば除外する。
+// 大文字小文字を区別しないファイルシステムでは、小文字にそろえて比べる。
 export function excludedReason(repo, user) {
-  const home = real(homedir()) ?? resolve(homedir())
-  if (repo.root === home) return 'home'
-  if (repo.root.split(sep).includes('node_modules')) return 'node_modules'
-  if (user.exclude.some((path) => isInside(path, repo.root) || isInside(path, repo.commonDir))) return 'exclude'
+  const home = fold(real(homedir()) ?? resolve(homedir()))
+  const root = fold(repo.root)
+  const common = fold(repo.commonDir)
+  if (root === home) return 'home'
+  if (root.split(sep).includes('node_modules')) return 'node_modules'
+  if (user.exclude.some((path) => isInside(fold(path), root) || isInside(fold(path), common))) return 'exclude'
   return null
 }
 

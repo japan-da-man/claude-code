@@ -1,5 +1,5 @@
 {
-  "description": "どのリポジトリでも止めたい操作（共通リスト）。リポジトリ固有の禁止操作は、適用先の harness/guards.json に書く。ここのルールを外したいリポジトリは、harness/guards.json の disable_defaults に id を書く。decision が ask のルールは、拒否ではなく確認を挟む。テストケースは guards.default.test.json。",
+  "description": "どのリポジトリでも止めたい操作（共通リスト）。自分だけの禁止操作は ~/.claude/self-improve/guards.json（全リポジトリ）か ~/.claude/self-improve/repos/<名前>/guards.json（そのリポジトリだけ）に、チームで共有する禁止操作はリポジトリの harness/guards.json に書く。ここのルールを外すときは、user 側の 2 つのファイルの disable_defaults に id を書く（リポジトリの harness/guards.json の disable_defaults は読まない）。decision が ask のルールは、拒否ではなく確認を挟む。テストケースは guards.default.test.json。",
   "rules": [
     {
       "id": "git-force-push",

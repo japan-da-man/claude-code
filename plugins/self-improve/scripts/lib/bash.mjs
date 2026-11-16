@@ -107,11 +107,13 @@ export function substEnd(text, start) {
 // 語とリダイレクト先には、次の印が付く。
 //   quoted   引用（'…'、"…"）を含む
 //   expands  変数の展開やコマンド置換を含む（$NAME、${NAME}、"…$NAME…"、`…`）
+//   subst    コマンド置換を含む。restored に、置換を中身の文字列に戻した形が入る（$(echo --force) → echo --force）
 //   special  引用の外に、bash が語を作り替える文字（{ } * ? [ ] ~）がある。ブレース展開・パス名展開・チルダ展開で、
 //            1 つの語が別の語や複数の語になりうる（{--session=x,--key} は 2 語になる）
 // 返す印：
 //   subst      コマンド置換（$( ) とバッククォート）がある。中身は、別のセグメントとして読む（引用の中のものも）。
-//              置換を含む語は、$(…) という置き場所の文字になり、もとのセグメントは分かれない
+//              置換を含む語は、$(…) という置き場所の文字になり、もとのセグメントは分かれない。
+//              中身を戻した形は、語の restored に残す（restoredSkeleton が、禁止リストの照合に使う）
 //   uncertain  bash と読み方がずれうる書き方がある。$'…'、${…@…} のような単純でない展開、
 //              区切りが単純でないヒアドキュメント、終わりの見つからないヒアドキュメントや引用、
 //              区切りを引用していないヒアドキュメントの本文の展開
@@ -130,7 +132,7 @@ export function parseBash(command, depth = 0) {
   const endWord = () => {
     if (!word) return
     if (pendingRedirect) {
-      segment.redirects.push({ op: pendingRedirect, target: word.text, quoted: word.quoted, expands: word.expands, special: word.special })
+      segment.redirects.push({ op: pendingRedirect, target: word.text, quoted: word.quoted, expands: word.expands, special: word.special, subst: word.subst })
       pendingRedirect = null
     } else {
       segment.words.push(word)
@@ -143,9 +145,11 @@ export function parseBash(command, depth = 0) {
     if (segment.words.length || segment.redirects.length) segments.push(segment)
     segment = newSegment()
   }
-  const add = (ch, quoted = false) => {
-    if (!word) word = { text: '', quoted: false, expands: false, special: false }
+  // restored は、コマンド置換を中身の文字列に戻した形（置換のない語では text と同じ）。
+  const add = (ch, quoted = false, restored = ch) => {
+    if (!word) word = { text: '', restored: '', quoted: false, expands: false, special: false, subst: false }
     word.text += ch
+    word.restored += restored
     if (quoted) word.quoted = true
   }
   // $ で始まる展開。単純な $NAME と ${NAME} 以外は、読み方に自信がないものとして扱う。
@@ -162,13 +166,14 @@ export function parseBash(command, depth = 0) {
     subst = true
     const tick = text[at] === '`'
     const end = tick ? text.indexOf('`', at + 1) : substEnd(text, at + 2)
-    add('$(…)', quoted)
+    const body = text.slice(at + (tick ? 1 : 2), end < 0 ? text.length : end)
+    add('$(…)', quoted, body)
     word.expands = true
+    word.subst = true
     if (end < 0) {
       uncertain = true
       return text.length
     }
-    const body = text.slice(at + (tick ? 1 : 2), end)
     // case … in a) のように、括弧の数が合わない書き方は、終わりを取り違えうる。
     if (/(^|[\s;(])case\s/.test(body) || (tick && body.includes('\\'))) uncertain = true
     inner.push(body)
@@ -385,8 +390,29 @@ export function commandOf(segment) {
 }
 
 // 禁止パターンを当てる文字列。空白を含む引用（コミットメッセージなど）は伏せて、誤検知を減らす。
+const masked = (w) => (w.quoted && /\s/.test(w.text) ? "'…'" : w.text)
 export function skeleton(segment) {
-  return segment.words.map((w) => (w.quoted && /\s/.test(w.text) ? "'…'" : w.text)).join(' ')
+  return segment.words.map(masked).join(' ')
+}
+
+// コミットメッセージの値をとるオプション（-m、--message、-F、--file）。短いオプションのまとまり（-am）も含む。
+const MESSAGE_OPTION = /^(?:-[a-zA-Z]*[mF]|--message|--file)$/
+const MESSAGE_ATTACHED = /^(?:-[a-zA-Z]*[mF].|--message=|--file=)/
+function isMessageValue(words, i) {
+  return MESSAGE_ATTACHED.test(words[i].text) || (i > 0 && MESSAGE_OPTION.test(words[i - 1].text))
+}
+
+// コマンド置換を中身の文字列に戻した形で、禁止パターンを当てる文字列（置換を含む語がなければ null）。
+// skeleton だけだと、git push $(echo --force) の --force が $(…) に隠れる。中身は別のセグメントとしても読むが、
+// そちらには git push がないので、どちらにも「git push … --force」の形が現れない。
+// ただし、コミットメッセージの値（-m、--message、-F、--file の値）に当たる語は戻さない。
+// HEREDOC 形式のコミット（git commit -m "$(cat <<'EOF' … EOF)"）の本文で、誤って止めないため。
+export function restoredSkeleton(segment) {
+  const { words } = segment
+  if (!words.some((w) => w.subst)) return null
+  const out = words.map((w, i) => (w.subst && !isMessageValue(words, i) ? w.restored : masked(w)))
+  const text = out.join(' ')
+  return text === skeleton(segment) ? null : text
 }
 
 export function writeRedirects(segment) {

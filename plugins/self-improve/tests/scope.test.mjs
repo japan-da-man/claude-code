@@ -2,9 +2,9 @@
 // ガードの早い判定と、記録する側は、同じ判定を使う。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { excludedReason, gitRootOf, readUserConfig, resolveScope } from '../scripts/lib/scope.mjs'
+import { claudeHome, excludedReason, gitRootOf, readUserConfig, resolveScope } from '../scripts/lib/scope.mjs'
 import { nothingToDo } from '../scripts/guard-harness.mjs'
 import { at, dataFiles, decisionOf, events, guardRun, makeEnv, note, runHook, session, withEnv, writeFiles } from './helpers.mjs'
 
@@ -223,4 +223,83 @@ test('scope.mjs は、Node.js の標準だけで書く（すべてのツール�
   const guard = readFileSync(new URL('../scripts/guard-harness.mjs', import.meta.url), 'utf8')
   const top = [...guard.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])
   assert.deepEqual(top.filter((name) => !name.startsWith('node:')), ['./lib/scope.mjs'])
+})
+
+test('中-4：.git があるのに共通ディレクトリを解決できないときは、上の階層へ探しに行かず、その場所をリポジトリとして扱う（ガードも記録も止まらない）', () => {
+  const t = makeEnv()
+  // 上へ探しに行くと、リポジトリでない（no_repo）か、ホーム（ホームを git で管理している）と判定されてしまう配置
+  gitRepo(t.home)
+  const broken = {
+    'commondir の先がない': (dir) => writeFiles(dir, { '.git/commondir': 'nope\n' }),
+    'commondir が空でない別の文字': (dir) => writeFiles(dir, { '.git/commondir': '../../../../no/such/place\n' }),
+    'worktree の .git のファイルの形が違う': (dir) => {
+      rmSync(join(dir, '.git'), { recursive: true })
+      writeFileSync(join(dir, '.git'), 'garbage\n')
+    },
+    'worktree の .git のファイルの gitdir の先がない': (dir) => {
+      rmSync(join(dir, '.git'), { recursive: true })
+      writeFileSync(join(dir, '.git'), 'gitdir: /no/such/gitdir\n')
+    },
+  }
+  for (const [label, breakIt, parent] of Object.entries(broken).flatMap(([l, f]) => [[`${l}（上はリポジトリでない）`, f, t.base], [`${l}（上はホーム）`, f, join(t.home, 'src')]])) {
+    const repo = gitRepo(join(parent, `repo-${Object.keys(broken).indexOf(label.replace(/（.*$/, ''))}`))
+    breakIt(repo)
+    const here = { ...t, repo }
+    const found = withEnv(t, () => gitRootOf(repo))
+    assert.equal(found.root, repo, label)
+    assert.ok(found.commonDir, label)
+    withEnv(t, () => assert.deepEqual([resolveScope(repo).active, resolveScope(repo).recording], [true, true], label), { CLAUDE_PROJECT_DIR: repo })
+    const project = { env: { CLAUDE_PROJECT_DIR: repo } }
+    assert.equal(guardRun(here, 's', 'Bash', { command: 'git push --force' }, project).status, 2, label)
+    assert.equal(decisionOf(guardRun(here, 's', 'Write', { file_path: join(repo, 'CLAUDE.md') }, project)), 'ask', label)
+  }
+  // 壊れていない、ふつうのリポジトリの ID は変わらない（commondir がないときは .git が共通ディレクトリ）
+  withEnv(t, () => assert.equal(gitRootOf(t.repo).commonDir, join(t.repo, '.git')))
+})
+
+test('軽微-1：exclude に解釈できない値が混ざっていても、正しく書けている値の除外は効かせる（ほかの場所は、ガードは効かせたまま記録を止める）', () => {
+  const t = makeEnv()
+  const excluded = gitRepo(join(t.base, 'client-x'))
+  writeFiles(t.user, { 'config.json': { exclude: [excluded, 'relative/x'] } })
+  withEnv(t, () => {
+    const there = resolveScope(excluded)
+    assert.deepEqual([there.active, there.reason, Boolean(there.user.error)], [false, 'exclude', true])
+    const here = resolveScope(t.repo)
+    assert.deepEqual([here.active, here.recording], [true, false])
+  })
+  assert.deepEqual(exercise({ ...t, repo: excluded }), SILENT)
+  assert.equal(guardRun(t, 's', 'Bash', { command: 'git push --force' }).status, 2)
+})
+
+test('軽微-2：大文字小文字を区別しないファイルシステム（macOS、Windows）では、exclude を大文字小文字を区別せずに比べる', () => {
+  const t = makeEnv()
+  const repo = gitRepo(join(t.base, 'Work/Client-X'))
+  writeFiles(t.user, { 'config.json': { exclude: [join(t.base, 'work/client-x')] } })
+  const saved = Object.getOwnPropertyDescriptor(process, 'platform')
+  const as = (platform, fn) => {
+    Object.defineProperty(process, 'platform', { ...saved, value: platform })
+    try {
+      return withEnv(t, fn)
+    } finally {
+      Object.defineProperty(process, 'platform', saved)
+    }
+  }
+  for (const platform of ['darwin', 'win32']) as(platform, () => assert.equal(excludedReason(gitRootOf(repo), readUserConfig()), 'exclude', platform))
+  // 区別するファイルシステム（Linux）では、別の場所として扱う
+  as('linux', () => assert.equal(excludedReason(gitRootOf(repo), readUserConfig()), null))
+})
+
+test('軽微-5：テスト用の環境変数（HARNESS_CLAUDE_HOME、HARNESS_GUARD_DRYRUN）は、HARNESS_TEST=1 のときだけ読む', () => {
+  const t = makeEnv()
+  // リポジトリの中に、user 側の置き場所に見せかけたものを置く（ここを向けられると、除外やガードの外しを差し込める）
+  writeFiles(t.repo, { 'fake-claude/self-improve/config.json': { exclude: [t.repo] }, 'fake-claude/self-improve/guards.json': { disable_defaults: ['git-force-push'] } })
+  const fake = { HARNESS_CLAUDE_HOME: join(t.repo, 'fake-claude'), HARNESS_GUARD_DRYRUN: '1' }
+  // テストの印がなければ、どちらも読まない：ホームの ~/.claude を使い、ガードは効き、拒否も記録する
+  const real = guardRun(t, 's', 'Bash', { command: 'git push --force' }, { env: { ...fake, HARNESS_TEST: '' } })
+  assert.equal(real.status, 2)
+  assert.deepEqual(events(t).map((e) => [e.type, e.rule]), [['guard_denied', 'git-force-push']])
+  withEnv(t, () => assert.equal(claudeHome(), t.claudeHome), { ...fake, HARNESS_TEST: '' })
+  // テストの印があれば読む（テストは、これで一時ディレクトリに向けている）
+  assert.equal(guardRun(t, 's', 'Bash', { command: 'git push --force' }, { env: fake }).status, 0)
+  withEnv(t, () => assert.equal(claudeHome(), join(t.repo, 'fake-claude')), fake)
 })

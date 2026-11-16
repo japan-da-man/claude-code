@@ -714,3 +714,86 @@ test('壊れた入力でも、作業は止めない', () => {
   assert.equal(decision(pre(t, 'Write', {})), 'allow')
   knownSession(t, 'x')
 })
+
+test('中-1：コマンド置換の中に置いた引数でも、共通リストをすり抜けない（main と同じく拒否）。HEREDOC 形式のコミットは誤って止めない', () => {
+  const t = makeEnv()
+  for (const command of ['git push $(echo --force) origin main', 'git push `echo --force` origin main', 'git push "$(echo --force)" origin main', 'git commit $(echo --no-verify) -m x']) {
+    const run = bash(t, command)
+    assert.equal(decision(run), 'deny', command)
+    assert.match(run.stderr, /ルール：git-(force-push|no-verify)）/, command)
+  }
+  // コミットメッセージの値（-m、--message、-F、--file）の置換は、中身に戻さない（本文に --no-verify や -n と書いても止めない）
+  const heredoc = (flag) => `git commit ${flag} "$(cat <<'EOF'\nfix: --no-verify と git push --force を止める\n\n-n も\nEOF\n)" && git log -n 3`
+  for (const flag of ['-m', '--message', '-am']) assert.equal(decision(bash(t, heredoc(flag))), 'allow', flag)
+  assert.equal(decision(bash(t, 'git commit --message="$(cat msg.txt)" && git log -n 3')), 'allow')
+  assert.equal(decision(bash(t, 'git commit -F "$(echo msg.txt)" && git log -n 3')), 'allow')
+  // メッセージのあとに付けたフラグは、これまでどおり止める
+  assert.equal(decision(bash(t, `${heredoc('-m').replace(' && git log -n 3', '')} --no-verify`)), 'deny')
+})
+
+test('中-3：パスのルールは、当たったものをすべて判定に通す（拒否が 1 つでもあれば拒否。共通リストの確認に負けない）', () => {
+  const env = { id: 'no-env', path: '(^|/)\\.env$', message: '.env は書きません。値は 1Password に置いてください' }
+  for (const [where, files] of [
+    ['user', { userFiles: { 'guards.json': { rules: [env] } } }],
+    ['user-repo', { userFiles: { 'repos/demo-app/guards.json': { rules: [env] } } }],
+    ['repo', { files: { 'harness/guards.json': { rules: [env] } } }],
+  ]) {
+    const t = makeEnv(files)
+    for (const [tool, input] of [['Write', { file_path: join(t.repo, '.env') }], ['Edit', { file_path: join(t.repo, 'apps/api/.env') }], ['Bash', { command: 'echo A=1 >> .env' }]]) {
+      const run = pre(t, tool, input)
+      assert.equal(decision(run), 'deny', `${where} ${tool}`)
+      assert.match(run.stderr, /ルール：no-env）/)
+    }
+    // 当たらないパスは、これまでどおり共通リストの確認
+    assert.equal(decision(pre(t, 'Write', { file_path: join(t.repo, '.env.local') })), 'ask', where)
+  }
+  // user 側の確認とリポジトリの拒否が両方当たれば、拒否
+  const both = makeEnv({
+    userFiles: { 'guards.json': { rules: [{ id: 'gen-ask', decision: 'ask', path: '^src/generated/', message: '確かめる' }] } },
+    files: { 'harness/guards.json': { rules: [{ id: 'gen-deny', path: '^src/generated/', message: '生成し直す' }] } },
+  })
+  assert.match(pre(both, 'Write', { file_path: join(both.repo, 'src/generated/a.ts') }).stderr, /ルール：gen-deny）/)
+})
+
+test('中-4：.git/commondir、worktree の .git のファイル、.git/config への書き込みには確認を挟む（ほかの .git/ の下は、そのまま）', () => {
+  const t = makeEnv()
+  writeFiles(t.repo, { '.git/config': '[core]\n', '.git/HEAD': 'ref: refs/heads/main\n' })
+  const asked = [
+    ['Write', { file_path: join(t.repo, '.git/commondir') }],
+    ['Edit', { file_path: join(t.repo, '.git/config') }],
+    ['Write', { file_path: join(t.repo, '.GIT/Config') }],
+    ['Write', { file_path: join(t.repo, '.git/worktrees/wt/commondir') }],
+    ['Bash', { command: 'echo nope > .git/commondir' }],
+    ['Bash', { command: "sed -i 's/a/b/' .git/config" }],
+    ['Bash', { command: 'cp /tmp/x .git/commondir' }],
+    ['Bash', { command: 'cd .git && printf x > commondir' }],
+    ['Bash', { command: 'rm -rf .git' }],
+  ]
+  for (const [tool, input] of asked) {
+    const run = pre(t, tool, input)
+    assert.equal(decision(run), 'ask', JSON.stringify(input))
+    assert.match(run.json.hookSpecificOutput.permissionDecisionReason, /git の設定（\.git\/commondir、worktree の \.git のファイル、\.git\/config）/)
+  }
+  // git 自身が書くものと、ほかの .git/ の下は、これまでどおり
+  for (const [tool, input] of [
+    ['Write', { file_path: join(t.repo, '.git/info/exclude') }],
+    ['Bash', { command: 'git config user.name x' }],
+    ['Bash', { command: 'git commit -m x && git push -u origin main' }],
+    ['Bash', { command: 'cat .git/config' }],
+  ]) assert.equal(decision(pre(t, tool, input)), 'allow', JSON.stringify(input))
+
+  // worktree：その .git のファイルと、本体の側にある gitdir の commondir
+  const worktree = join(t.base, 'wt')
+  mkdirSync(join(t.repo, '.git/worktrees/wt'), { recursive: true })
+  writeFileSync(join(t.repo, '.git/worktrees/wt/commondir'), '../..\n')
+  mkdirSync(worktree)
+  writeFileSync(join(worktree, '.git'), `gitdir: ${join(t.repo, '.git/worktrees/wt')}\n`)
+  const wt = { ...t, repo: worktree }
+  const project = { env: { CLAUDE_PROJECT_DIR: worktree } }
+  for (const [tool, input] of [
+    ['Write', { file_path: join(worktree, '.git') }],
+    ['Bash', { command: 'echo "gitdir: /tmp/elsewhere" > .git' }],
+    ['Edit', { file_path: join(t.repo, '.git/worktrees/wt/commondir') }],
+    ['Edit', { file_path: join(t.repo, '.git/config') }],
+  ]) assert.equal(decision(pre(wt, tool, input, project)), 'ask', JSON.stringify(input))
+})

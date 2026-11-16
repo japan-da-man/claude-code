@@ -3,6 +3,7 @@
 //   ハーネスのファイル  → permissionDecision: "ask" を返し、必ず確認を出す
 //   自動改善のセッション → Read・Grep・Glob と harness-note 以外のツールを、すべて拒否する（確認は出さない）
 // 拒否は、自分で生ログに記録する。HARNESS_GUARD_DRYRUN=1 のとき（test-guards.mjs）は記録しない。
+// HARNESS_GUARD_DRYRUN はテスト用なので、テストの印（HARNESS_TEST=1）があるときだけ読む。
 //
 //
 // すべてのツール呼び出しで、すべてのリポジトリで動くので、先頭では Node.js の標準と scope.mjs（標準だけで書いてある）
@@ -77,7 +78,8 @@ export async function guard(input) {
   if (result.decision === 'deny') {
     // harness-note の呼び出し方の検査（書式の検査）による拒否は、失敗の信号に数えない。
     // user の設定が読めないあいだは、拒否はするが、記録はしない（logEvent が書かない）。
-    if (process.env.HARNESS_GUARD_DRYRUN !== '1' && !isLocked(ctx) && result.rule !== NOTE_CALL_RULE) {
+    const dryRun = process.env.HARNESS_TEST === '1' && process.env.HARNESS_GUARD_DRYRUN === '1'
+    if (!dryRun && !isLocked(ctx) && result.rule !== NOTE_CALL_RULE) {
       heartbeat(ctx, 'guard')
       // source は、どのファイルのルールか（共通リスト、user 側、リポジトリ）。組み込みの判定は builtin。
       logEvent(ctx, { type: 'guard_denied', prompt_id: input.prompt_id ?? null, rule: result.rule, source: result.source ?? 'builtin', tool: input.tool_name, target: result.target ?? null })

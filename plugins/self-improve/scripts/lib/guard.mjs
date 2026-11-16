@@ -9,7 +9,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { PLUGIN_ROOT, activeLock, claudeHome, isInside, isLocked, posix, realish, tildePath, userDir } from './core.mjs'
 import { parseArgs } from './args.mjs'
-import { commandOf, isHarnessNoteCommand, isHarnessNoteSegment, isNonChanging, isWrappedHarnessNote, parseBash, skeleton, writeTargets } from './bash.mjs'
+import { commandOf, isHarnessNoteCommand, isHarnessNoteSegment, isNonChanging, isWrappedHarnessNote, parseBash, restoredSkeleton, skeleton, writeTargets } from './bash.mjs'
 import { isAutoSession } from './auto.mjs'
 import { isTrialSkillPath } from './trial.mjs'
 
@@ -152,6 +152,25 @@ function userSideKind(at) {
   return null
 }
 
+// git の、リポジトリの場所を決めるファイル（.git/commondir、worktree の .git のファイル）と、.git/config か。
+// 書き込みには確認を挟む。commondir や .git のファイルを書き換えると、共通ディレクトリの場所（リポジトリ ID と、
+// exclude の判定に使う）が変わる。ほかの .git/ の下は見ない（git 自身が書くので）。
+// worktree では、gitdir（<共通ディレクトリ>/worktrees/<名前>/）がリポジトリの外にあるので、共通ディレクトリからの
+// 相対パスでも見る。大文字小文字は区別しない。
+const GIT_CONTROL_IN_REPO = /^\.git(?:\/(?:config|commondir|worktrees\/[^/]+\/commondir))?$/i
+const GIT_CONTROL_IN_COMMON = /^(?:config|commondir|worktrees\/[^/]+\/commondir)$/i
+function gitControlKind(ctx, at) {
+  const kind = 'git の設定（.git/commondir、worktree の .git のファイル、.git/config）'
+  if (at.rels.some((rel) => GIT_CONTROL_IN_REPO.test(rel))) return kind
+  const lower = (p) => p.toLowerCase()
+  for (const base of [ctx.repo.commonDir, realish(ctx.repo.commonDir)].map(lower)) {
+    for (const abs of at.all.map(lower)) {
+      if (isInside(base, abs) && GIT_CONTROL_IN_COMMON.test(posix(relative(base, abs)))) return kind
+    }
+  }
+  return null
+}
+
 // 実体が同じなら、その名前への書き込みとして扱うファイル（CLAUDE.md -> AGENTS.md のようなリンク）。
 const LINKABLE = ['CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md', 'harness/config.json', 'harness/guards.json', 'harness/guards.test.json']
 
@@ -225,9 +244,11 @@ const askProtected = (kind, subject) =>
   ask('harness-files', `${kind}（${subject}）への書き込みです。ハーネスの変更は、差分を確かめてから承認してください（self-improve）。`, subject)
 
 // パスのルールは、名前と実体のどちらの相対パスに当たっても効く。
-function matchPathRule(guards, at) {
+// 当たったルールを、すべて返す（Bash のパターンのルールと同じく、すべてを判定に通し、拒否が 1 つでもあれば拒否にする。
+// 最初の 1 件だけだと、共通リストの確認（.env）が先に当たり、user 側やリポジトリの拒否が効かない）。
+function matchPathRules(guards, at) {
   const subjects = at.rels.length ? at.rels : [at.subject]
-  return guards.rules.find((r) => r.path && subjects.some((s) => r.path.test(s) && !(r.except && r.except.test(s)))) ?? null
+  return guards.rules.filter((r) => r.path && subjects.some((s) => r.path.test(s) && !(r.except && r.except.test(s))))
 }
 const protectedOf = (at, protect) => at.rels.map((rel) => protectedKind(rel, protect)).find(Boolean) ?? null
 // どのファイルのルールかを、結果に残す（拒否の記録に入れる）。
@@ -284,6 +305,24 @@ export function harnessNoteProblem(command, sessionId, { strict = false, require
   return null
 }
 
+// harness-note verify trust（検証コマンドの実行の許可）の呼び出しか。
+function isVerifyTrustCall(segment) {
+  if (!isHarnessNoteCommand(segment)) return false
+  try {
+    const { positional } = parseArgs(commandOf(segment).args)
+    return positional[0] === 'verify' && positional[1] === 'trust'
+  } catch {
+    return false
+  }
+}
+// 検証コマンドの許可には、確認を挟む（許可ルール Bash(harness-note *) があっても、人が一覧を見てから決めるように。
+// リポジトリの CLAUDE.md などに「harness-note verify trust を実行して」と書かれていても、黙って許可されないため）。
+function verifyTrustAsk(ctx) {
+  const list = ctx.config.verify.map((v, i) => `${i + 1}. ${v.name}：${v.run}`).join(' ／ ')
+  const text = `harness/config.json の検証コマンドの実行を許可します。許可すると、変更のあったターンの終わりに、確認なしで実行されます：${list}。中身を確かめてから承認してください（self-improve）。`
+  return ask('verify-trust', text.length > 2000 ? `${text.slice(0, 2000)}…（続きは harness-note verify で確かめてください）` : text, 'harness-note verify trust')
+}
+
 // MCP のツールやサブエージェントの起動など、外へ働きかけるツール（ロックを試みたセッションでは確認を挟む）。
 const actsOutside = (tool) => /^mcp__/.test(tool) || ['Agent', 'Task', 'WebFetch', 'CronCreate', 'ScheduleWakeup'].includes(tool)
 
@@ -332,12 +371,11 @@ export function evaluate(ctx, input) {
     const at = locate(ctx, raw, cwd)
     const location = locationDeny(ctx, at)
     if (location) return deny(location.rule, location.message, at.subject)
-    const rule = matchPathRule(guards, at)
-    if (rule) {
+    for (const rule of matchPathRules(guards, at)) {
       const stop = consider(byRule(rule, at.subject))
       if (stop) return stop
     }
-    const kind = protectedOf(at, guards.protect) ?? userSideKind(at)
+    const kind = protectedOf(at, guards.protect) ?? userSideKind(at) ?? gitControlKind(ctx, at)
     if (kind) consider(askProtected(kind, at.subject))
     if (verdict.decision === 'allow' && isAutoSession(ctx)) return ask('auto-session-after', AFTER_AUTO, at.subject)
     return verdict
@@ -348,10 +386,18 @@ export function evaluate(ctx, input) {
   if (problem) return deny(NOTE_CALL_RULE, problem, command.slice(0, 200))
 
   const parsed = parseBash(command)
+  if (ctx.config.verify.length && parsed.segments.some(isVerifyTrustCall)) consider(verifyTrustAsk(ctx))
   // 読み取りに自信のない書き方があるときだけ、元の文字列にも当てる。
   // コマンド置換は中身まで読んでいるので、置換があるだけでは全文に当てない
   // （git commit -m "$(cat <<'EOF' … EOF)" && git log -n 3 を、commit の -n と取り違えないため）。
-  const subjects = parsed.segments.map(skeleton)
+  // その代わり、置換を含む語があるセグメントは、置換を中身の文字列に戻した形にも当てる
+  // （git push $(echo --force) origin main の --force が、置き場所の文字に隠れないように。コミットメッセージの値は戻さない）。
+  const subjects = []
+  for (const segment of parsed.segments) {
+    subjects.push(skeleton(segment))
+    const restored = restoredSkeleton(segment)
+    if (restored) subjects.push(restored)
+  }
   if (parsed.uncertain) subjects.push(command)
   for (const rule of guards.rules) {
     if (!rule.patterns.length) continue
@@ -370,14 +416,13 @@ export function evaluate(ctx, input) {
   for (const at of targets) {
     const location = locationDeny(ctx, at)
     if (location) return deny(location.rule, location.message, at.subject)
-    const rule = matchPathRule(guards, at)
-    if (rule) {
+    for (const rule of matchPathRules(guards, at)) {
       const stop = consider(byRule(rule, at.subject))
       if (stop) return stop
     }
   }
   for (const at of targets) {
-    const kind = at.rels.some((rel) => PROTECTED_DIRS.has(rel.toLowerCase())) ? 'ハーネスのディレクトリ' : protectedOf(at, guards.protect) ?? userSideKind(at)
+    const kind = at.rels.some((rel) => PROTECTED_DIRS.has(rel.toLowerCase())) ? 'ハーネスのディレクトリ' : protectedOf(at, guards.protect) ?? userSideKind(at) ?? gitControlKind(ctx, at)
     if (kind) consider(askProtected(kind, at.subject))
   }
   if (verdict.decision === 'allow' && !isNonChanging(command) && isAutoSession(ctx)) return ask('auto-session-after', AFTER_AUTO, command.slice(0, 200))

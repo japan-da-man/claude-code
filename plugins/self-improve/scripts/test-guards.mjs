@@ -17,12 +17,14 @@ const GUARD = join(PLUGIN_ROOT, 'scripts', 'guard-harness.mjs')
 export const DEFAULT_TESTS = join(PLUGIN_ROOT, 'guards.default.test.json')
 
 // ガードに入力を 1 つ流して、deny / ask / allow のどれになったかを返す。拒否は記録しない（HARNESS_GUARD_DRYRUN）。
+// テスト用の環境変数（HARNESS_GUARD_DRYRUN、HARNESS_CLAUDE_HOME）は、テストの印（HARNESS_TEST=1）があるときだけ読まれる。
 // env で、ホームと user 側の設定の場所を差し替えられる（共通リストは、利用者の設定に左右されない場所で確かめる）。
+// 外から引き継いだテスト用の値（HARNESS_CLAUDE_HOME、HARNESS_NOW）は使わない（実際の設定のまま確かめるため）。
 export function decide(repoRoot, dataDir, test, extraEnv = {}) {
   const input = { session_id: 'test-guards', cwd: repoRoot, hook_event_name: 'PreToolUse', tool_name: test.tool, tool_input: test.input ?? {} }
-  const env = { ...process.env, HARNESS_GUARD_DRYRUN: '1', HARNESS_DATA_DIR: dataDir, CLAUDE_PROJECT_DIR: repoRoot, ...extraEnv }
-  delete env.HARNESS_DISABLE
-  delete env.HARNESS_PROJECT_DIR
+  const env = { ...process.env }
+  for (const key of ['HARNESS_DISABLE', 'HARNESS_PROJECT_DIR', 'HARNESS_CLAUDE_HOME', 'HARNESS_NOW']) delete env[key]
+  Object.assign(env, { HARNESS_TEST: '1', HARNESS_GUARD_DRYRUN: '1', HARNESS_DATA_DIR: dataDir, CLAUDE_PROJECT_DIR: repoRoot }, extraEnv)
   const run = spawnSync(process.execPath, [GUARD], { input: JSON.stringify(input), encoding: 'utf8', env })
   if (run.status === 2) return { decision: 'deny', detail: run.stderr.trim() }
   if (run.status !== 0) return { decision: 'error', detail: run.stderr.trim() }

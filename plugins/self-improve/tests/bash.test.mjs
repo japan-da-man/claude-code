@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isHarnessNoteOnly, isNonChanging, parseBash, skeleton, substEnd, writeTargets } from '../scripts/lib/bash.mjs'
+import { isHarnessNoteOnly, isNonChanging, parseBash, restoredSkeleton, skeleton, substEnd, writeTargets } from '../scripts/lib/bash.mjs'
 import { SNEAKY_WRITES, bashAtLeast, bashVersion } from './helpers.mjs'
 
 const targets = (command) => writeTargets(command).flatMap((t) => t.tokens)
@@ -81,6 +81,23 @@ test('parseBash: コマンド置換は、引用の中のものも中身を読む
     assert.equal(substEnd(text, 0), text.lastIndexOf(') tail'), text)
   }
   assert.equal(substEnd('no end', 0), -1)
+})
+
+test('restoredSkeleton: コマンド置換を中身の文字列に戻した形（コミットメッセージの値は戻さない）', () => {
+  const restored = (command) => parseBash(command).segments.map(restoredSkeleton)
+  assert.deepEqual(restored('git push $(echo --force) origin main'), ['git push echo --force origin main', null])
+  assert.deepEqual(restored('git push `echo --force` origin main'), ['git push echo --force origin main', null])
+  assert.deepEqual(restored('git push "$(echo --force)" origin main'), ['git push echo --force origin main', null])
+  assert.deepEqual(restored('git push origin x$(echo y)z'), ['git push origin xecho yz', null])
+  // -m、--message、-F、--file（と、-am のようなまとまり）の値は、置き場所の文字のまま
+  for (const command of [
+    'git commit -m "$(cat <<\'EOF\'\nwip --no-verify\nEOF\n)"', 'git commit -am "$(cat m)"', 'git commit --message "$(cat m)"',
+    'git commit --message="$(cat m)"', 'git commit -F "$(echo f)"', 'git commit --file "$(echo f)"', 'git commit -m$(cat m)',
+  ]) assert.equal(restored(command)[0], null, command)
+  // 値の位置でない置換は戻す
+  assert.equal(restored('git commit -m "$(cat m)" $(echo -n)')[0], "git commit -m $(…) echo -n")
+  // 置換がなければ null
+  assert.deepEqual(restored('git push --force'), [null])
 })
 
 test('isNonChanging: 読むだけと分かっているコマンドと harness-note だけを「変更あり」に数えない', () => {
