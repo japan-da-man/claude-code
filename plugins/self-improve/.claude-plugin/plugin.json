@@ -1,6 +1,6 @@
 {
   "name": "self-improve",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "[skills] [hooks] Self-improving harness so Claude Code does not repeat the same mistake. Works in every git repository without setup (list paths to skip in ~/.claude/self-improve/config.json): hooks log failure signals (tool failures, corrections, guard denials, failed verification), write episode notes and, at the end of a turn that had such a signal, ask Claude for one-line improvement candidates; a scheduled /self-improve:auto-improve (per repository, off by default) turns causes seen in two or more sessions into trial rules and trial skills kept outside the repo and reports them at the next session start; people review, keep, remove or promote them (for themselves or for the team) with /self-improve:review and /self-improve:retro. Failure records, settings and personal rules live under ~/.claude/self-improve, not in the repo. Guards forbidden operations and asks before harness files change. Node.js only, no network",
   "author": { "name": "japan-da-man" },
   "repository": "https://github.com/japan-da-man/claude-code"

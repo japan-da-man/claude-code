@@ -1,5 +1,5 @@
 {
-  "description": "self-improve: load trial rules at session start, log failure signals, guard forbidden operations and harness files, and run verification, episode notes and the improvement-candidate check at the end of a turn. Every hook does nothing unless the repository has harness/config.json, or when HARNESS_DISABLE=1.",
+  "description": "self-improve: load trial rules at session start, log failure signals, guard forbidden operations and harness files, and run verification, episode notes and the improvement-candidate check at the end of a turn. Runs in every git repository; every hook does nothing outside git repositories, in paths listed in exclude of ~/.claude/self-improve/config.json, or when HARNESS_DISABLE=1. Verification commands in harness/config.json run only after a person allows that exact content (harness-note verify trust).",
   "hooks": {
     "SessionStart": [
       {
