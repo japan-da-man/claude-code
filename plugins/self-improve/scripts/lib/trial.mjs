@@ -2,7 +2,7 @@
 // 置き場所はここで固定する。呼び出し側からパスは受け取らない。
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { iso, isInside, lineCount, listFiles, parseFrontmatter, personalSkillsDir, readJson, writeFileAtomic, writeJson } from './core.mjs'
+import { iso, isInside, lineCount, listFiles, parseFrontmatter, personalSkillsDir, readJson, realish, writeFileAtomic, writeJson } from './core.mjs'
 import { renderSkill, validateRuleText, validateSkill } from './content.mjs'
 
 // ---- 常時ロードの行数 ----
@@ -226,9 +226,13 @@ export function removeSkill(ctx, name) {
 }
 
 // あるパスが、試用 Skill の中かどうか（ガードが直接の書き込みを止めるのに使う）。
+// 個人用の Skill の置き場所は、リンクのことがある（dotfiles で管理している場合など）。名前の側と実体の側の両方で見る。
 export function isTrialSkillPath(absPath) {
-  const base = personalSkillsDir()
-  if (!isInside(base, absPath) || resolve(absPath) === resolve(base)) return false
-  const first = resolve(absPath).slice(resolve(base).length + 1).split(/[\\/]/)[0]
-  return existsSync(join(base, first, MARKER))
+  const target = resolve(absPath)
+  for (const base of new Set([resolve(personalSkillsDir()), realish(personalSkillsDir())])) {
+    if (!isInside(base, target) || target === base) continue
+    const first = target.slice(base.length + 1).split(/[\\/]/)[0]
+    if (existsSync(join(base, first, MARKER))) return true
+  }
+  return false
 }

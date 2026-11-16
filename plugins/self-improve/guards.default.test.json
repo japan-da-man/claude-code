@@ -73,5 +73,10 @@
   {"name": ".env.production.local への Write は確認を挟む", "tool": "Write", "input": {"file_path": ".env.production.local"}, "expect": "ask"},
   {"name": ".env.local.example への Write は通す", "tool": "Write", "input": {"file_path": ".env.local.example"}, "expect": "allow"},
   {"name": ".env.template への Write は通す", "tool": "Write", "input": {"file_path": "apps/api/.env.template"}, "expect": "allow"},
-  {"name": ".envrc への Write は通す（別のファイル）", "tool": "Write", "input": {"file_path": ".envrc"}, "expect": "allow"}
+  {"name": ".envrc への Write は通す（別のファイル）", "tool": "Write", "input": {"file_path": ".envrc"}, "expect": "allow"},
+  {"name": "HEREDOC 形式のコミットのあとの git log -n 3 は通す（commit の -n と取り違えない）", "tool": "Bash", "input": {"command": "git commit -m \"$(cat <<'EOF'\nfix: route placement\n\nCo-Authored-By: X <x@example.com>\nEOF\n)\" && git log -n 3"}, "expect": "allow"},
+  {"name": "コマンド置換のメッセージのあとの git log -n 5 は通す", "tool": "Bash", "input": {"command": "git add -A && git commit -m \"$(cat msg.txt)\" && git log --oneline -n 5"}, "expect": "allow"},
+  {"name": "コマンド置換のメッセージのあとの -n は止める", "tool": "Bash", "input": {"command": "git commit -m \"$(cat msg.txt)\" -n"}, "expect": "deny"},
+  {"name": "HEREDOC 形式のコミットに --no-verify が付いていれば止める", "tool": "Bash", "input": {"command": "git commit --no-verify -m \"$(cat <<'EOF'\nwip\nEOF\n)\""}, "expect": "deny"},
+  {"name": "二重引用の中のコマンド置換にある force push を止める", "tool": "Bash", "input": {"command": "echo \"$(git push --force origin main)\""}, "expect": "deny"}
 ]

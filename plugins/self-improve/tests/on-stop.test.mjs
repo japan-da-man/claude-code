@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ROOT, at, dataFiles, decisionOf, events, guardRun, makeEnv, note, readData, repoId, session } from './helpers.mjs'
@@ -215,6 +215,57 @@ test('検証の失敗が連続 3 回で打ち切り、人に知らせる（Claud
   s.prompt('p3', 'さらに', { now: at(20) })
   write(t, s, 'p3', 'src/a.ts', 21)
   assert.match(s.stop('p3', 'x', { now: at(22) }).stderr, /連続 1 回目/)
+})
+
+// プロセスが残っているか（シグナル 0 は、届け先があるかだけを確かめる）。
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+const waitFor = async (check, ms = 5000) => {
+  const until = Date.now() + ms
+  while (Date.now() < until) {
+    if (check()) return true
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return check()
+}
+// 子（さらにその先）のプロセスを残して待つ検証コマンド。子の PID をファイルに書く。
+const slowVerify = (t, timeoutSec) => ({ verify: [{ name: 'slow', run: `(sleep 300 & echo $! > "${join(t.base, 'child.pid')}"; wait)`, timeout_sec: timeoutSec }] })
+const childPid = (t) => Number(readFileSync(join(t.base, 'child.pid'), 'utf8').trim())
+
+test('検証のタイムアウト：シェルだけでなく、その先で動いている子孫のプロセスも止める', { skip: process.platform === 'win32' }, async () => {
+  const t = makeEnv()
+  writeFileSync(join(t.repo, 'harness/config.json'), JSON.stringify(slowVerify(t, 1)))
+  const s = session(t)
+  s.prompt('p1', 'テストを直して', { now: at(0) })
+  write(t, s, 'p1')
+  const run = s.stop('p1', '直しました', { now: at(2) })
+  assert.equal(run.status, 2)
+  assert.match(run.stderr, /検証「slow」.*がタイムアウトしました/)
+  const pid = childPid(t)
+  assert.equal(await waitFor(() => !alive(pid)), true, `子のプロセス ${pid} が残っている`)
+})
+
+test('hook 自身が止められたときも、検証コマンドを残さない', { skip: process.platform === 'win32' }, async () => {
+  const t = makeEnv()
+  writeFileSync(join(t.repo, 'harness/config.json'), JSON.stringify(slowVerify(t, 240)))
+  const s = session(t)
+  s.prompt('p1', 'テストを直して', { now: at(0) })
+  write(t, s, 'p1')
+  const hook = spawn(process.execPath, [join(ROOT, 'scripts/on-stop.mjs')], { cwd: t.repo, env: { ...t.env, HARNESS_NOW: at(2) }, stdio: ['pipe', 'ignore', 'ignore'] })
+  hook.stdin.end(JSON.stringify({ session_id: s.id, cwd: t.repo, hook_event_name: 'Stop', prompt_id: 'p1', stop_hook_active: false, last_assistant_message: '直しました' }))
+  const exited = new Promise((r) => hook.on('exit', r))
+  assert.equal(await waitFor(() => existsSync(join(t.base, 'child.pid')) && readFileSync(join(t.base, 'child.pid'), 'utf8').trim() !== ''), true, '検証コマンドが始まらない')
+  const pid = childPid(t)
+  assert.equal(alive(pid), true)
+  hook.kill('SIGTERM')
+  await exited
+  assert.equal(await waitFor(() => !alive(pid)), true, `子のプロセス ${pid} が残っている`)
 })
 
 test('1 ターンのあいだに続けさせる回数には、万一の上限がある', () => {

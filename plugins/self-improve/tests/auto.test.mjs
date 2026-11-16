@@ -337,6 +337,27 @@ test('自動の追加：下書き → 試用ルールの順。材料にした候
   assert.equal(existsSync(join(t.repo, 'harness/incidents')), false)
 })
 
+test('下書きは、その実行で作ったものだけを認める（前の実行の下書きが残っていても、下書きなしで試用を足したり編集したりできない）', () => {
+  const t = makeEnv({ config: AUTO })
+  startAuto(t, ['route-placement'])
+  draft(t, 'route-placement')
+  assert.match(trialAdd(t, 'route-placement').stdout, /追加しました/)
+  finishAuto(t, { now: at(63) })
+  // 人は試用を残したまま、下書きも残っている。次の回に、同じ原因が再発として対象になる
+  assert.equal(note(t, ['pending', 'show', 'route-placement']).status, 0)
+  seedCandidates(t, 'route-placement', ['later-1', 'later-2'], { now: at(0, 5) })
+  seedCandidates(t, 'second-key', ['later-3', 'later-4'], { now: at(1, 5) })
+  const lock = note(t, ['lock', '--session', 'auto-2'], { now: at(0, 8) })
+  assert.match(lock.stdout, /route-placement.*再発（1 回目）/)
+  // 前の実行の下書きがあるだけでは、編集できない
+  const early = note(t, ['trial', 'edit', '--session', 'auto-2', '--key', 'route-placement', '--text', '書き換えた 1 行'], { now: at(1, 8) })
+  assert.match(early.stdout, /見送り：先に pending add で route-placement の失敗票の下書きを作ってください（前の実行の下書きが残っていても、この実行で作り直します）/)
+  assert.equal(note(t, ['trial', 'list', '--json']).json[0].text, 'route-placement の決まりを守る')
+  // この実行で下書きを作れば、編集できる
+  assert.match(draft(t, 'route-placement', { session: 'auto-2', now: at(2, 8) }).stdout, /再発として数えました（1 回目）/)
+  assert.match(note(t, ['trial', 'edit', '--session', 'auto-2', '--key', 'route-placement', '--text', '書き換えた 1 行'], { now: at(3, 8) }).stdout, /更新しました/)
+})
+
 test('未確認の上限：達したら、追加も編集も下書きもやめて報告だけにする', () => {
   const t = makeEnv({ config: { auto: { interval_days: 7, max_unreviewed: 2 } } })
   startAuto(t, ['key-aaa', 'key-bbb', 'key-ccc'])

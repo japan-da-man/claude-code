@@ -35,8 +35,9 @@ export function makeEnv({ config = {}, files = {}, initialized = true, name = 'd
   writeFiles(repo, files)
   // 親プロセスの CLAUDE_* や HARNESS_* は引き継がない（テストの外の状態に左右されないように）。
   // 日付の表示は現地時刻なので、テストでは UTC に固定する。
-  // HARNESS_TEST=1 のときだけ、HARNESS_NOW で時刻を固定できる。
-  const env = { PATH: process.env.PATH, HOME: home, TZ: 'UTC', HARNESS_TEST: '1', HARNESS_DATA_DIR: data, HARNESS_CLAUDE_HOME: claudeHome }
+  // HARNESS_TEST=1 のときだけ、HARNESS_NOW で時刻を固定できる。時刻を渡さない呼び出しも、基準の時刻で動かす
+  // （実際の時計で動かすと、テストを走らせる時刻によって、ロックの失効などの結果が変わる）。
+  const env = { PATH: process.env.PATH, HOME: home, TZ: 'UTC', HARNESS_TEST: '1', HARNESS_NOW: at(0), HARNESS_DATA_DIR: data, HARNESS_CLAUDE_HOME: claudeHome }
   return { base, repo, data, home, claudeHome, env, name }
 }
 
@@ -54,6 +55,17 @@ export function runHook(file, input, t, { env = {}, now = null } = {}) {
     // JSON でない出力（または出力なし）
   }
   return { status: run.status, stdout: run.stdout, stderr: run.stderr, json }
+}
+
+// 実際の bash の版。古い bash（macOS の 3.2 など）にない書き方を、テストで飛ばすのに使う。bash がなければ null。
+export function bashVersion() {
+  const run = spawnSync('bash', ['-c', 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"'], { encoding: 'utf8' })
+  const match = /^(\d+)\.(\d+)/.exec(run.stdout ?? '')
+  return run.status === 0 && match ? { major: Number(match[1]), minor: Number(match[2]) } : null
+}
+export const bashAtLeast = (major, minor = 0) => {
+  const v = bashVersion()
+  return Boolean(v) && (v.major > major || (v.major === major && v.minor >= minor))
 }
 
 // hook がそのセッションを見ている状態を作る（SessionStart が残す記録と同じもの）。

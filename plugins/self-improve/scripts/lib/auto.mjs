@@ -226,8 +226,10 @@ export function autoGate(ctx, lock, op, key, { proposal = false, rootCause = nul
     if (op === 'skill add' && target.limits?.skill) return { ok: false, reason: `${target.limits.skill}。追加せず、報告に書いてください。` }
     return { ok: false, reason: `${key} には試用がまだありません。trial add か skill add を使ってください。` }
   }
-  if (!existsSync(pendingFile(ctx, key))) {
-    return { ok: false, reason: `先に pending add で ${key} の失敗票の下書きを作ってください。` }
+  // 下書きは、この実行で作ったものでなければならない。前の実行の下書きが残っていても、
+  // 材料（候補と事象メモ）を読み直さずに、試用を足したり編集したりはさせない。
+  if (!lock.drafted?.[key] || !existsSync(pendingFile(ctx, key))) {
+    return { ok: false, reason: `先に pending add で ${key} の失敗票の下書きを作ってください（前の実行の下書きが残っていても、この実行で作り直します）。` }
   }
   // この実行の途中で上限に達することもあるので、追加の直前にも確かめる。
   if (op === 'trial add') {

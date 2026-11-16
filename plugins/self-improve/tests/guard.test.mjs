@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   NOTE, ROOT, SNEAKY_WRITES, at, decisionOf, draft, events, finishAuto, guardRun, knownSession, makeEnv, note, repoId, runHook, script, startAuto,
@@ -61,6 +61,59 @@ test('読み取りのずれで、禁止リストが隠れない（引用の中�
   }
   // ヒアドキュメントの本文に書いてあるだけなら、止めない
   assert.equal(decision(bash(t, "cat > notes.md <<'EOF'\ngit push --force は使わない\nEOF")), 'allow')
+})
+
+test('シンボリックリンクで保護を外せない：書き込み先は、リンクの名前と実体の両方で判定する', () => {
+  const t = makeEnv({ files: { 'AGENTS.md': '# 地図\n', 'harness/guards.json': { rules: [{ id: 'no-generated-edit', path: '^src/generated/', message: '生成し直してください' }] } } })
+  // CLAUDE.md -> AGENTS.md：リンクの名前への書き込みも、実体への書き込みも、CLAUDE.md への書き込みとして確認を挟む
+  symlinkSync('AGENTS.md', join(t.repo, 'CLAUDE.md'))
+  for (const [tool, input] of [
+    ['Write', { file_path: join(t.repo, 'CLAUDE.md') }],
+    ['Edit', { file_path: join(t.repo, 'AGENTS.md') }],
+    ['Bash', { command: 'echo "- 新しい行" >> CLAUDE.md' }],
+    ['Bash', { command: 'sed -i s/a/b/ AGENTS.md' }],
+  ]) {
+    const run = pre(t, tool, input)
+    assert.equal(decision(run), 'ask', JSON.stringify(input))
+    assert.match(run.json.hookSpecificOutput.permissionDecisionReason, /CLAUDE\.md（(CLAUDE|AGENTS)\.md）への書き込み/)
+  }
+  // リンクでなければ、AGENTS.md はふつうのファイル
+  const plain = makeEnv({ files: { 'AGENTS.md': '# 地図\n', 'CLAUDE.md': '# 地図\n' } })
+  assert.equal(decision(pre(plain, 'Edit', { file_path: join(plain.repo, 'AGENTS.md') })), 'allow')
+
+  // リポジトリの外を指すディレクトリのリンク：名前のパスにルールが当たる。ログには、リポジトリからの相対パスを残す（絶対パスを残さない）
+  const outside = join(t.base, 'outside')
+  mkdirSync(outside)
+  mkdirSync(join(t.repo, 'src'))
+  symlinkSync(outside, join(t.repo, 'src/generated'))
+  const viaLink = pre(t, 'Write', { file_path: join(t.repo, 'src/generated/api.ts') })
+  assert.equal(viaLink.status, 2)
+  assert.match(viaLink.stderr, /生成し直してください/)
+  assert.equal(events(t).at(-1).target, 'src/generated/api.ts')
+  // リポジトリの外から、リンクの実体を指して書いても同じ（実体の側で、同じ保護に当たる）
+  symlinkSync(join(t.repo, 'harness'), join(t.base, 'elsewhere'))
+  assert.equal(decision(pre(t, 'Write', { file_path: join(t.base, 'elsewhere/config.json') })), 'ask')
+  assert.equal(decision(bash(t, `echo x > ${join(t.base, 'elsewhere/guards.json')}`)), 'ask')
+
+  // 個人用の Skill の置き場所がリンク（dotfiles で管理）のとき：実体のパスを直接指しても、試用 Skill は書き換えられない
+  const linked = makeEnv({ config: AUTO })
+  const real = join(linked.base, 'dotfiles/skills')
+  mkdirSync(real, { recursive: true })
+  symlinkSync(real, join(linked.claudeHome, 'skills'))
+  startAuto(linked, ['migration-forgotten'])
+  draft(linked, 'migration-forgotten')
+  const added = note(linked, ['skill', 'add', '--session', 'auto-1', '--key', 'migration-forgotten', '--name', 'db-migration', '--description', 'demo-app リポジトリで DB のスキーマを変えるときに使う', '--body', '# 手順\n\n1. マイグレーションを生成する\n'], { now: at(62) })
+  assert.equal(added.status, 0, added.stderr)
+  finishAuto(linked)
+  for (const file of [join(real, 'demo-app-db-migration/SKILL.md'), join(linked.claudeHome, 'skills/demo-app-db-migration/SKILL.md')]) {
+    const run = pre(linked, 'Write', { file_path: file }, {}, 'human-1')
+    assert.equal(run.status, 2, file)
+    assert.match(run.stderr, /ルール：trial-skill/)
+  }
+  // リポジトリの中に置いたリンク経由でも同じ
+  symlinkSync(join(real, 'demo-app-db-migration'), join(linked.repo, 'skill-link'))
+  assert.equal(pre(linked, 'Edit', { file_path: join(linked.repo, 'skill-link/SKILL.md') }, {}, 'human-1').status, 2)
+  assert.equal(bash(linked, 'rm -rf skill-link/', {}, 'human-1').status, 2)
 })
 
 test('test-guards: リポジトリ固有のガードとテストケースも実行し、期待と違えば終了コード 1', () => {

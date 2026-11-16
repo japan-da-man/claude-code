@@ -4,8 +4,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isHarnessNoteOnly, isNonChanging, parseBash, skeleton, writeTargets } from '../scripts/lib/bash.mjs'
-import { SNEAKY_WRITES } from './helpers.mjs'
+import { isHarnessNoteOnly, isNonChanging, parseBash, skeleton, substEnd, writeTargets } from '../scripts/lib/bash.mjs'
+import { SNEAKY_WRITES, bashAtLeast, bashVersion } from './helpers.mjs'
 
 const targets = (command) => writeTargets(command).flatMap((t) => t.tokens)
 
@@ -60,6 +60,29 @@ test('parseBash: 読み取りに自信のない書き方には印を付ける（
   assert.deepEqual(words.map((w) => w.expands), [false, false, false, true, false, false, false])
 })
 
+test('parseBash: コマンド置換は、引用の中のものも中身を読む。置換を含む語は 1 つのまま残り、もとのコマンドは分かれない', () => {
+  const read = (command) => {
+    const parsed = parseBash(command)
+    return [parsed.segments.map(skeleton), parsed.subst, parsed.uncertain]
+  }
+  // Claude Code の標準のコミットの形。ヒアドキュメントの本文に括弧や引用があっても、終わりを取り違えない
+  const commit = 'git commit -m "$(cat <<\'EOF\'\nfix: route (placement) "quoted" $HOME `x`\n\nCo-Authored-By: X <x@example.com>\nEOF\n)" && git log -n 3'
+  assert.deepEqual(read(commit), [['git commit -m $(…)', 'git log -n 3', 'cat'], true, false])
+  assert.deepEqual(read('git commit -m $(cat msg.txt) -n'), [['git commit -m $(…) -n', 'cat msg.txt'], true, false])
+  assert.deepEqual(read('echo "`git push --force`" && ls'), [['echo $(…)', 'ls', 'git push --force'], true, false])
+  assert.deepEqual(read('echo $(echo "$(git push -f)") x'), [['echo $(…) x', 'echo $(…)', 'git push -f'], true, false])
+  assert.deepEqual(read('a=$(printf "%s)" x); echo "$a"'), [['a=$(…)', 'echo $a', "printf '…' x".replace("'…'", '%s)')], true, false])
+  // 終わりの見つからない置換と、括弧の数が合わない書き方（case）は、自信がないものとして扱う
+  assert.equal(parseBash('echo "$(unterminated').uncertain, true)
+  assert.equal(parseBash('echo `unterminated').uncertain, true)
+  assert.equal(parseBash('echo $(case x in a) echo 1;; esac)').uncertain, true)
+  // 閉じ括弧に見える文字が、ヒアドキュメントの本文・引用・エスケープ・コメントの中にあっても、数えない
+  for (const text of ['cat <<EOF\n)\nEOF\n) tail', 'echo ")" \')\' \\) # )\n) tail', 'echo $(echo ")") `echo \\)`) tail']) {
+    assert.equal(substEnd(text, 0), text.lastIndexOf(') tail'), text)
+  }
+  assert.equal(substEnd('no end', 0), -1)
+})
+
 test('isNonChanging: 読むだけと分かっているコマンドと harness-note だけを「変更あり」に数えない', () => {
   for (const command of [
     'ls -la', 'cat a.txt | grep x | wc -l', 'git status && git diff --stat', 'git log --oneline -5',
@@ -86,8 +109,10 @@ test('「読むだけ」に見えて書けるコマンドは、読むだけと�
 })
 
 test('レビューの表のコマンドは、実際に bash で実行するとファイルができる（判定の対象が本物であることの確かめ）', (ctx) => {
-  if (spawnSync('bash', ['--version']).status !== 0) return ctx.skip('bash がない')
-  const works = ['echo x | uniq - out.txt', 'echo "<<EOF"\ntouch out.txt', "x='$(touch out.txt)'; echo ${x@P}", 'cat <<E-O-F\nx\nE-O-F\ntouch out.txt', "echo $'\\'' ; touch out.txt ; echo $'\\''"]
+  if (!bashVersion()) return ctx.skip('bash がない')
+  const works = ['echo x | uniq - out.txt', 'echo "<<EOF"\ntouch out.txt', 'cat <<E-O-F\nx\nE-O-F\ntouch out.txt', "echo $'\\'' ; touch out.txt ; echo $'\\''"]
+  // ${x@P} は bash 4.4 から。古い bash（macOS の 3.2 など）では、構文エラーになるので確かめない。
+  if (bashAtLeast(4, 4)) works.push("x='$(touch out.txt)'; echo ${x@P}")
   for (const command of works) {
     const dir = mkdtempSync(join(tmpdir(), 'self-improve-bash-'))
     spawnSync('bash', ['-c', command], { cwd: dir, encoding: 'utf8' })

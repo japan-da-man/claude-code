@@ -47,7 +47,7 @@ function verifyMessage(result) {
   ].join('\n')
 }
 
-export function onStop(input) {
+export async function onStop(input) {
   const ctx = hookContext(input)
   if (!ctx || !ctx.sessionId) return { code: 0 }
   // 自動改善のセッションでは、検証・事象メモ・改善候補の確認を動かさない。
@@ -88,7 +88,7 @@ export function onStop(input) {
   // 1. 検証。そのターンでファイルの変更があったときだけ。検証が通ったあとに変更がなければ、繰り返さない。
   const unverified = changes.filter((c) => !state.verified_at || c.ts > state.verified_at)
   if (unverified.length && ctx.config.verify.length) {
-    const result = verifyTurn(ctx, { promptId })
+    const result = await verifyTurn(ctx, { promptId })
     if (result.ok) {
       state.verified_at = iso()
     } else {
@@ -156,7 +156,7 @@ export function onStop(input) {
 
 if (isMain(import.meta.url)) {
   try {
-    const result = onStop(readHookInput())
+    const result = await onStop(readHookInput())
     if (result.stdout) process.stdout.write(result.stdout)
     if (result.stderr) process.stderr.write(`${result.stderr}\n`)
     process.exitCode = result.code
