@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { utimesSync } from 'node:fs'
+import { chmodSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { FEATURE_DIR, makeRepo, runHook } from './helpers.mjs'
+import { FEATURE_DIR, makeRepo, pathWithoutJq, runHook, sh } from './helpers.mjs'
 
 const bash = (command) => ({ tool_name: 'Bash', tool_input: { command } })
 const edit = (file_path) => ({ tool_name: 'Edit', tool_input: { file_path } })
@@ -27,6 +27,8 @@ test('guard-pr: 実行中は gh pr create / merge を、書き方を変えても
     '/usr/local/bin/gh pr create',
     'echo ok; gh pr create',
     'out=$(gh pr create --fill)',
+    'gh pr new --fill',
+    'gh pr -R owner/repo create',
   ]) {
     const r = runHook('guard-pr.sh', repo, bash(cmd))
     assert.equal(r.status, 2, cmd)
@@ -71,6 +73,22 @@ test('guard-spec: 他の機能の SPEC.md や、同じ機能の他のファイ�
   ]) {
     assert.equal(runHook('guard-spec.sh', repo, edit(p)).status, 0, p)
   }
+})
+
+test('guard-spec: 実行中は .goal-build/check.sh の編集も止める', () => {
+  const { repo } = makeRepo()
+  const r = runHook('guard-spec.sh', repo, { tool_name: 'Write', tool_input: { file_path: join(repo, '.goal-build/check.sh') } })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /check\.sh を編集できません/)
+})
+
+test('ガード: jq がなくても止めるべきものは止め、それ以外は通す', () => {
+  const { repo } = makeRepo()
+  const env = { PATH: pathWithoutJq() }
+  assert.equal(runHook('guard-pr.sh', repo, bash('gh pr create --fill'), env).status, 2)
+  assert.equal(runHook('guard-pr.sh', repo, bash('rm .goal-build/active .goal-build/state'), env).status, 0)
+  assert.equal(runHook('guard-spec.sh', repo, edit(join(repo, FEATURE_DIR, 'SPEC.md')), env).status, 2)
+  assert.equal(runHook('guard-spec.sh', repo, edit(join(repo, 'src/app.ts')), env).status, 0)
 })
 
 test('guard-spec: フローがなければ SPEC.md も編集できる（設計フェーズ）', () => {
@@ -178,11 +196,82 @@ test('run-checks: reported の最終ターンもチェックする', () => {
   assert.equal(r.json?.decision, 'block')
 })
 
-test('run-checks: check.sh がなければ何もしない', () => {
-  const env = makeRepo({ check: false })
+test('run-checks: check.sh がない・実行できないときは blocked にして止める（黙って通さない）', () => {
+  const missing = makeRepo({ check: false })
+  let r = runHook('run-checks.sh', missing.repo)
+  assert.equal(r.json?.decision, 'block')
+  assert.match(r.json.reason, /check\.sh がないか、実行できない/)
+  assert.equal(missing.read('.goal-build/state'), 'blocked')
+  const noExec = makeRepo()
+  chmodSync(join(noExec.repo, '.goal-build/check.sh'), 0o644)
+  r = runHook('run-checks.sh', noExec.repo)
+  assert.equal(r.json?.decision, 'block')
+  assert.equal(noExec.read('.goal-build/state'), 'blocked')
+})
+
+test('run-checks: 失敗の中身が毎回変わっても、続けて 6 回失敗したら blocked にする', () => {
+  const env = makeRepo()
+  for (let i = 0; i < 5; i++) {
+    env.setCheck(`fail:case ${'abcdef'.at(i)}${'xyz'.repeat(i)}`)
+    const r = runHook('run-checks.sh', env.repo)
+    assert.match(r.json.reason, new RegExp(`${i + 1}/6`))
+  }
+  assert.equal(env.read('.goal-build/state'), 'implementing')
+  env.setCheck('fail:case last')
+  const sixth = runHook('run-checks.sh', env.repo)
+  assert.match(sixth.json.reason, /blocked にしました/)
+  assert.equal(env.read('.goal-build/state'), 'blocked')
+})
+
+test('run-checks: アドレスや UUID だけが違う失敗は同じ失敗として数える', () => {
+  const env = makeRepo()
+  env.setCheck('fail:<Conn object at 0x7f3a9c0d10e0> id=3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90')
+  runHook('run-checks.sh', env.repo)
+  env.setCheck('fail:<Conn object at 0x7fbbe21a4f50> id=0b6c7a7e-1d2f-4c3b-8a9d-112233445566')
   const r = runHook('run-checks.sh', env.repo)
-  assert.equal(r.status, 0)
-  assert.equal(r.stdout, '')
+  assert.match(r.json.reason, /同じ失敗 2\/3/)
+})
+
+test('run-checks: コミットしただけ（中身が同じ）なら、チェックし直さない', () => {
+  const env = makeRepo()
+  env.setCheck('pass')
+  env.write({ 'src/new.ts': 'export const a = 1\n' })
+  runHook('run-checks.sh', env.repo)
+  assert.equal(env.runs(), 1)
+  sh(env.repo, 'git', ['add', '-A'])
+  sh(env.repo, 'git', ['commit', '-q', '-m', 'task'])
+  runHook('run-checks.sh', env.repo)
+  assert.equal(env.runs(), 1)
+})
+
+test('run-checks: 壊れたシンボリックリンクがあっても、他のファイルの変化を見落とさない', () => {
+  const env = makeRepo()
+  env.setCheck('pass')
+  symlinkSync('does-not-exist', join(env.repo, 'aaa-link'))
+  env.write({ 'src/z.ts': '1\n' })
+  runHook('run-checks.sh', env.repo)
+  env.write({ 'src/z.ts': '2\n' })
+  runHook('run-checks.sh', env.repo)
+  assert.equal(env.runs(), 2)
+})
+
+test('run-checks: check.sh の中身が変われば、チェックし直す', () => {
+  const env = makeRepo()
+  env.setCheck('pass')
+  runHook('run-checks.sh', env.repo)
+  const path = join(env.repo, '.goal-build/check.sh')
+  writeFileSync(path, readFileSync(path, 'utf8') + '# changed\n')
+  runHook('run-checks.sh', env.repo)
+  assert.equal(env.runs(), 2)
+})
+
+test('run-checks: 承認コミットの SHA が読めなければ、SPEC の確認を飛ばさずに止める', () => {
+  const env = makeRepo()
+  env.setCheck('pass')
+  env.write({ '.goal-build/active': `${FEATURE_DIR}\n${env.approved}\n0000000000000000000000000000000000000000\n` })
+  const r = runHook('run-checks.sh', env.repo)
+  assert.equal(r.json?.decision, 'block')
+  assert.match(r.json.reason, /3 行目/)
 })
 
 // ---- session-context.sh ----

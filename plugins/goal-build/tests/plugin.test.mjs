@@ -59,7 +59,7 @@ test('hooks.json: 4 つのイベントを、実在するスクリプトに結び
   assert.equal(hooks.Stop.length, 1)
   assert.equal(hooks.Stop[0].hooks[0].command, command('run-checks.sh'))
   assert.equal(hooks.Stop[0].hooks[0].timeout, 600)
-  assert.equal(hooks.SessionStart[0].matcher, 'startup|resume|clear|compact')
+  assert.equal(hooks.SessionStart[0].matcher, 'startup|resume|clear|compact|fork')
   assert.equal(hooks.SessionStart[0].hooks[0].command, command('session-context.sh'))
   for (const f of ['guard-pr.sh', 'guard-spec.sh', 'run-checks.sh', 'session-context.sh']) {
     accessSync(join(ROOT, 'scripts', f), constants.X_OK)
@@ -101,6 +101,7 @@ test('/goal のテンプレート: 逃げ道と打ち切りを含み、PR を作
   assert.match(design, /\/goal 最初に Skill ツールで goal-build:implement/)
   assert.match(design, /blocked にした/)
   assert.match(design, /approved でないため開始しなかった/)
+  assert.match(design, /追加のタスクがないため何もしなかった/)
   assert.match(design, /PR の作成はしない/)
   assert.match(design, /40 ターンで打ち切る/)
 })

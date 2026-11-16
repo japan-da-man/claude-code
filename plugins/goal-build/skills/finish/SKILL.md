@@ -20,5 +20,5 @@ disable-model-invocation: true
    ```
 
    `reported` でなければ、途中で終えることになる旨と、終わった AC・保留中の AC・未回答の質問を短く伝える。
-4. **状態を消す**：`.goal-build/` の `active`・`state`・`stop-count`・`fail-hash`・`last-pass` を消す。`check.sh` と `config` は残す。`docs/specs/` の成果物は消さない。
+4. **状態を消す**：`.goal-build/` の `active`・`state`・`stop-count`・`fail-total`・`fail-hash`・`last-pass` のうち、あるものだけを並べて `rm .goal-build/active .goal-build/state …` で消す。`-f` や `-r` は付けない（blast-radius などのガードが確認を求めるため）。`check.sh` と `config` は残す。`docs/specs/` の成果物は消さない。
 5. 消したことと、次に別の機能を始めるときは `/goal-build:design` からであることを伝える。

@@ -1,6 +1,6 @@
 // テスト用の足場。一時ディレクトリに git リポジトリを作り、フックのスクリプトを stdin つきで動かす。
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, chmodSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, chmodSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -80,4 +80,14 @@ export function runHook(name, repo, input = {}, extraEnv = {}) {
   let json = null
   try { json = r.stdout.trim() ? JSON.parse(r.stdout) : null } catch { /* テキスト出力 */ }
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, json }
+}
+
+// jq だけを除いた PATH（ガードが使うコマンドへのリンクを一時ディレクトリに並べる）。
+export function pathWithoutJq() {
+  const bin = mkdtempSync(join(tmpdir(), 'goal-build-bin-'))
+  for (const cmd of ['bash', 'cat', 'dirname', 'basename', 'grep', 'sed', 'head']) {
+    const r = spawnSync('bash', ['-c', `command -v ${cmd}`], { encoding: 'utf8' })
+    symlinkSync(r.stdout.trim(), join(bin, cmd))
+  }
+  return bin
 }

@@ -45,7 +45,7 @@ disable-model-invocation: true
    - PR の作成とマージを常に止めたい場合の deny（フックは `gh api` 経由などを防げないため）：
      `"deny": ["Bash(gh pr create *)", "Bash(gh pr merge *)", "Read(./.env)", "Read(./.env.*)"]`
    - auto モードが使えない環境で、/goal が承認待ちで止まらないようにする allow（`claude --permission-mode acceptEdits` での起動と組み合わせる）：
-     `"allow": ["Bash(./.goal-build/check.sh)", "Bash(git add *)", "Bash(git commit *)", "Bash(git diff *)", "Bash(git merge-base *)", "Bash(git switch *)", "Bash(git checkout -b *)", "Bash(mkdir *)"]` と、手順 3 で見つけたコマンド（`Bash(pnpm *)`、`Bash(uv run *)` など）
+     `"allow": ["Bash(./.goal-build/check.sh)", "Bash(git add *)", "Bash(git commit *)", "Bash(git diff *)", "Bash(git merge-base *)", "Bash(git fetch *)", "Bash(git rev-parse *)", "Bash(git log *)", "Bash(git status *)", "Bash(git switch *)", "Bash(git checkout -b *)", "Bash(mkdir *)"]` と、手順 3 で見つけたコマンド（`Bash(pnpm *)`、`Bash(uv run *)` など）
 9. **まとめ**：作ったファイルと、次の使い方を短く伝える。`check.sh` と `config` はコミットしてよいことも伝える（コミットはしない）。
 
    ```text

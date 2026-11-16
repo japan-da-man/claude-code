@@ -3,7 +3,7 @@ name: design
 description: 要件定義書から設計書 SPEC.md を書き、分からない点を QUESTIONS.md の「設計」にまとめて止まる。回答があれば SPEC.md に反映する。goal-build の最初の段階。実装はしない。
 disable-model-invocation: true
 arguments: [feature, requirements]
-argument-hint: <feature-slug> <要件定義書のパス | spec-flow の docs/specs/<id>>
+argument-hint: <feature-slug> <要件定義書のパス | spec-flow の docs/specs/<id>>（どちらも空白を含まないパス）
 ---
 
 # goal-build: 設計
@@ -12,6 +12,8 @@ argument-hint: <feature-slug> <要件定義書のパス | spec-flow の docs/spe
 
 - feature: `$feature`
 - 要件: `$requirements`
+
+引数は空白で区切られるので、要件は空白を含まないパスで渡してもらう。`$requirements` がファイルでもディレクトリでもなければ（自由文の 1 語目だけが入った、など）、要件定義書のパスを聞いて止まる。
 
 ## 手順
 
@@ -37,8 +39,9 @@ argument-hint: <feature-slug> <要件定義書のパス | spec-flow の docs/spe
      (2) 最新のレビュー結果で blocking の指摘が 0 件
      (3) goal-build:report で REPORT.md と PR_BODY.md を作成したと報告している
      ただし次のどれかを報告した場合も、その時点で終了とする：
-     - blocking な質問を QUESTIONS.md に書き .goal-build/state を blocked にした（保留した AC、2 周後に残ったレビュー指摘、check.sh の連続失敗を含む）
+     - blocking な質問を QUESTIONS.md に書き .goal-build/state を blocked にした（保留した AC、2 周目に残ったレビュー指摘、check.sh の連続失敗を含む）
      - SPEC.md が approved でないため開始しなかった
+     - 報告済みで、追加のタスクがないため何もしなかった
      SPEC.md と既存テストの期待値は変更しない。PR の作成はしない。
      40 ターンで打ち切る。
      ```

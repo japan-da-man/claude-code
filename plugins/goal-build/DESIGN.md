@@ -46,12 +46,12 @@ spec-flow（要望 → 要件 → UI 案）の成果物 `docs/specs/<id>/` は�
 | `.goal-build/config` | コミット | `BASE_BRANCH`、`REVIEW_AGENT` |
 | `.goal-build/active` | 無視 | 1 行目：仕様ディレクトリ、2 行目：merge-base の SHA、3 行目：承認コミットの SHA |
 | `.goal-build/state` | 無視 | `implementing` / `blocked` / `reported` |
-| `.goal-build/stop-count`・`fail-hash`・`last-pass` | 無視 | Stop フックの失敗回数・直前の失敗・最後に通ったときの署名 |
+| `.goal-build/stop-count`・`fail-total`・`fail-hash`・`last-pass` | 無視 | Stop フックの同じ失敗の回数・続けての失敗の回数・直前の失敗・最後に通ったときの署名 |
 | `docs/specs/<feature>/*.md` | コミット | SPEC・QUESTIONS・PROGRESS・REVIEW・REPORT・PR_BODY |
 
-遷移：（active なし）→ implement の初期化で `implementing` → 質問・同じ失敗 3 回で `blocked` → 回答後の再開で `implementing`（失敗の記録を消す）→ report で `reported` → finish で削除。`reported` のあと PROGRESS.md に修正タスクを足して /goal を実行し直すと `implementing` に戻る。
+遷移：（active なし）→ implement の初期化で `implementing` → 質問・チェックの連続失敗・check.sh がない で `blocked` → 回答後の再開で `implementing`（失敗の記録を消す）→ report で `reported` → finish で削除。`reported` のあと PROGRESS.md に修正タスクを足して /goal を実行し直すと `implementing` に戻る。追加のタスクがなければ、implement は「報告済みで、追加のタスクがないため何もしなかった」と報告して止まり、/goal もそれで終わる。
 
-承認コミット（implement の初期化で SPEC.md と QUESTIONS.md をコミットしたもの）が、SPEC.md の書き換えを見つける基準になる。SPEC.md は作業ブランチで新しく作られるので、比較元ブランチとの差分では判定できない。
+承認コミット（implement の初期化で SPEC.md と QUESTIONS.md をコミットしたもの。人がすでにコミットしていれば、SPEC.md を最後に変えたコミット）が、SPEC.md の書き換えを見つける基準になる。SPEC.md は作業ブランチで新しく作られるので、比較元ブランチとの差分では判定できない。blocked の間に人が SPEC.md を直した場合は、再開時に implement がそれを人の変更としてコミットし、承認コミットを取り直す（Claude が戻してしまわないように）。
 
 ## 質問のまとめ方
 
@@ -66,17 +66,17 @@ spec-flow（要望 → 要件 → UI 案）の成果物 `docs/specs/<id>/` は�
 
 | イベント | スクリプト | 動作 |
 | --- | --- | --- |
-| PreToolUse（Bash） | `guard-pr.sh` | `gh pr create` / `gh pr merge` を exit 2 で止める。`gh -R o/r pr create`、`bash -c "…"`、`$(…)`、`/usr/bin/gh` も拾う |
-| PreToolUse（Edit / Write） | `guard-spec.sh` | 実行中の機能の SPEC.md の編集を止める。他の機能の SPEC.md は対象外 |
-| Stop | `run-checks.sh` | ① SPEC.md が承認コミットから変わっていれば止める ② `check.sh` が失敗していれば止める（前回通ってから変更がなければ省略）。`blocked` では素通り、`reported` でもチェックする |
-| SessionStart（startup / resume / clear / compact） | `session-context.sh` | 状態ごとの案内と未完了タスクを注入。active が 24 時間以上前なら警告 |
+| PreToolUse（Bash） | `guard-pr.sh` | `gh pr create`（別名 `new`）/ `gh pr merge` を exit 2 で止める。`gh -R o/r pr create`、`gh pr -R o/r create`、`bash -c "…"`、`$(…)`、`/usr/bin/gh` も拾う。パターンは `pr-pattern.ere` |
+| PreToolUse（Edit / Write） | `guard-spec.sh` | 実行中の機能の SPEC.md と `.goal-build/check.sh` の編集を止める。他の機能の SPEC.md は対象外 |
+| Stop | `run-checks.sh` | ① SPEC.md が承認コミットから変わっていれば止める（承認コミットが読めなくても止める）② `check.sh` が失敗していれば止める（前回通ってから中身が変わっていなければ省略）。check.sh がない・実行できなければ blocked。`blocked` では素通り、`reported` でもチェックする |
+| SessionStart（startup / resume / clear / compact / fork） | `session-context.sh` | 状態ごとの案内と未完了タスクを注入。active が 24 時間以上前なら警告 |
 
 決めたこと：
 
 - **Stop は stdout の JSON（`decision: "block"`）で止める。** exit 2 と stderr だと、stdout が空で stderr に `No such file or directory` のような文言があるときにブロックにならない（hooks のドキュメント）。テストの出力にはこの文言がよく混ざる。
-- **失敗回数は自前で数える。** Claude Code 側のブロック上限（連続 8 回）は Claude がツールを使うたびに数え直しになるので、DB が落ちている・元から落ちるテストがある、といった直らない失敗では止まれない。数字を除いた出力のハッシュが同じ失敗が 3 回続いたら `blocked` にする。中身が変われば 1 に戻すので、テスト先行の途中では止まらない。
-- **変更がなければチェックを省く。** 署名は HEAD・`git diff HEAD`・未追跡ファイルの一覧と中身から作る（`.goal-build/` は除く）。
-- **ガードには `onFailure: "block"`**（v2.1.295 以降）。ガードがタイムアウトや起動失敗を起こしても操作を通さない。Stop には効かないので付けない。
+- **失敗回数は自前で数える。** Claude Code 側のブロック上限（連続 8 回）は Claude がツールを使うたびに数え直しになるので、DB が落ちている・元から落ちるテストがある、といった直らない失敗では止まれない。同じ失敗が 3 回続くか、中身を問わず 6 回続けて失敗したら `blocked` にする。同じ失敗かどうかは、アドレス（`0x…`）・UUID・数字・行の順番をならした出力のハッシュで比べる。中身が変われば「同じ失敗」は 1 に戻るので、テスト先行の途中ではすぐには止まらない。
+- **中身が変わっていなければチェックを省く。** 一時的なインデックスに作業ツリーをすべて入れたツリーの SHA（未追跡ファイルの中身も含み、`.goal-build/` は除く）と、check.sh の中身のハッシュを署名にする。コミットしただけなら署名は変わらないので、二度走らない。
+- **ガードには `onFailure: "block"`**（v2.1.295 以降）。ガードがタイムアウトや起動失敗を起こしても操作を通さない。Stop には効かないので付けない。jq がないときは、guard-pr は入力の JSON 全体を、guard-spec は素朴に取り出した `file_path` を見る（止めすぎることはあっても通しすぎない。finish の `rm` は通る）。
 - **report は active を消さない。** 最終ターンも Stop フックでチェックするため。消すのは人が実行する finish だけ。
 - **中断は `/goal clear` → finish の順。** ゴールが残ったまま状態を消すと、フックが外れた状態で作業が続く。
 
@@ -91,8 +91,9 @@ design が `<feature>` を埋めて示す。判定役は会話しか読まず、
 (2) 最新のレビュー結果で blocking の指摘が 0 件
 (3) goal-build:report で REPORT.md と PR_BODY.md を作成したと報告している
 ただし次のどれかを報告した場合も、その時点で終了とする：
-- blocking な質問を QUESTIONS.md に書き .goal-build/state を blocked にした（保留した AC、2 周後に残ったレビュー指摘、check.sh の連続失敗を含む）
+- blocking な質問を QUESTIONS.md に書き .goal-build/state を blocked にした（保留した AC、2 周目に残ったレビュー指摘、check.sh の連続失敗を含む）
 - SPEC.md が approved でないため開始しなかった
+- 報告済みで、追加のタスクがないため何もしなかった
 SPEC.md と既存テストの期待値は変更しない。PR の作成はしない。
 40 ターンで打ち切る。
 ```
@@ -103,7 +104,7 @@ auto モードで動かす。使えない環境では `claude --permission-mode 
 
 spec-reviewer は実装した会話を見ていない別コンテキストで動き、ツールは Read・Grep・Glob だけ（プラグインのサブエージェントでは `permissionMode` や `hooks` が無視されるので、制限は `tools` の許可リストで掛ける）。Bash を持たないので、差分は implement が渡す：SPEC.md、変更ファイルの一覧、既存テストの差分、承認コミットからの SPEC.md の差分、回答済みの QUESTIONS.md（SPEC.md を補う確定事項）、2 周目なら前回の REVIEW.md。
 
-blocking にするのは、受け入れ基準の未実装・仕様との矛盾・仕様にあるエッジケースのテストの欠落・既存テストや SPEC.md の無断の書き換え・認可や入力検証の欠落だけ。スタイルは見ない。直すのは blocking だけで、最大 2 周。残りは REPORT.md に回すか、blocked で人に返す。
+blocking にするのは、受け入れ基準の未実装・仕様との矛盾・仕様にあるエッジケースのテストの欠落・既存テストや SPEC.md の無断の書き換え・認可や入力検証の欠落だけ。スタイルは見ない。レビューは最大 2 周：1 周目の blocking を直し、2 周目でそれを確かめる。2 周目にも blocking があれば、直さずに blocked で人に返す（直したあとを確かめるレビューがないため）。non-blocking は REPORT.md に回す。
 
 ## リスクと制限
 
@@ -114,11 +115,11 @@ blocking にするのは、受け入れ基準の未実装・仕様との矛盾�
 | 状態ファイルが残り、別の作業でもフックが動く | finish で片付ける。起動時に 24 時間以上前の active を警告し、design も active があれば止まる |
 | テストを通すために既存テストの期待値を書き換える | 既存テストの差分をレビュアーに渡し、REPORT.md に必ず載せる |
 | トークン消費 | 40 ターンで打ち切る。`/goal` で経過と消費、`/usage` でサブエージェントの内訳を見る |
-| jq がない環境 | setup で確かめる。ガードは jq がないと Bash と編集を止める（フローを finish すれば止まらない） |
+| jq がない環境 | setup で確かめる。ガードは jq なしでも動く（止めすぎることはある）。Stop フックは jq がないとチェックしない（警告だけ出す） |
 
 ## テスト
 
-`node --test`（`tests/`）。一時ディレクトリに git リポジトリを作り、フックのスクリプトにダミーの入力 JSON を渡して確かめる：PR 作成のブロックと push の素通し、SPEC.md の保護（他の機能は対象外）、check.sh の失敗での停止と JSON の形、同じ失敗 3 回で blocked・中身が変われば数え直し、変更がなければ省略（未追跡ファイルの中身の変化も検知）、SPEC.md の書き換えの検知、状態ごとの SessionStart の案内。
+`node --test`（`tests/`）。一時ディレクトリに git リポジトリを作り、フックのスクリプトにダミーの入力 JSON を渡して確かめる：PR 作成のブロックと push の素通し、SPEC.md の保護（他の機能は対象外）、check.sh の失敗での停止と JSON の形、同じ失敗 3 回・続けて 6 回で blocked、アドレスや UUID だけが違う失敗を同じとみなすこと、中身が変わっていなければ省略（コミットだけなら省略、未追跡ファイル・壊れたシンボリックリンクがあっても変化を検知、check.sh の変更で再実行）、check.sh がない・実行できないときの blocked、SPEC.md の書き換えと承認コミットが読めないときの停止、jq がないときのガード、状態ごとの SessionStart の案内。
 
 ## 未決事項
 
