@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PLUGIN_ROOT, isMain, makeContext, readJson, tildePath } from './lib/core.mjs'
+import { gitRootOf } from './lib/scope.mjs'
 
 const GUARD = join(PLUGIN_ROOT, 'scripts', 'guard-harness.mjs')
 export const DEFAULT_TESTS = join(PLUGIN_ROOT, 'guards.default.test.json')
@@ -32,6 +33,24 @@ export function decide(repoRoot, dataDir, test, extraEnv = {}) {
     return { decision: 'error', detail: `出力を読めません：${run.stdout}` }
   }
   return { decision: 'allow', detail: '' }
+}
+
+// 渡された場所のリポジトリのコンテキスト。セッションを始めた場所（CLAUDE_PROJECT_DIR など）ではなく、
+// 引数で渡された場所そのもので決める（別のリポジトリのセッションから、パスを指定して実行できるように）。
+function contextAt(start) {
+  const found = gitRootOf(start)
+  if (!found) return null
+  const saved = { CLAUDE_PROJECT_DIR: process.env.CLAUDE_PROJECT_DIR, HARNESS_PROJECT_DIR: process.env.HARNESS_PROJECT_DIR }
+  process.env.CLAUDE_PROJECT_DIR = found.root
+  delete process.env.HARNESS_PROJECT_DIR
+  try {
+    return makeContext(found.root)
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
 }
 
 // テストケースを実行する。
@@ -64,7 +83,7 @@ export function runGuardTests(start) {
     mkdirSync(join(home, '.claude'), { recursive: true })
     runSuite('guards.default.test.json', readJson(DEFAULT_TESTS, null), blank, { HOME: home, HARNESS_CLAUDE_HOME: join(home, '.claude') })
 
-    const ctx = makeContext(start)
+    const ctx = contextAt(start)
     if (ctx) {
       const own = [
         [join(ctx.user.dir, 'guards.test.json'), tildePath(join(ctx.user.dir, 'guards.test.json'))],

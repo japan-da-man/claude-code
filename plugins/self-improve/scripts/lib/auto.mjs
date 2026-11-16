@@ -1,7 +1,7 @@
 // 自動改善の状態：ロック、対象の選び方、歯止め、失敗票の下書き、実行の記録、未確認の自動変更、セッション開始時の知らせ。
 // 対象の並べ替えと歯止めは、ここで機械的に決める（LLM には選ばせない）。
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import {
   BUG_CATEGORY, DAY_MS, OTHER_CATEGORY, PREFERENCE_CATEGORY, activeLock, dayOf, daysBetween, isKnownSession, iso, listFiles, now,
   isInside, posix, readJson, realish, safeId, tildePath, withLock, writeFileAtomic, writeJson,
@@ -777,7 +777,8 @@ export function promote(ctx, { key, to, path = null, incident = null }) {
     if (/INC-\d{4}-\d{4}/.test(text)) {
       return { ok: false, errors: [`移した先のファイル（${path}）に、失敗票 ID（INC-…）が書かれています。チームへ出すものには付けません（失敗票は、あなたの手元にしかないため）。ID を消してから、やり直してください`] }
     }
-    control = posix(path)
+    // 失敗票には、リポジトリの根からの相対パスで残す（./ や .. を含む書き方を、そのまま残さない）。
+    control = posix(relative(ctx.repo.root, target))
     if (rule) {
       removeRule(ctx, key)
       notes.push('試用ルールを消しました')

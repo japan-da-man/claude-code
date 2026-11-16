@@ -90,7 +90,7 @@ test('自動改善のセッションの分は記録しない。別のセッシ�
   assert.deepEqual(events(t).map((e) => e.session_id), ['human-1'])
 })
 
-test('harness/config.json がないリポジトリと HARNESS_DISABLE=1 では、何も記録しない', () => {
+test('git リポジトリでない場所と HARNESS_DISABLE=1 では、何も記録しない', () => {
   const none = makeEnv({ git: false })
   const s = session(none)
   for (const run of [s.prompt('p1', '違う'), s.used('p1', 'Write', { file_path: 'a' }), s.failed('p1', 'Bash', { command: 'x' }, 'boom')]) {

@@ -17,7 +17,7 @@ function autoRun(t, key = 'route-placement') {
   finishAuto(t, { now: at(63) })
 }
 
-test('harness/config.json がないリポジトリと HARNESS_DISABLE=1 では、何も出さず、何も書かない', () => {
+test('git リポジトリでない場所と HARNESS_DISABLE=1 では、何も出さず、何も書かない', () => {
   const none = makeEnv({ git: false })
   const off = session(none).start()
   assert.deepEqual([off.status, off.stdout, off.stderr], [0, '', ''])
