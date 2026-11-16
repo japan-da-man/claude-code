@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { at, dataFiles, draft, finishAuto, makeEnv, note, repoId, seedCandidates, session, startAuto, writeFiles } from './helpers.mjs'
+import { at, dataFiles, draft, finishAuto, humanTrial, makeEnv, note, repoId, seedCandidates, session, startAuto, writeFiles } from './helpers.mjs'
 
 const AUTO = { auto: { interval_days: 7 } }
 const context = (run) => run.json?.hookSpecificOutput?.additionalContext ?? ''
@@ -33,8 +33,8 @@ test('試用ルールを、startup / resume / clear / compact のどれでも Cl
   const t = makeEnv()
   // 試用ルールがなければ、何も出さない
   assert.equal(session(t).start().stdout, '')
-  note(t, ['trial', 'add', '--session', 'h', '--key', 'route-placement', '--text', 'ルート定義は src/routes/ に置く'], { now: at(0) })
-  note(t, ['trial', 'add', '--session', 'h', '--key', 'migration-forgotten', '--text', 'スキーマを変えたらマイグレーションを生成する', '--ref', 'INC-2026-0002'], { now: at(1) })
+  humanTrial(t, 'route-placement', 'ルート定義は src/routes/ に置く', { now: at(0) })
+  humanTrial(t, 'migration-forgotten', 'スキーマを変えたらマイグレーションを生成する', { now: at(1), ref: 'INC-2026-0002' })
   writeFiles(t.repo, { 'harness/incidents/INC-2026-0002.md': '---\nid: INC-2026-0002\ncause_key: migration-forgotten\nstatus: trial\ncontrol: trial:rules/migration-forgotten\n---\n' })
   for (const source of ['startup', 'resume', 'clear', 'compact', 'fork']) {
     const run = session(t, `s-${source}`).start(source, { now: at(10) })
@@ -122,12 +122,22 @@ test('報告は harness-note report close でも閉じられる。閉じなく�
   const t = makeEnv({ config: AUTO })
   autoRun(t)
   assert.match(message(startup(t, 's1', at(0, 1))), /自動改善（11\/16）：試用ルールを1件追加。/)
-  // 自動改善のセッション（ロック中）は閉じられない
+  // 自動改善のセッション（ロック中）は閉じられない。実行中は、ほかのセッションからも閉じない（名乗りを確かめきれないため）
   seedCandidates(t, 'another-key', ['x1', 'x2'], { now: at(0, 4) })
   note(t, ['lock', '--session', 'auto-2'], { now: at(1, 4) })
-  assert.match(note(t, ['report', 'close', '--session', 'auto-2'], { now: at(2, 4) }).stdout, /見送り/)
+  assert.match(note(t, ['report', 'close', '--session', 'auto-2'], { now: at(2, 4) }).stdout, /見送り：自動改善のセッションでは/)
+  assert.match(note(t, ['report', 'close', '--session', 's2'], { now: at(2, 4) }).stdout, /見送り：自動改善が実行中です/)
+  note(t, ['review', '--session', 's2'], { now: at(2, 4) })
   assert.match(message(startup(t, 's2', at(3, 4))), /自動改善（11\/16）/)
-  assert.match(note(t, ['report', 'close', '--session', 's2'], { now: at(4, 4) }).stdout, /セッション開始時の知らせを 1 件閉じました/)
+  // ロックを外したあとの自動改善のセッション（lock を試みたセッション）も、閉じられない
+  finishAuto(t, { session: 'auto-2', now: at(3, 4), body: '見送りのみ' })
+  assert.match(note(t, ['report', 'close', '--session', 'auto-2'], { now: at(4, 4) }).stdout, /見送り：このセッションは、自動改善（auto-improve）を呼び出したセッションです/)
+  note(t, ['review', '--session', 'auto-2'], { now: at(4, 4) })
+  // セッションを確かめられないとき（--session も環境変数もない。直近のセッションからの推定）も、閉じない
+  assert.match(note(t, ['report', 'close'], { now: at(4, 4) }).stdout, /見送り/)
+  note(t, ['review'], { now: at(4, 4) })
+  assert.match(message(startup(t, 's2b', at(4, 4))), /自動改善（11\/16）/)
+  assert.match(note(t, ['report', 'close', '--session', 's2'], { now: at(4, 4) }).stdout, /セッション開始時の知らせを \d 件閉じました/)
   const after = message(startup(t, 's3', at(5, 4)))
   assert.doesNotMatch(after, /自動改善（11\/16）/)
   assert.match(after, /未確認の自動変更1件/)
@@ -190,7 +200,8 @@ test('自動改善が追加をやめているときは、理由を 1 行で知�
   // 行数の目安を超えている：自動改善が試用ルールを追加していないことを、はっきり伝える
   const full = makeEnv({ config: { auto: { interval_days: 7 }, budget: { always_loaded_rule_lines: 3 } }, files: { '.claude/rules/always.md': '- a\n- b\n- c\n' } })
   const blocked = message(startup(full, 'human-1', at(0)))
-  assert.match(blocked, /自動改善は、いま試用を追加していません：常時ロードのルールが行数の目安を超えます（paths なしのルール 3 行＋試用ルール 0 行、目安 3 行）。/)
+  // 止まっているのは試用ルールだけ（試用 Skill は入る）なので、そう書く
+  assert.match(blocked, /自動改善は、いま試用ルールを追加していません（試用 Skill は追加できます）：常時ロードのルールが行数の目安を超えます（paths なしのルール 3 行＋試用ルール 0 行、目安 3 行）。/)
   // 自動改善を止めてあるリポジトリには、出さない
   const off = makeEnv({ config: { budget: { always_loaded_rule_lines: 3 } }, files: { '.claude/rules/always.md': '- a\n- b\n- c\n' } })
   assert.doesNotMatch(message(startup(off, 'human-1', at(0))), /自動改善は、いま/)
@@ -244,9 +255,21 @@ test('自動改善の予定：対象ができたら有効にするか尋ね、�
   assert.equal(startup(none, 's1', at(0, 30)).stdout, '')
 })
 
-test('置いてから 60 日を超えた試用を知らせる', () => {
+test('人が入れた試用ルールも、review で確認するまで、未確認の 1 行に数える', () => {
   const t = makeEnv()
   note(t, ['trial', 'add', '--session', 'h', '--key', 'route-placement', '--text', 'ルートは src/routes/ に置く'], { now: at(0) })
+  const run = startup(t, 's1', at(0, 2))
+  assert.equal(message(run), '[self-improve] 未確認の自動変更1件（うち、自動改善の実行の外で入った試用ルール1件）。いちばん古いものは2日前。/self-improve:review で確認できます。')
+  // ルールそのものは、確認の前から読み込まれる（試用として効く）
+  assert.match(context(run), /- ルートは src\/routes\/ に置く（下書き:route-placement）/)
+  const id = note(t, ['review', '--session', 's1'], { now: at(1, 2) }).json.unreviewed[0].id
+  note(t, ['review', 'done', id, '--decision', 'keep', '--session', 's1'], { now: at(2, 2) })
+  assert.equal(startup(t, 's2', at(0, 3)).json.systemMessage, undefined)
+})
+
+test('置いてから 60 日を超えた試用を知らせる', () => {
+  const t = makeEnv()
+  humanTrial(t, 'route-placement', 'ルートは src/routes/ に置く', { now: at(0) })
   assert.equal(startup(t, 's1', at(0, 59)).json.systemMessage, undefined)
   assert.match(message(startup(t, 's2', at(0, 61))), /置いてから60日を超えた試用が1件あります（route-placement）。\/self-improve:review で「昇格する／残す／消す」を選べます。/)
 })

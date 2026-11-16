@@ -111,6 +111,16 @@ export function seedCandidates(t, key, sessions, { category = 'dev/mistake', now
   })
 }
 
+// 人が試用ルールを入れ、review で確認済みにする（人が入れた試用も、確認するまでは未確認として数えるため）。
+export function humanTrial(t, key, text, { now = at(0), session = 'h', ref = null } = {}) {
+  const added = note(t, ['trial', 'add', '--session', session, '--key', key, '--text', text, ...(ref ? ['--ref', ref] : [])], { now })
+  const id = /変更 ID：([^）\s]+)/.exec(added.stdout)?.[1]
+  if (!id) throw new Error(`trial add failed: ${added.stdout}${added.stderr}`)
+  const done = note(t, ['review', 'done', id, '--decision', 'keep', '--session', session], { now })
+  if (!done.stdout.includes('確認済みにしました')) throw new Error(`review done failed: ${done.stdout}${done.stderr}`)
+  return added
+}
+
 // 自動改善のセッションを始める：keys それぞれに 2 セッション分の候補を作り、lock する。
 export function startAuto(t, keys, { session = 'auto-1', now = at(0), lockAt = at(60) } = {}) {
   for (const key of keys) seedCandidates(t, key, [`${key}-s1`, `${key}-s2`], { now })

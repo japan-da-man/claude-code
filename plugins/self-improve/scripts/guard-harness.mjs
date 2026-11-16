@@ -1,18 +1,97 @@
 // PreToolUse のガード。matcher は付けず、すべてのツールを見る。
 //   禁止操作            → 終了コード 2 で拒否する（理由と直し方を標準エラーに書く。終了コード 1 はブロックにならない）
 //   ハーネスのファイル  → permissionDecision: "ask" を返し、必ず確認を出す
-//   自動改善のセッション → Read・Grep・Glob・Skill と harness-note 以外のツールを、すべて拒否する（確認は出さない）
-// 関係のないツール（ふだんのセッションの Read など）は、ロックを確かめたらすぐに抜ける。
+//   自動改善のセッション → Read・Grep・Glob と harness-note 以外のツールを、すべて拒否する（確認は出さない）
 // 拒否は、自分で生ログに記録する。HARNESS_GUARD_DRYRUN=1 のとき（test-guards.mjs）は記録しない。
-import { heartbeat, hookContext, isLocked, isMain, logEvent, readHookInput } from './lib/core.mjs'
-import { evaluate } from './lib/guard.mjs'
+//
+// すべてのツール呼び出しで動くので、先頭では Node.js の標準だけを使い、することがないと分かった時点で抜ける
+// （lib/ の読み込みは、そのあとで行う）。先に抜けるのは、次のどちらかのとき。
+//   - harness/config.json が、どの階層にもない（init していない）
+//   - ファイルの書き込みでも Bash でもなく、ロックがどこにもなく、このセッションが lock を試みた記録もない
+// どちらも「あとの判定でも何もしない」と確かめられる場合だけで、迷うときは先へ進む。
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-export function guard(input) {
+const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash'])
+
+function readInput() {
+  try {
+    const parsed = JSON.parse(readFileSync(0, 'utf8') || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+// start から上の階層に、harness/config.json があるか（リポジトリの根かどうかは、あとの判定で確かめる）。
+function hasConfigAbove(start) {
+  let dir
+  try {
+    dir = realpathSync(resolve(start))
+  } catch {
+    return false
+  }
+  for (;;) {
+    if (existsSync(join(dir, 'harness', 'config.json'))) return true
+    const parent = dirname(dir)
+    if (parent === dir) return false
+    dir = parent
+  }
+}
+
+// ロックのファイルが、まだ効いているかもしれないか。ロックは 2 時間で失効する（読めないファイルも、更新から 2 時間）。
+// ファイルは実行の途中でしか書き換わらないので、更新から 2 時間を過ぎていれば、失効している。
+// 時刻を固定するテスト（HARNESS_TEST=1）では、実際の時計で判定しない。
+const LOCK_MS = 2 * 60 * 60 * 1000
+function lockMayBeActive(file) {
+  try {
+    const { mtimeMs } = statSync(file)
+    return process.env.HARNESS_TEST === '1' || mtimeMs > Date.now() - LOCK_MS - 60_000
+  } catch (e) {
+    return e?.code !== 'ENOENT'
+  }
+}
+
+// ロックも、このセッションが lock を試みた記録も、データ領域のどこにもないと言い切れるか。
+// データ領域の場所が環境変数から分からないとき、読めないファイルがあるときは、言い切らない（false）。
+function noAutoState(sessionId) {
+  const data = process.env.HARNESS_DATA_DIR || process.env.CLAUDE_PLUGIN_DATA
+  if (!data || !isAbsolute(data)) return false
+  const base = join(data, 'state')
+  if (!existsSync(base)) return true
+  const sid = `"${String(sessionId ?? '').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 128)}"`
+  try {
+    for (const repoId of readdirSync(base)) {
+      if (lockMayBeActive(join(base, repoId, 'lock.json'))) return false
+      const auto = join(base, repoId, 'auto.json')
+      if (existsSync(auto) && readFileSync(auto, 'utf8').includes(sid)) return false
+    }
+  } catch {
+    return false
+  }
+  return true
+}
+
+// あとの判定でも何もしないと分かっているか。
+export function nothingToDo(input) {
+  if (process.env.HARNESS_DISABLE === '1') return true
+  const starts = [process.env.CLAUDE_PROJECT_DIR, input.cwd, process.cwd()].filter((s) => typeof s === 'string' && s)
+  if (!starts.some(hasConfigAbove)) return true
+  if (WRITE_TOOLS.has(String(input.tool_name ?? ''))) return false
+  return noAutoState(input.session_id)
+}
+
+export async function guard(input) {
+  if (nothingToDo(input)) return { code: 0 }
+  const { heartbeat, hookContext, isLocked, logEvent } = await import('./lib/core.mjs')
+  const { NOTE_CALL_RULE, evaluate } = await import('./lib/guard.mjs')
   const ctx = hookContext(input)
   if (!ctx) return { code: 0 }
   const result = evaluate(ctx, input)
   if (result.decision === 'deny') {
-    if (process.env.HARNESS_GUARD_DRYRUN !== '1' && !isLocked(ctx)) {
+    // harness-note の呼び出し方の検査（書式の検査）による拒否は、失敗の信号に数えない。
+    if (process.env.HARNESS_GUARD_DRYRUN !== '1' && !isLocked(ctx) && result.rule !== NOTE_CALL_RULE) {
       heartbeat(ctx, 'guard')
       logEvent(ctx, { type: 'guard_denied', prompt_id: input.prompt_id ?? null, rule: result.rule, tool: input.tool_name, target: result.target ?? null })
     }
@@ -29,9 +108,17 @@ export function guard(input) {
   return { code: 0 }
 }
 
-if (isMain(import.meta.url)) {
+function isMain() {
   try {
-    const result = guard(readHookInput())
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+}
+
+if (isMain()) {
+  try {
+    const result = await guard(readInput())
     if (result.stdout) process.stdout.write(result.stdout)
     if (result.stderr) process.stderr.write(`${result.stderr}\n`)
     process.exitCode = result.code

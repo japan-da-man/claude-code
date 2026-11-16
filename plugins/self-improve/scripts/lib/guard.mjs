@@ -9,13 +9,18 @@ import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { PLUGIN_ROOT, activeLock, isInside, isLocked, posix, realish } from './core.mjs'
 import { parseArgs } from './args.mjs'
-import { commandOf, isHarnessNoteCommand, isHarnessNoteSegment, isNonChanging, parseBash, skeleton, writeTargets } from './bash.mjs'
+import { commandOf, isHarnessNoteCommand, isHarnessNoteSegment, isNonChanging, isWrappedHarnessNote, parseBash, skeleton, writeTargets } from './bash.mjs'
 import { isAutoSession } from './auto.mjs'
 import { isTrialSkillPath } from './trial.mjs'
 
 export const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 // 自動改善のセッション（ロック中）で通すツール。Bash は、harness-note の単純な呼び出しだけ。
-export const LOCK_ALLOWED_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Skill'])
+// Skill は、読み直しのための self-improve:auto-improve だけ（ほかのスキルは、本文の !`cmd` や context: fork で、
+// PreToolUse の外でコマンドやサブエージェントを動かしうる）。
+export const LOCK_ALLOWED_TOOLS = new Set(['Read', 'Grep', 'Glob'])
+export const LOCK_ALLOWED_SKILL = 'self-improve:auto-improve'
+// ガード自身の書式の検査（harness-note の呼び出し方）。この拒否は、失敗の信号には数えない。
+export const NOTE_CALL_RULE = 'harness-note-call'
 export const DEFAULT_GUARDS = join(PLUGIN_ROOT, 'guards.default.json')
 
 function compile(source, flags, errors, where) {
@@ -100,7 +105,7 @@ function locate(ctx, raw, cwd) {
   return { abs, rel, subject: rel ?? posix(abs) }
 }
 
-const LOCKED_MESSAGE = '自動改善のセッションでは、Read・Grep・Glob・Skill と harness-note 以外のツールは使えません（ファイルへの書き込み、ほかのコマンド、MCP のツール、サブエージェントの起動を含みます）。読むのは Read / Grep / Glob、書き込みは harness-note だけを使ってください。リポジトリのファイルを変える案は、harness-note pending add --proposal-kind で報告に載せてください。'
+const LOCKED_MESSAGE = '自動改善のセッションでは、Read・Grep・Glob と harness-note 以外のツールは使えません（ファイルへの書き込み、ほかのコマンド、MCP のツール、サブエージェントの起動を含みます）。読むのは Read / Grep / Glob、書き込みは harness-note だけを使ってください。リポジトリのファイルを変える案は、harness-note pending add --proposal-kind で報告に載せてください。'
 const BROKEN_MESSAGE = '自動改善のロックのファイル（lock.json）を読めません。誰かが実行中かどうかを確かめられないので、書き込みを拒否しています。2 時間たつと解けます。急ぐときは、人が HARNESS_DISABLE=1 で起動してください。'
 const AFTER_AUTO = 'このセッションは、自動改善（auto-improve）を呼び出したセッションです。ロックが外れたあと・始まらなかったあとも、書き込みには確認を挟みます（無人のセッションが、そのまま作業を続けないようにするため）。作業を続けるなら、新しいセッションで行ってください（self-improve）。'
 
@@ -137,8 +142,16 @@ const byRule = (rule, target) => (rule.decision === 'ask'
 //   - --session があるなら、hook の session_id と一致していること（ほかのセッションを名乗らせない）
 //   - strict：コマンド全体が harness-note の単純な呼び出しだけで、どれにも一致する --session がちょうど 1 つ付いていること
 // 問題がなければ null、あれば理由を返す。
-export function harnessNoteProblem(command, sessionId, { strict = false } = {}) {
+export function harnessNoteProblem(command, sessionId, { strict = false, cwd = null } = {}) {
   const parsed = parseBash(command)
+  // ほかのコマンドで包んだ呼び出し（command / env / node …/scripts/note.mjs など）は、引数を確かめられないので通さない。
+  const isNoteScript = (path) => {
+    const abs = resolve(cwd ?? process.cwd(), path)
+    return !existsSync(abs) || existsSync(join(abs, '..', '..', 'bin', 'harness-note'))
+  }
+  if (parsed.segments.some((s) => isWrappedHarnessNote(s, isNoteScript))) {
+    return 'harness-note は、ほかのコマンド（command、env、node、bash など）で包まずに、パスも付けずに、harness-note … の形で直接呼んでください'
+  }
   const calls = parsed.segments.filter(isHarnessNoteCommand)
   if (!strict && !calls.length) return null
   if (parsed.subst || parsed.uncertain) {
@@ -149,7 +162,11 @@ export function harnessNoteProblem(command, sessionId, { strict = false } = {}) 
     const { assigns, args } = commandOf(segment)
     if (assigns.length) return 'harness-note の前に環境変数を置くことはできません（データの置き場所やセッションを差し替えられないようにするため）'
     if (!isHarnessNoteSegment(segment)) return 'harness-note の出力をファイルへ書き出すことはできません'
-    if (segment.words.some((w) => w.expands)) return 'harness-note の引数では、変数の展開（$…）は使えません。値をそのまま書いてください（$ を含む文は単一引用符で囲みます）'
+    // リダイレクト先（ヒアストリング <<< を含む）の語も、引数と同じに見る。
+    const words = [...segment.words, ...segment.redirects]
+    if (words.some((w) => w.expands)) return 'harness-note の引数では、変数の展開（$…）は使えません。値をそのまま書いてください（$ を含む文は単一引用符で囲みます）'
+    // 引用の外の { } * ? [ ] ~ は、bash が語を作り替える（{--session=x,--key} は 2 語になり、--session の照合を外せる）。
+    if (words.some((w) => w.special)) return 'harness-note の引数では、引用の外の { } * ? [ ] ~ は使えません（bash が語を作り替えるため）。これらを含む文は、単一引用符で囲んでください'
     let sessions
     try {
       sessions = (parseArgs(args).flags.session ?? []).map(String)
@@ -180,9 +197,10 @@ export function evaluate(ctx, input) {
   const locked = isLocked(ctx)
   if (locked || repoLock?.broken) {
     if (LOCK_ALLOWED_TOOLS.has(tool)) return allow
+    if (tool === 'Skill' && String(ti.skill ?? '').replace(/^\//, '') === LOCK_ALLOWED_SKILL) return allow
     const message = locked ? LOCKED_MESSAGE : BROKEN_MESSAGE
     if (isBash) {
-      const problem = harnessNoteProblem(command, sid, { strict: true })
+      const problem = harnessNoteProblem(command, sid, { strict: true, cwd })
       return problem ? deny('auto-session', `${problem}。${message}`, command.slice(0, 200)) : allow
     }
     return deny('auto-session', message, tool)
@@ -221,8 +239,8 @@ export function evaluate(ctx, input) {
   }
 
   if (!command.trim()) return allow
-  const problem = harnessNoteProblem(command, sid)
-  if (problem) return deny('harness-note-call', problem, command.slice(0, 200))
+  const problem = harnessNoteProblem(command, sid, { cwd })
+  if (problem) return deny(NOTE_CALL_RULE, problem, command.slice(0, 200))
 
   const parsed = parseBash(command)
   // コマンド置換や、読み取りに自信のない書き方があるときは、元の文字列にも当てる。

@@ -30,10 +30,25 @@ const BLOCKED = [
   { kind: '見えない記述', re: /<!--/g },
 ]
 
-// 試用 Skill の本文だけに当てる。@ で始まるファイル参照は、ファイルの取り込みとして扱われうる。
+// 試用 Skill の本文だけに当てる。@ に続く語は、ファイルの取り込みとして扱われうる。
+// 前の文字は問わない（"@.env"、[@.env]、参照:@.env も拒否する）。メールアドレス（英数字の直後の @）だけは通す。
+// コード（バッククォートで囲んだ部分と、コードブロック）の中は見ない。デコレータ（@Injectable など）を書けるようにするため。
 const SKILL_ONLY = [
-  { kind: 'ファイルの取り込み', re: /(?:^|[\s(（「])@[~.\w/-]+/gm },
+  {
+    kind: 'ファイルの取り込み',
+    re: /(?<![A-Za-z0-9._%+-])@[~.\w/-]+/g,
+    outsideCode: true,
+    hint: '@ に続く語は、ファイルの取り込みとして扱われうるので書けません。コードの一部（デコレータなど）なら、バッククォートで囲んでください',
+  },
 ]
+
+// コードの部分（``` や ~~~ のコードブロックと、同じ行で閉じたバッククォートの組）を、空白に置き換える。
+function stripCode(text) {
+  const blank = (m) => m.replace(/[^\n]/g, ' ')
+  return text
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*\1[`~]*[ \t]*(?=\n|$)|$)/gm, blank)
+    .replace(/`[^`\n]*`/g, blank)
+}
 
 // 書式用の文字（Cf：ゼロ幅、双方向の制御、ソフトハイフンなど）と、行・段落の区切り（Zl、Zp）。
 // 文字そのものをソースに書かないよう、Unicode の分類で指定する。
@@ -63,11 +78,13 @@ export function scanText(raw, { skill = false } = {}) {
   }
   // 全角の英数字などを半角にそろえてから照合する。
   const text = raw.normalize('NFKC')
-  for (const { kind, re, negatable } of [...BLOCKED, ...(skill ? SKILL_ONLY : [])]) {
+  let outside = null
+  for (const { kind, re, negatable, outsideCode, hint } of [...BLOCKED, ...(skill ? SKILL_ONLY : [])]) {
+    const subject = outsideCode ? (outside ??= stripCode(text)) : text
     // すべての一致を調べる。1 つでも例外に当たらないものがあれば拒否する。
-    for (const match of text.matchAll(re)) {
-      if (negatable && excused(text, match)) continue
-      found.push(`${kind}に当たる表現があります：「${match[0].trim().slice(0, 60)}」`)
+    for (const match of subject.matchAll(re)) {
+      if (negatable && excused(subject, match)) continue
+      found.push(`${kind}に当たる表現があります：「${match[0].trim().slice(0, 60)}」${hint ? `（${hint}）` : ''}`)
       break
     }
   }

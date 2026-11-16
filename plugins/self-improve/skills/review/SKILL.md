@@ -12,7 +12,9 @@ allowed-tools: Bash(harness-note *) Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/chec
 
 `harness-note` が「--session を付けて呼んでください」と返したら（自動改善が別のセッションで実行中のとき）、`--session ${CLAUDE_SESSION_ID}` を付けて呼び直す。`--session` に付けられるのは、このセッションの ID だけ（ほかの値は、ガードが拒否する）。
 
-自動改善を呼び出したセッション（`/self-improve:auto-improve` を実行したセッション）では、確認の結果を記録できず、知らせも閉じない。確認は、別のセッションで行う。
+自動改善を呼び出したセッション（`/self-improve:auto-improve` を実行したセッション）では、確認の結果を記録できず、知らせも閉じない（`harness-note` が「見送り」と返す）。確認は、別のセッションで行う。自動改善が実行中のあいだも同じで、実行が終わってから行う。
+
+`harness-note` は、ほかのコマンドで包まずに直接呼ぶ。引数の文は単一引用符（`'…'`）で囲む（変数の展開、`$(…)`、引用の外の `{ } * ? [ ] ~` が入っていると、ガードが断る）。
 
 ## 1. 一覧を取る
 
@@ -24,7 +26,7 @@ JSON が返る。
 
 | 項目 | 中身 |
 | :- | :- |
-| `unreviewed` | 未確認の自動変更。`kind` は `trial_add`（試用ルールの追加）・`trial_edit`（再発による編集）・`skill_add`（試用 Skill）・`proposal`（承認待ちの案）・`draft`（対策を入れなかった記録）。`rule`・`skill` に中身、`draft` に失敗票の下書き |
+| `unreviewed` | 未確認の自動変更。`kind` は `trial_add`（試用ルールの追加）・`trial_edit`（再発による編集）・`skill_add`（試用 Skill）・`proposal`（承認待ちの案）・`draft`（対策を入れなかった記録）。`rule`・`skill` に中身、`draft` に失敗票の下書き。`manual: true` は、自動改善の実行の外で（`harness-note trial add` / `edit` で）入った試用ルール。誰が入れたものでも、ここで確認するまで未確認として数える |
 | `stale_trials` | 置いてから見直しの日数（初期値 60 日）を超えた試用 |
 | `bugs` | バグの候補（`dev/bug`） |
 | `preferences` | 3 セッション以上で重なった好みの候補 |
@@ -32,7 +34,7 @@ JSON が返る。
 | `auto_blocked` | 自動改善が、いま試用を追加していない理由（未確認の上限、試用の件数、常時ロードのルールの行数）。空なら、止まっていない |
 | `next_incident_id` | 次に振る失敗票の番号 |
 
-一覧を取ると、セッション開始時の知らせ（自動改善の報告の 1 行、「有効にしますか」など）は閉じられ、次のセッションからは出ない。未確認の件数の 1 行は、確認が済むまで出る。一覧を見ずに知らせだけ閉じたいと頼まれたら、`harness-note report close` を実行する。
+一覧を取ると、セッション開始時の知らせ（自動改善の報告の 1 行、「有効にしますか」など）は閉じられ、次のセッションからは出ない。未確認の件数の 1 行は、確認が済むまで出る。一覧を見ずに知らせだけ閉じたいと頼まれたら、`harness-note report close` を実行する。どちらも、どのセッションからの操作かを確かめられないとき（「--session <セッションID> の形で呼んでください」と返る）は閉じないので、`--session ${CLAUDE_SESSION_ID}` を付けて呼び直す。
 
 `auto_blocked` に理由があれば、最初に伝える（確認・昇格を進めるか、ルールを減らすと、また追加するようになる）。
 
@@ -45,14 +47,14 @@ JSON が返る。
 - 何が入ったか（試用ルールの 1 行、Skill の全文、案の中身）。`trial_edit` なら、直す前の文言（`rule.previous`）も
 - 根拠（下書きの「実際の結果」と「根拠」）。事象メモがあれば、内容が合っているかを確かめてもらう
 - 置いてからの日数、同じ原因がまた出ているか
-- `note` が付いていれば、そのまま伝える（自動改善の実行中に、ロックしたセッション以外から入った変更。誰が入れたものか分からないので、中身をよく見てもらう）
+- `note` が付いていれば、そのまま伝える（自動改善の実行の外で入った試用ルール。入れた覚えがあるかを尋ね、なければ中身をよく見てもらう）
 
 ### 試用ルール・試用 Skill（`trial_add` / `trial_edit` / `skill_add`）
 
 | 選ぶもの | すること |
 | :- | :- |
 | 残す | 下書き（`draft`）をもとに `harness/incidents/<next_incident_id>.md` を書く（`id` を番号に、`status: trial`）。`harness-note review done <変更ID> --decision keep --incident <INC-ID>`。失敗票をコミットする |
-| 直す | 文言を尋ね、`harness-note trial edit --key <原因キー> --text "<直した 1 行>"`。あとは「残す」と同じで、`--decision edit` で記録する。Skill を直したいときは、昇格して `.claude/skills/` で直す |
+| 直す | 文言を尋ね、`harness-note trial edit --key <原因キー> --text '<直した 1 行>'`。あとは「残す」と同じで、`--decision edit` で記録する。Skill を直したいときは、昇格して `.claude/skills/` で直す |
 | 消す | `harness-note review done <変更ID> --decision remove`。試用を消し、下書きを捨て、その原因を「断られた」と記録する（新しい候補が 2 件たまるまで、自動改善の対象から外れる）。同じ内容が Claude Code の自動メモリに残っていることがあるので、`/memory` も確かめるよう伝える |
 | 昇格する | 下の「昇格」のとおりに `.claude/rules/`（Skill は `.claude/skills/`）へ移してから、`harness-note review done <変更ID> --decision promote --path <移した先>` |
 
@@ -85,7 +87,7 @@ JSON が返る。
 
 ## 4. そのほかの確認
 
-- **見直しの時期が来た試用（`stale_trials`）**：1 件ずつ「昇格する／残す／消す」を尋ねる。人が入れた試用（未確認の一覧にないもの）を消すときは `harness-note trial remove --key <原因キー>`（Skill は `harness-note skill remove --name <名前>`）。昇格で消すときは `--keep-cause` を付ける。
+- **見直しの時期が来た試用（`stale_trials`）**：1 件ずつ「昇格する／残す／消す」を尋ねる。確認済みの試用（未確認の一覧にないもの）を消すときは `harness-note trial remove --key <原因キー>`（Skill は `harness-note skill remove --name <名前>`）。昇格で消すときは `--keep-cause` を付ける。
 - **バグの候補（`bugs`）**：1 件ずつ「Issue にする／今直す／捨てる」を尋ねる。Issue にしたか直したら `harness-note mark <候補ID> --status consumed`、捨てるなら `--status rejected`。
 - **好みの候補（`preferences`）**：本人に確かめ、合っていれば CLAUDE.md に 1 行で足す（確認が出る）。足したら `harness-note mark --key <原因キー> --status consumed`、違うなら `--status rejected`。
 - **似た原因キー**：`harness-note keys` を見て、同じ原因に別のキーが付いていれば、`harness-note rekey <今のキー> <まとめ先>` でまとめ直すか尋ねる。

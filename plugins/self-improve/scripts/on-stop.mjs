@@ -28,9 +28,10 @@ function askMessage(ctx, { remaining, episode }) {
     'なければ何も記録せず、説明も足さずに、そのまま終了してください。記録するのは、根拠がこのターンにあるものだけです。',
     '',
     '1. harness-note keys で既存の原因キーを確かめる。同じ原因なら、同じキーを使う',
-    `2. harness-note add --session ${ctx.sessionId} --category <カテゴリ> --key <原因キー> --text "<1行>"${episodeFlag}`,
+    `2. harness-note add --session ${ctx.sessionId} --category <カテゴリ> --key <原因キー> --text '<1行>'${episodeFlag}`,
     `   カテゴリ：${categories}`,
     '   原因キー：英小文字とハイフンの短い名前（例：route-placement）',
+    "   --text は、必ず単一引用符（'…'）で囲む（$ やバッククォートを、そのままの文字として渡すため）。文の中の ' は、「」などに言い換える",
     `3. このセッションで記録できるのは、あと ${remaining} 件。記録したら、ほかの作業はせずに終了する`,
   ].join('\n')
 }

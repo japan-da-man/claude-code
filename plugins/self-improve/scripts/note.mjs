@@ -35,7 +35,7 @@ import {
 import {
   DECISIONS, PROPOSAL_KINDS, ROOT_CAUSES, SIGNALS, acquireLock, addPending, autoGate, blockedReasons, closeNotices, computeTargets,
   decisionStats, intervalState, isAutoSession, listPending, loadAuto, markPendingTrial, readPending, readReport, registerChange,
-  registerDuringLock, rejectCause, releaseLock, removePending, reviewDone, reviewItems, summaryLine, unreviewed, updateAuto, writeReport,
+  registerManual, rejectCause, releaseLock, removePending, reviewDone, reviewItems, summaryLine, unreviewed, updateAuto, writeReport,
 } from './lib/auto.mjs'
 
 let stdinCache = null
@@ -120,6 +120,18 @@ function writerSession(ctx, flags) {
   return { session, lock, locked: Boolean(lock && lock.session_id === session.id) }
 }
 
+// 人だけの操作（試用の追加・編集・削除、候補の採否、下書きの破棄、確認の結果、知らせを閉じる）を、
+// 受け付けない理由。受け付けてよければ null。
+//   - 自動改善のセッション（ロック中）
+//   - lock を試みたセッション（ロックが外れたあと・始まらなかったあとも。同じセッションが「人」として書き込むのを防ぐ）
+//   - 自動改善の実行中（ロックしたセッション以外からでも。名乗りを確かめきれないため、終わるまで待ってもらう）
+function humanOnlyRefusal(ctx, writer) {
+  if (writer.locked) return HUMAN_ONLY
+  if (isAutoSession(ctx, writer.session.id)) return AFTER_AUTO
+  if (writer.lock) return DURING_LOCK
+  return null
+}
+
 const out = (text) => process.stdout.write(`${text}\n`)
 const json = (value) => out(JSON.stringify(value, null, 2))
 const short = (id) => String(id ?? '').slice(0, 8)
@@ -135,6 +147,9 @@ function fail(errors) {
 
 // 候補の状態の変更、キーのまとめ直し、下書きの破棄は、人が確認して行うもの。
 const HUMAN_ONLY = '見送り：自動改善のセッションでは、この操作は行いません。必要なら、報告に書いてください。'
+const AFTER_AUTO = '見送り：このセッションは、自動改善（auto-improve）を呼び出したセッションです。ロックが外れたあと・始まらなかったあとも、この操作は行いません。人が、新しいセッションで行ってください。'
+const NEEDS_SESSION = '見送り：どのセッションからの操作かを確かめられないので、知らせは閉じません。harness-note report close --session <セッションID> の形で呼んでください。'
+const DURING_LOCK = '見送り：自動改善が実行中です。この操作は、実行が終わってから（ロックが外れてから）行ってください。'
 
 function requireKey(key) {
   if (!validKey(key)) throw new UsageError(`原因キーは英小文字・数字をハイフンでつないだ 3〜50 文字にしてください（例：route-placement）：${key}`)
@@ -238,7 +253,8 @@ function cmdList(ctx, flags) {
 
 function cmdMark(ctx, positional, flags) {
   const r = makeReader(flags, ['key', 'status'])
-  if (writerSession(ctx, flags).locked) return refuse(HUMAN_ONLY)
+  const refusal = humanOnlyRefusal(ctx, writerSession(ctx, flags))
+  if (refusal) return refuse(refusal)
   const status = r.required('status')
   if (!['consumed', 'rejected'].includes(status)) throw new UsageError('--status は consumed か rejected です')
   const key = r.one('key')
@@ -261,7 +277,8 @@ function cmdMark(ctx, positional, flags) {
 
 function cmdRekey(ctx, positional, flags) {
   makeReader(flags, [])
-  if (writerSession(ctx, flags).locked) return refuse(HUMAN_ONLY)
+  const refusal = humanOnlyRefusal(ctx, writerSession(ctx, flags))
+  if (refusal) return refuse(refusal)
   const [from, to] = positional
   if (!from || !to) throw new UsageError('使い方：harness-note rekey <今のキー> <まとめ先のキー>')
   requireKey(to)
@@ -310,7 +327,14 @@ function cmdTrial(ctx, positional, flags) {
     for (const rule of rules) out(`${rule.line}  ［${rule.cause_key}、${rule.by}、${rule.days} 日、編集 ${rule.edits} 回］`)
     return 0
   }
-  const { session, lock, locked } = writerSession(ctx, flags)
+  const writer = writerSession(ctx, flags)
+  const { session, lock, locked } = writer
+  // ロックしたセッション以外からの追加・編集・削除は、人の操作。lock を試みたセッションと、自動改善の実行中は受け付けない
+  // （対象の限定・下書きが先・未確認の登録が効かないまま、試用が入るのを防ぐ）。
+  if (!locked && ['add', 'edit', 'remove'].includes(sub)) {
+    const refusal = humanOnlyRefusal(ctx, writer)
+    if (refusal) return refuse(refusal)
+  }
 
   if (sub === 'add' || sub === 'edit') {
     const r = makeReader(flags, ['key', 'text', 'ref'])
@@ -341,10 +365,11 @@ function cmdTrial(ctx, positional, flags) {
     if (locked) {
       registerChange(ctx, lock, { kind, key, ref: key })
       if (sub === 'add') markPendingTrial(ctx, key, `trial:rules/${key}`)
-    } else if (lock && text !== null) {
-      // 自動改善の実行中に、ロックしたセッション以外から入った試用。名乗りにかかわらず、人の確認に回す。
-      registerDuringLock(ctx, { kind, key, ref: key, session: session.id })
-      notes.push('自動改善の実行中に入った変更なので、未確認の自動変更として登録しました（/self-improve:review に出ます）。')
+    } else if (text !== null) {
+      // ロックしたセッション以外から入った試用。どのセッションが入れたかは確かめきれないので、名乗りにかかわらず、
+      // 人が review で確認するまで未確認として数える。
+      const change = registerManual(ctx, { kind, key, ref: key, session: session.id })
+      notes.push(`人が /self-improve:review で確認するまで、未確認として数えます（変更 ID：${change.id}）。`)
     }
     out([`試用ルールを${sub === 'add' ? '追加' : '更新'}しました：${renderRule(result.rule)}`, '次のセッション開始時から読み込まれます。', ...notes].join('\n'))
     return 0
@@ -393,7 +418,8 @@ function cmdSkill(ctx, positional, flags) {
     for (const s of skills) out(`- ${s.dir_name}  ［${s.cause_key}、${s.days} 日］ ${s.dir}`)
     return 0
   }
-  const { lock, locked } = writerSession(ctx, flags)
+  const writer = writerSession(ctx, flags)
+  const { lock, locked } = writer
 
   if (sub === 'add') {
     // 受け取るのは name・description・本文だけ。allowed-tools や hooks などを渡す口は作らない。
@@ -437,6 +463,8 @@ function cmdSkill(ctx, positional, flags) {
   if (sub === 'remove') {
     const r = makeReader(flags, ['name', 'keep-cause'])
     if (locked) return refuse('見送り：自動改善のセッションでは、試用を消しません。消す案は報告に書いてください。')
+    const refusal = humanOnlyRefusal(ctx, writer)
+    if (refusal) return refuse(refusal)
     let name = r.required('name')
     const prefix = `${ctx.repo.name}-`
     if (name.startsWith(prefix)) name = name.slice(prefix.length)
@@ -468,7 +496,8 @@ function cmdPending(ctx, positional, flags) {
       out(text)
       return 0
     }
-    if (writerSession(ctx, flags).locked) return refuse(HUMAN_ONLY)
+    const refusal = humanOnlyRefusal(ctx, writerSession(ctx, flags))
+    if (refusal) return refuse(refusal)
     out(removePending(ctx, key) ? `${key} の下書きを捨てました。` : `${key} の下書きはありません。`)
     return 0
   }
@@ -536,8 +565,12 @@ function cmdReport(ctx, positional, flags) {
   }
   if (sub === 'close') {
     makeReader(flags, [])
-    // 自動改善のセッションは、人に向けた知らせを閉じない。
-    if (isLocked(ctx, resolveSession(ctx, flags).id)) return refuse(HUMAN_ONLY)
+    // 自動改善のセッション（ロック中、lock を試みたセッション）は、人に向けた知らせを閉じない。
+    const writer = writerSession(ctx, flags)
+    const refusal = humanOnlyRefusal(ctx, writer)
+    if (refusal) return refuse(refusal)
+    // セッションを確かめられないとき（ID が推定）も、閉じない。自動改善のセッションかどうかを見分けられないため。
+    if (estimated(writer.session)) return refuse(NEEDS_SESSION)
     const closed = closeNotices(ctx)
     out(closed ? `セッション開始時の知らせを ${closed} 件閉じました。未確認の自動変更が残っているあいだは、件数の 1 行だけ出ます。` : '閉じる知らせはありません。')
     return 0
@@ -606,7 +639,7 @@ function cmdLock(ctx, flags) {
     ...(result.lock.targets.length ? result.lock.targets.map(describeTarget) : ['  なし（追加・編集はせず、報告だけ書いて終了してください）']),
     `未確認の自動変更：${g.unreviewed} 件（上限 ${g.max_unreviewed} 件）${full ? ' → 上限に達しています。追加も編集もせず、報告だけにしてください' : ''}`,
     `試用ルール ${g.trial_rules}/${g.max_trial_rules} 件、試用Skill ${g.trial_skills}/${g.max_trial_skills} 件、常時ロードのルール ${g.rule_lines}/${g.rule_limit} 行`,
-    'このセッションでは、Read・Grep・Glob・Skill と harness-note 以外のツールは拒否されます。harness-note には、毎回 --session を付けてください。最後に report write、そのあとに unlock を実行します。',
+    'このセッションでは、Read・Grep・Glob と harness-note 以外のツールは拒否されます。harness-note には、毎回 --session を付けてください。最後に report write、そのあとに unlock を実行します。',
   ].join('\n'))
   return 0
 }
@@ -618,7 +651,7 @@ function cmdUnlock(ctx, flags) {
   if (estimated(session)) return fail('セッション ID が分かりません。harness-note unlock --session <セッションID> の形で呼んでください')
   const result = releaseLock(ctx, session.id)
   if (flags.json) return json({ released: result.released, reason: result.reason ?? null }), 0
-  if (result.released) out('自動改善のロックを解除しました。このセッションでは、このあとも書き込みに確認が挟まります（自動改善を呼び出したセッションのため）。作業を続けるなら、新しいセッションで行ってください。')
+  if (result.released) out('自動改善のロックを解除しました。このセッションでは、このあとも書き込みに確認が挟まり、harness-note での試用の追加や確認の記録は見送りになります（自動改善を呼び出したセッションのため）。作業や確認を続けるなら、新しいセッションで行ってください。')
   else if (result.reason === 'no_report') return refuse('見送り：先に harness-note report write で実行の記録を書いてください。ロックを外せるのは、そのあとです。')
   else out(result.reason === 'other' ? '別のセッションのロックなので、解除しません。' : 'ロックはありません。')
   return 0
@@ -675,9 +708,11 @@ function cmdReview(ctx, positional, flags) {
   if (positional[0] !== 'done') {
     makeReader(flags, [])
     const items = reviewItems(ctx)
-    // 確認を開いたので、セッション開始時の知らせを閉じる（自動改善のセッションが開いたときは閉じない）。
+    // 確認を開いたので、セッション開始時の知らせを閉じる。自動改善のセッションが開いたとき、自動改善の実行中、
+    // セッションを確かめられないとき（ID が推定）は、閉じない。
     const session = resolveSession(ctx, flags)
-    if (!isLocked(ctx, session.id) && !isAutoSession(ctx, session.id)) closeNotices(ctx)
+    const quiet = isLocked(ctx, session.id) || isAutoSession(ctx, session.id) || activeLock(ctx) || estimated(session)
+    if (!quiet) closeNotices(ctx)
     return json(items), 0
   }
   const r = makeReader(flags, ['decision', 'incident', 'path'])
@@ -687,7 +722,10 @@ function cmdReview(ctx, positional, flags) {
   if (!DECISIONS.includes(decision)) throw new UsageError(`--decision は次のどれかです：${DECISIONS.join('、')}`)
   const incident = r.one('incident')
   if (incident && !INCIDENT_ID.test(incident)) throw new UsageError('--incident は失敗票の ID（INC-YYYY-NNNN）です')
-  if (writerSession(ctx, flags).locked) return refuse('見送り：自動改善のセッションでは、確認の結果を記録しません。確認は人が行います。')
+  const writer = writerSession(ctx, flags)
+  if (writer.locked) return refuse('見送り：自動改善のセッションでは、確認の結果を記録しません。確認は人が行います。')
+  const refusal = humanOnlyRefusal(ctx, writer)
+  if (refusal) return refuse(refusal)
   const result = reviewDone(ctx, id, decision, { incident, path: r.one('path') })
   if (!result.ok) return fail(result.errors)
   out([`${id}（${result.change.cause_key}）を確認済みにしました：${decision}`, ...result.notes].join('\n'))

@@ -8,9 +8,16 @@ import { NOTE_BIN } from './core.mjs'
 const newSegment = () => ({ words: [], redirects: [] })
 const SIMPLE_DELIMITER = /^[A-Za-z0-9_]+$/
 const SIMPLE_PARAMETER = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/
+// 引用の外にあると、bash が語を作り替える文字（ブレース展開、パス名展開、チルダ展開）。
+const SPECIAL_CHARS = '{}*?[]~'
 
 // コマンドを、区切り（; && || | & 改行 括弧）ごとのセグメントに分ける。
 // 各セグメントは words（引用を外した語）と redirects（op と target）を持つ。
+// 語とリダイレクト先には、次の印が付く。
+//   quoted   引用（'…'、"…"）を含む
+//   expands  変数の展開やコマンド置換を含む（$NAME、${NAME}、"…$NAME…"、`…`）
+//   special  引用の外に、bash が語を作り替える文字（{ } * ? [ ] ~）がある。ブレース展開・パス名展開・チルダ展開で、
+//            1 つの語が別の語や複数の語になりうる（{--session=x,--key} は 2 語になる）
 // 返す印：
 //   subst      コマンド置換（$( ) とバッククォート）がある
 //   uncertain  bash と読み方がずれうる書き方がある。$'…'、${…@…} のような単純でない展開、
@@ -29,7 +36,7 @@ export function parseBash(command, depth = 0) {
   const endWord = () => {
     if (!word) return
     if (pendingRedirect) {
-      segment.redirects.push({ op: pendingRedirect, target: word.text })
+      segment.redirects.push({ op: pendingRedirect, target: word.text, quoted: word.quoted, expands: word.expands, special: word.special })
       pendingRedirect = null
     } else {
       segment.words.push(word)
@@ -43,7 +50,7 @@ export function parseBash(command, depth = 0) {
     segment = newSegment()
   }
   const add = (ch, quoted = false) => {
-    if (!word) word = { text: '', quoted: false, expands: false }
+    if (!word) word = { text: '', quoted: false, expands: false, special: false }
     word.text += ch
     if (quoted) word.quoted = true
   }
@@ -217,6 +224,7 @@ export function parseBash(command, depth = 0) {
       pendingRedirect = op
     } else {
       add(ch)
+      if (SPECIAL_CHARS.includes(ch)) word.special = true
     }
   }
   if (state !== 'normal') uncertain = true
@@ -330,6 +338,29 @@ export function isHarnessNoteSegment(segment) {
   if (assigns.length) return false
   if (!isHarnessNoteCommand(segment)) return false
   return segment.redirects.every((r) => r.op === '<<<' || r.target === '/dev/null')
+}
+
+// ほかのコマンドで包んだ harness-note の呼び出しか（command harness-note …、env X=1 harness-note …、
+// node <プラグイン>/scripts/note.mjs …、bash <プラグイン>/bin/harness-note … など）。
+// 包むと、ガードは引数（--session）を確かめられず、許可ルール Bash(harness-note *) にも当たらない。
+// 見るのは、コマンドを実行する側のコマンドだけ（cat や git add のように、ファイルとして触るだけのものは見ない）。
+const RUNNERS = new Set([
+  'command', 'builtin', 'env', 'exec', 'nohup', 'time', 'sudo', 'nice', 'timeout', 'setsid', 'stdbuf', 'xargs', 'watch',
+  'node', 'nodejs', 'bun', 'deno', 'npx', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'fish', 'source', '.',
+])
+const NOTE_SCRIPT = /(?:^|\/)scripts\/note\.mjs$/
+// isNoteScript は、scripts/note.mjs で終わるパスが、このプラグインのスクリプトかどうかを確かめる関数
+// （ガードが、隣に bin/harness-note があるかで確かめる。渡さなければ、すべて当たりと見なす）。
+export function isWrappedHarnessNote(segment, isNoteScript = () => true) {
+  if (isHarnessNoteCommand(segment)) return false
+  const { name, args } = commandOf(segment)
+  // 別の場所の harness-note や、スクリプトを直接実行する形（./bin/harness-note、…/scripts/note.mjs）も、直接の呼び出しとは見なさない。
+  // 名前だけ（harness-note）か、このプラグインの bin/harness-note で呼ばれたものだけを、引数まで確かめて通す。
+  if (basename(name) === 'harness-note' || (NOTE_SCRIPT.test(name) && isNoteScript(name))) return true
+  if (!RUNNERS.has(basename(name))) return false
+  // command -v harness-note（あるかどうかを確かめるだけ）は通す。
+  if (basename(name) === 'command' && /^-[vV]$/.test(args[0] ?? '')) return false
+  return args.some((a) => basename(a) === 'harness-note' || (NOTE_SCRIPT.test(a) && isNoteScript(a)))
 }
 
 export function isHarnessNoteOnly(command) {

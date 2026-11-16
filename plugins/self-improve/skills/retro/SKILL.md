@@ -62,7 +62,7 @@ allowed-tools: Bash(harness-note *) Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/chec
 
 | 変換先 | やり方 |
 | :- | :- |
-| 文章ルール（試用） | `harness-note trial add --key <原因キー> --text "<命令形の 1 行>" --ref INC-YYYY-NNNN`。リポジトリの外（プラグインのデータ領域）に置かれ、次のセッション開始時から読み込まれる。失敗票は `status: trial`、`control: trial:rules/<原因キー>`、`applied_by: human`、`trial_started_at` に今日 |
+| 文章ルール（試用） | `harness-note trial add --key <原因キー> --text '<命令形の 1 行>' --ref INC-YYYY-NNNN`。リポジトリの外（プラグインのデータ領域）に置かれ、次のセッション開始時から読み込まれる。失敗票は `status: trial`、`control: trial:rules/<原因キー>`、`applied_by: human`、`trial_started_at` に今日。試用ルールは、誰が入れたものでも、人が確認するまで「未確認」として数えられる（出力に変更 ID が出る）。この場で文言を見せて承認を得ているなら、続けて `harness-note review done <変更ID> --decision keep --incident INC-YYYY-NNNN` で確認済みにする。承認を得ていなければ、そのままにする（次のセッション開始時に 1 行出て、`/self-improve:review` で確認できる） |
 | ガード | `harness/guards.json` の `rules` に `{ "id", "pattern" または "path", "message" }` を足す。**message には直し方を 1 行**書く（例：`routes から db を直接 import しています。services/ 経由にしてください（INC-2026-0012）`）。`harness/guards.test.json` に「止めるべき入力」と「止めてはいけない入力」を 1 件ずつ足し、`node ${CLAUDE_PLUGIN_ROOT}/scripts/test-guards.mjs <repo>` が通ることを確かめる |
 | 検証コマンド | `harness/config.json` の `verify` に `{ "name", "run" }` を足す。足す前に、問題のある状態で `node ${CLAUDE_PLUGIN_ROOT}/scripts/verify.mjs <repo>` を 1 回実行し、実際に失敗することを見る |
 | Skill | `.claude/skills/<名前>/SKILL.md` に手順を書く。スクリプト化は、人が承認してから |
@@ -73,6 +73,8 @@ allowed-tools: Bash(harness-note *) Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/chec
 - ガード・検証コマンド・Skill を足したら、失敗票を `status: converted`、`control` に足した制御のパスにする。
 - 材料にした改善候補は、数え直されないようにする：`harness-note mark --key <原因キー> --status consumed`。
 - 文章ルールの形は「命令形 1 行＋失敗票 ID」（例：`- ルート定義は src/routes/ に置く（INC-2026-0007）`）。ID は harness-note が付ける。
+- `harness-note` は、ほかのコマンドで包まずに直接呼ぶ。引数の文は単一引用符（`'…'`）で囲む（変数の展開、`$(…)`、引用の外の `{ } * ? [ ] ~` が入っていると、ガードが断る）。
+- 「見送り」と返ったら、従う。自動改善が実行中のあいだと、自動改善（`/self-improve:auto-improve`）を呼び出したセッションでは、試用の追加・編集・削除、候補の採否、確認の結果の記録はできない。実行が終わってから、新しいセッションで行うよう伝える。
 
 ## 5. コミットする
 

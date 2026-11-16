@@ -14,7 +14,7 @@ import {
 import { pruneCandidates, validKey } from './lib/candidates.mjs'
 import { INCIDENT_REF, validateRuleText } from './lib/content.mjs'
 import {
-  blockedReasons, computeTargets, intervalState, loadAuto, noticeOpen, recordShown, reportExtras, reportHasContent, reportOpen, summaryLine, unreviewed,
+  blockedState, computeTargets, intervalState, loadAuto, noticeOpen, recordShown, reportExtras, reportHasContent, reportOpen, summaryLine, unreviewed,
 } from './lib/auto.mjs'
 import { listRules, renderRule } from './lib/trial.mjs'
 import { pruneEpisodes } from './episode.mjs'
@@ -117,7 +117,9 @@ function startupNotices(ctx, recording) {
   const inFresh = pending.filter((c) => fresh.some((r) => r.name === c.report)).length
   if (pending.length && (fresh.length === 0 || pending.length > inFresh)) {
     const oldest = Math.max(...pending.map((c) => daysBetween(c.at)))
-    lines.push(`未確認の自動変更${pending.length}件。いちばん古いものは${oldest}日前。/self-improve:review で確認できます。`)
+    // 人が入れた試用ルールも、review で確認するまで数える（誰が入れたかの名乗りには頼らない）。
+    const manual = pending.filter((c) => c.manual).length
+    lines.push(`未確認の自動変更${pending.length}件${manual ? `（うち、自動改善の実行の外で入った試用ルール${manual}件）` : ''}。いちばん古いものは${oldest}日前。/self-improve:review で確認できます。`)
   }
 
   // 自動改善の予定。
@@ -132,8 +134,11 @@ function startupNotices(ctx, recording) {
   }
   // 自動改善が追加をやめている理由（有効にしているあいだ、理由が続くかぎり出す）。
   if (interval.enabled) {
-    const reasons = blockedReasons(ctx, state)
-    if (reasons.length) lines.push(`自動改善は、いま試用を追加していません：${reasons.join('。')}。/self-improve:review で確認・昇格するか、ルールを減らすと、また追加します。`)
+    const blocked = blockedState(ctx, state)
+    if (blocked.scope) {
+      const what = blocked.scope === 'rules' ? '試用ルールを追加していません（試用 Skill は追加できます）' : '試用を追加していません'
+      lines.push(`自動改善は、いま${what}：${blocked.reasons.join('。')}。/self-improve:review で確認・昇格するか、ルールを減らすと、また追加します。`)
+    }
   }
 
   // 見直しの時期が来た試用（初期値 60 日）。

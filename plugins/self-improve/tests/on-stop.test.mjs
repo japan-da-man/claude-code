@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { at, dataFiles, events, makeEnv, note, readData, repoId, session } from './helpers.mjs'
+import { ROOT, at, dataFiles, decisionOf, events, guardRun, makeEnv, note, readData, repoId, session } from './helpers.mjs'
 
 const write = (t, s, promptId, file = 'src/a.ts', minute = 1) => s.used(promptId, 'Write', { file_path: join(t.repo, file), content: 'x' }, { now: at(minute) })
 // Stop の hook の結果：検証の失敗（終了コード 2）、候補の確認（additionalContext）、人への知らせ（systemMessage）、何もなし
@@ -34,7 +35,21 @@ test('変更があったターン：改善候補の確認を 1 回だけ頼む�
   assert.deepEqual(first.json, { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: ask(first) } })
   assert.match(ask(first), /ターン終了時の確認です/)
   assert.match(ask(first), /harness-note keys で既存の原因キーを確かめる/)
-  assert.match(ask(first), /harness-note add --session sess-1 --category <カテゴリ> --key <原因キー> --text "<1行>"/)
+  assert.match(ask(first), /harness-note add --session sess-1 --category <カテゴリ> --key <原因キー> --text '<1行>'/)
+  // ひな形どおりの add は、ガードを通る。$ やバッククォートを含む文でも、単一引用符の中なら、そのままの文字として渡る
+  const template = /^2\. (harness-note add .*)$/m.exec(ask(first))[1]
+  const fill = (text) => template.replace('<カテゴリ>', 'dev/mistake').replace('<原因キー>', 'null-user-name').replace('<1行>', text)
+  for (const text of ['ルート定義は src/routes/ に置く', '`user.name` が null のとき $HOME の設定を読んで落ちる', 'glob（src/**/*.ts）と {a,b} と ~ は、そのまま書ける']) {
+    assert.equal(decisionOf(guardRun(t, 'sess-1', 'Bash', { command: fill(text) }, { now: at(3) })), 'allow', text)
+  }
+  const recorded = spawnSync('bash', ['-c', fill('`user.name` が null のとき $HOME の設定を読んで落ちる')], { cwd: t.repo, env: { ...t.env, PATH: `${join(ROOT, 'bin')}:${t.env.PATH}`, HARNESS_NOW: at(3) }, encoding: 'utf8' })
+  assert.match(recorded.stdout, /記録しました/)
+  assert.equal(note(t, ['list', '--json']).json[0].text, '`user.name` が null のとき $HOME の設定を読んで落ちる')
+  // 二重引用で書くと、bash が展開するので、ガードが断る。この拒否（harness-note の書式の検査）は、失敗の信号に数えない
+  const doubled = guardRun(t, 'sess-1', 'Bash', { command: fill('x').replace("'x'", '"`user.name` が null のとき落ちる"') }, { now: at(3) })
+  assert.equal(doubled.status, 2)
+  assert.match(doubled.stderr, /ルール：harness-note-call/)
+  assert.deepEqual(events(t).filter((e) => e.type === 'guard_denied'), [])
   assert.match(ask(first), /dev\/bug \/ dev\/cause \/ dev\/mistake \/ dev\/other \/ behavior\/preference/)
   assert.match(ask(first), /あと 3 件/)
   assert.match(ask(first), /なければ何も記録せず/)
@@ -80,7 +95,7 @@ test('信号があったターン：事象メモを機械的に作り、確認�
   assert.equal(files.length, 1)
   const id = files[0].split('/')[1].replace('.md', '')
   assert.match(id, /^ep-20261116-090000-sess-1-[0-9a-f]{6}$/)
-  assert.match(ask(run), new RegExp(`--text "<1行>" --episode ${id}`))
+  assert.match(ask(run), new RegExp(`--text '<1行>' --episode ${id}`))
 
   const memo = readData(t, 'episodes', files[0])
   assert.match(memo, /^session_id: sess-1$/m)

@@ -180,7 +180,7 @@ test('プラグイン自身のファイル、データ領域、試用 Skill へ�
   assert.equal(decision(pre(t, 'Edit', { file_path: join(t.claudeHome, 'skills/mine/SKILL.md') })), 'allow')
 })
 
-test('自動改善のセッション（ロック中）：通すのは Read・Grep・Glob・Skill と harness-note だけ。それ以外はすべて deny（確認は出さない）', () => {
+test('自動改善のセッション（ロック中）：通すのは Read・Grep・Glob と harness-note だけ（Skill は auto-improve の読み直しだけ）。それ以外はすべて deny（確認は出さない）', () => {
   const t = makeEnv({ config: AUTO })
   note(t, ['lock', '--session', 'auto-1'], { now: at(0) })
   const opts = { now: at(5) }
@@ -200,6 +200,11 @@ test('自動改善のセッション（ロック中）：通すのは Read・Gre
     ['CronCreate', { schedule: '* * * * *' }],
     ['WebFetch', { url: 'https://example.com' }],
     ['TodoWrite', { todos: [] }],
+    // Skill は、本文の !`cmd` や context: fork で、PreToolUse の外でコマンドやサブエージェントを動かしうる。読み直し用の 1 つだけ通す
+    ['Skill', { skill: 'some-plugin:deploy', args: 'production' }],
+    ['Skill', { skill: 'self-improve:review' }],
+    ['Skill', { skill: 'auto-improve' }],
+    ['Skill', {}],
     // Bash は、harness-note の単純な呼び出しだけ。読むだけのコマンドも通さない（読むのは Read / Grep / Glob）
     ['Bash', { command: 'npm test' }],
     ['Bash', { command: 'cat CLAUDE.md && ls .claude/rules' }],
@@ -214,12 +219,29 @@ test('自動改善のセッション（ロック中）：通すのは Read・Gre
     ['Bash', { command: 'python3 -c "open(\'x\',\'w\').write(\'y\')"' }],
     ['Bash', { command: `${NOTE} status` }],
     ['Bash', { command: '' }],
+    // ヒアストリングやリダイレクト先の語の展開も見る（環境変数の値を、記録に写せないように）
+    ['Bash', { command: 'harness-note report write --session auto-1 --body - <<< "$HOME"' }],
+    ['Bash', { command: 'harness-note report write --session auto-1 --body - <<< $ANTHROPIC_API_KEY' }],
+    ['Bash', { command: 'harness-note keys --session auto-1 2> /dev/null <<< ~' }],
+    // 引用の外の { } * ? [ ] ~ は、bash が語を作り替える。{--session=zz,--key} は 2 語になり、後ろの --key が本物の --session を値として飲み込む
+    ['Bash', { command: 'harness-note mark {--session=zz,--key} --session auto-1 --key route-placement --status rejected' }],
+    ['Bash', { command: 'harness-note trial add {--session=zz,--key} --session auto-1 --key free-key --text x' }],
+    ['Bash', { command: 'harness-note trial add --session auto-1 --key some-key --text x{a,b}' }],
+    ['Bash', { command: 'harness-note pending show --session auto-1 *' }],
+    ['Bash', { command: 'harness-note pending show --session auto-1 route-?lacement' }],
+    ['Bash', { command: 'harness-note pending show --session auto-1 [r]oute-placement' }],
+    ['Bash', { command: 'harness-note skill add --session auto-1 --key some-key --name x --description d --file ~/notes.md' }],
+    // ほかのコマンドで包んだ呼び出し
+    ['Bash', { command: 'command harness-note keys --session auto-1' }],
+    ['Bash', { command: 'env harness-note keys --session auto-1' }],
+    ['Bash', { command: `node ${join(ROOT, 'scripts/note.mjs')} keys --session auto-1` }],
+    ['Bash', { command: './harness-note keys --session auto-1' }],
   ]
   for (const [tool, input] of denied) {
     const run = pre(t, tool, input, opts, 'auto-1')
     assert.equal(run.status, 2, `${tool} ${JSON.stringify(input)}`)
     assert.equal(run.stdout, '', JSON.stringify(input))
-    assert.match(run.stderr, /自動改善のセッションでは、Read・Grep・Glob・Skill と harness-note 以外のツールは使えません/)
+    assert.match(run.stderr, /自動改善のセッションでは、Read・Grep・Glob と harness-note 以外のツールは使えません/)
   }
   // レビューで見つかった「読むだけに見えて書ける」コマンドは、どれも通さない
   for (const [name, command] of SNEAKY_WRITES) assert.equal(bash(t, command, opts, 'auto-1').status, 2, name)
@@ -233,6 +255,10 @@ test('自動改善のセッション（ロック中）：通すのは Read・Gre
     ['Bash', { command: 'harness-note list --session=auto-1 --key route-placement' }],
     ['Bash', { command: 'harness-note trial add --session auto-1 --key route-placement --text "ルートは src/routes/ に置く"' }],
     ['Bash', { command: "harness-note trial add --session auto-1 --key cost-note --text '見積もりは $5 単位で書く'" }],
+    // 引用の中なら、{ } * ? [ ] ~ はそのままの文字
+    ['Bash', { command: "harness-note trial add --session auto-1 --key glob-note --text 'テストは src/**/*.test.ts に置く（{unit,e2e} は分ける）'" }],
+    ['Bash', { command: 'harness-note trial add --session auto-1 --key home-note --text "設定は ~/.config ではなく [app] の下に置く"' }],
+    ['Bash', { command: "harness-note report write --session auto-1 --body - <<< '検討の記録 $HOME は展開されない'" }],
     ['Bash', { command: 'harness-note pending add --session auto-1 --key route-placement --root-cause knowledge \\\n  --asked "API を足す" --expected "src/routes/ に置く" --actual "src/api/ に置いた"' }],
     ['Bash', { command: "harness-note report write --session auto-1 --body - <<'EOF'\n## 検討の記録\n- route-placement: 候補 2 件 > 試用ルール; 既存のルールと矛盾なし $(x)\nEOF\nharness-note unlock --session auto-1" }],
     ['Bash', { command: `${NOTE} status --session auto-1` }],
@@ -295,6 +321,69 @@ test('auto-improve のスキルに書いたコマンドは、そのままの形�
     assert.equal(decision(bash(t, command, {}, 'auto-1')), 'deny', command)
     assert.equal(decision(bash(t, fill(command, 'human-1'), {}, 'auto-1')), 'deny', command)
   }
+})
+
+test('中-A の再現：ブレース展開で --session の照合を外した呼び出しは、ガードが断り、harness-note も人だけの操作を見送る', () => {
+  const t = makeEnv({ config: AUTO })
+  startAuto(t, ['route-placement'])
+  const tricks = [
+    'harness-note mark {--session=zz,--key} --session auto-1 --key route-placement --status rejected',
+    "harness-note trial add {--session=zz,--key} --session auto-1 --key free-key --text '対象外の 1 行'",
+    'harness-note trial remove {--session=zz,--key} --session auto-1 --key route-placement',
+  ]
+  for (const command of tricks) {
+    // bash は、この語を 2 語に展開する（ガードが読む語の数と食い違う）
+    assert.equal(decision(bash(t, command, { now: at(61) }, 'auto-1')), 'deny', command)
+    // ガードがなくても（hook が動かない、引き渡しの環境変数が届かない）、自動改善の実行中は、人だけの操作を受け付けない
+    const run = spawnSync('bash', ['-c', command], { cwd: t.repo, env: { ...t.env, PATH: `${join(ROOT, 'bin')}:${t.env.PATH}`, HARNESS_NOW: at(62) }, encoding: 'utf8' })
+    assert.match(run.stdout, /^見送り：自動改善が実行中です/, command)
+  }
+  assert.deepEqual(note(t, ['trial', 'list', '--json']).json, [])
+  assert.equal(note(t, ['list', '--key', 'route-placement', '--json']).json.length, 2)
+  // 通常のセッションでも、harness-note の引数の、引用の外の { } * ? [ ] ~ は断る
+  for (const command of ['harness-note add {--session=s2,--category} --session human-1 --category dev/mistake --key some-key --text x', 'harness-note pending show route-*']) {
+    const run = bash(t, command, { now: at(63) }, 'human-1')
+    assert.equal(run.status, 2, command)
+    assert.match(run.stderr, /引用の外の \{ \} \* \? \[ \] ~ は使えません.*ルール：harness-note-call/)
+  }
+})
+
+test('通常のセッションでも、ほかのコマンドで包んだ harness-note の呼び出しは断る（引数の --session を確かめられないため）', () => {
+  const t = makeEnv()
+  knownSession(t, 'human-1')
+  const script = join(ROOT, 'scripts/note.mjs')
+  const wrapped = [
+    'command harness-note add --session human-2 --category dev/mistake --key some-key --text x',
+    'env HARNESS_SESSION_ID=human-2 harness-note add --category dev/mistake --key some-key --text x',
+    'env -i harness-note keys',
+    'exec harness-note keys',
+    'nohup harness-note keys',
+    'timeout 5 harness-note keys',
+    'xargs harness-note add --session',
+    `node ${script} add --session human-2 --category dev/mistake --key some-key --text x`,
+    'node plugins/self-improve/scripts/note.mjs keys',
+    `bash ${NOTE} keys`,
+    `cd /tmp && command ${NOTE} keys`,
+    // 別の場所にある同じ名前のコマンドや、スクリプトを直接実行する形も、直接の呼び出しとは見なさない
+    './harness-note add --session human-2 --category dev/mistake --key some-key --text x',
+    '/opt/other-copy/bin/harness-note keys',
+    `${script} keys`,
+  ]
+  for (const command of wrapped) {
+    const run = bash(t, command, {}, 'human-1')
+    assert.equal(run.status, 2, command)
+    assert.match(run.stderr, /harness-note は、ほかのコマンド（command、env、node、bash など）で包まずに、パスも付けずに/, command)
+  }
+  // 書式の検査による拒否は、失敗の信号に数えない
+  assert.deepEqual(events(t), [])
+  // 呼び出しではないもの（ファイルとして触るだけ、あるかどうかを確かめるだけ）は通す
+  writeFiles(t.repo, { 'scripts/note.mjs': '// このリポジトリ自身の、別のスクリプト\n' })
+  for (const command of ['command -v harness-note', 'which harness-note', `cat ${script}`, `ls -l ${NOTE}`, 'git add plugins/self-improve/scripts/note.mjs', 'node scripts/note.mjs build', 'echo "harness-note の使い方"']) {
+    assert.equal(decision(bash(t, command, {}, 'human-1')), 'allow', command)
+  }
+  // 直接の呼び出しは、これまでどおり通る
+  assert.equal(decision(bash(t, 'harness-note keys', {}, 'human-1')), 'allow')
+  assert.equal(decision(bash(t, `${NOTE} keys --session human-1`, {}, 'human-1')), 'allow')
 })
 
 test('ふだんのセッションでも、harness-note でほかのセッションを名乗ることはできない', () => {
@@ -418,6 +507,60 @@ test('harness/config.json がないリポジトリと HARNESS_DISABLE=1 では�
   // git リポジトリの外でも何もしない
   const outside = runHook('guard-harness.mjs', { session_id: 's', cwd: none.base, tool_name: 'Bash', tool_input: { command: 'git push -f' } }, none)
   assert.equal(outside.status, 0)
+})
+
+test('早い判定：することがないと言い切れるときだけ、lib を読み込まずに抜ける（迷うときは先へ進む）', async () => {
+  const { nothingToDo } = await import('../scripts/guard-harness.mjs')
+  const t = makeEnv({ config: AUTO })
+  const none = makeEnv({ initialized: false })
+  const saved = { ...process.env }
+  const withEnv = (env, fn) => {
+    for (const key of ['HARNESS_DATA_DIR', 'CLAUDE_PLUGIN_DATA', 'CLAUDE_PROJECT_DIR', 'HARNESS_DISABLE', 'HARNESS_TEST']) delete process.env[key]
+    Object.assign(process.env, env)
+    try {
+      return fn()
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]
+      Object.assign(process.env, saved)
+    }
+  }
+  const input = (tool, session = 'human-1', cwd = t.repo) => ({ session_id: session, cwd, tool_name: tool, tool_input: {} })
+  const data = { HARNESS_DATA_DIR: t.data, HARNESS_TEST: '1' }
+  withEnv(data, () => {
+    // init していない場所では、どのツールでも抜ける
+    for (const tool of ['Read', 'Bash', 'Write', 'mcp__x__y']) assert.equal(nothingToDo(input(tool, 'human-1', none.repo)), true, tool)
+    // セッションを始めた場所（CLAUDE_PROJECT_DIR）が init 済みなら、cwd がどこでも抜けない
+    process.env.CLAUDE_PROJECT_DIR = t.repo
+    assert.equal(nothingToDo(input('Bash', 'human-1', none.repo)), false)
+    delete process.env.CLAUDE_PROJECT_DIR
+    // init 済み：ファイルの書き込みと Bash は、必ず先へ進む。ほかのツールは、ロックも lock を試みた記録もなければ抜ける
+    for (const tool of ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']) assert.equal(nothingToDo(input(tool)), false, tool)
+    for (const tool of ['Read', 'Grep', 'Glob', 'Skill', 'Agent', 'mcp__github__create_pull_request']) assert.equal(nothingToDo(input(tool)), true, tool)
+    assert.equal(nothingToDo(input('Read', 'human-1', join(t.repo, 'harness'))), true)
+  })
+  // データ領域の場所が環境変数から分からないときは、言い切らない
+  withEnv({}, () => assert.equal(nothingToDo(input('Read')), false))
+  withEnv({ HARNESS_DATA_DIR: 'relative/path' }, () => assert.equal(nothingToDo(input('Read')), false))
+  withEnv({ CLAUDE_PLUGIN_DATA: t.data }, () => assert.equal(nothingToDo(input('Read')), true))
+  withEnv({ ...data, HARNESS_DISABLE: '1' }, () => assert.equal(nothingToDo(input('Bash')), true))
+
+  // ロックがあるあいだは、どのセッションのどのツールも先へ進む（ロック中のセッションは、通すツールの一覧で判定するため）
+  startAuto(t, ['route-placement'])
+  withEnv(data, () => {
+    for (const session of ['auto-1', 'human-1']) assert.equal(nothingToDo(input('Read', session)), false, session)
+  })
+  // ロックが外れたあと：lock を試みたセッションは先へ進む（外へ働きかけるツールに確認を挟むため）。ほかのセッションは抜ける
+  finishAuto(t)
+  withEnv(data, () => {
+    assert.equal(nothingToDo(input('mcp__github__create_pull_request', 'auto-1')), false)
+    assert.equal(nothingToDo(input('mcp__github__create_pull_request', 'human-1')), true)
+  })
+  // 判定そのものは、早い判定を入れる前と同じ
+  assert.equal(decision(pre(t, 'mcp__github__create_pull_request', { title: 'x' }, {}, 'auto-1')), 'ask')
+  assert.equal(decision(pre(t, 'mcp__github__create_pull_request', { title: 'x' }, {}, 'human-1')), 'allow')
+  // 読めないロックのファイルがあるときも、先へ進む（拒否の側に倒すため）
+  writeFileSync(join(t.data, 'state', repoId(t), 'lock.json'), '{"session_id":')
+  withEnv(data, () => assert.equal(nothingToDo(input('Read')), false))
 })
 
 test('壊れた入力でも、作業は止めない', () => {

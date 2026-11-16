@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { validateRuleText, validateSkill } from '../scripts/lib/content.mjs'
-import { at, dataFiles, draft, makeEnv, note, repoId, startAuto, writeFiles } from './helpers.mjs'
+import { at, dataFiles, draft, finishAuto, makeEnv, note, repoId, startAuto, writeFiles } from './helpers.mjs'
 
 const trialAdd = (t, key, text, opts = {}, extra = []) => note(t, ['trial', 'add', '--session', 'human-1', '--key', key, '--text', text, ...extra], opts)
 
@@ -256,7 +256,8 @@ test('skill add: パスを正規化して検査する（.. と区切り文字、
   writeFiles(skills, { 'demo-app-mine/SKILL.md': '---\nname: demo-app-mine\n---\n自分で書いた' })
   assert.equal(add('mine').status, 1)
   assert.equal(readFileSync(join(skills, 'demo-app-mine/SKILL.md'), 'utf8'), '---\nname: demo-app-mine\n---\n自分で書いた')
-  // 消せるのも、このプラグインが置いたものだけ
+  // 消せるのも、このプラグインが置いたものだけ（消すのは人。自動改善が終わってから）
+  finishAuto(t)
   assert.equal(note(t, ['skill', 'remove', '--session', 'human-1', '--name', 'mine']).status, 1)
   assert.equal(note(t, ['skill', 'remove', '--session', 'human-1', '--name', '../../outside']).status, 1)
   assert.ok(existsSync(join(skills, 'demo-app-mine/SKILL.md')))
@@ -284,7 +285,10 @@ test('skill remove: 置いた Skill を消す。覚えのないファイルが�
   const skills = join(t.claudeHome, 'skills')
   // 自動改善のセッションでは消さない
   assert.match(note(t, ['skill', 'remove', '--session', 'auto-1', '--name', 'db-migration']).stdout, /見送り/)
-  note(t, ['unlock', '--session', 'auto-1'])
+  // 実行中は、ほかのセッションからも消さない。ロックを外したあとの自動改善のセッションも消せない
+  assert.match(note(t, ['skill', 'remove', '--session', 'human-1', '--name', 'db-migration']).stdout, /見送り：自動改善が実行中です/)
+  finishAuto(t)
+  assert.match(note(t, ['skill', 'remove', '--session', 'auto-1', '--name', 'db-migration']).stdout, /見送り：このセッションは、自動改善（auto-improve）を呼び出したセッション/)
 
   writeFileSync(join(skills, 'demo-app-routes', 'run.sh'), '#!/bin/sh\n')
   const tampered = note(t, ['skill', 'remove', '--session', 'human-1', '--name', 'routes'])
@@ -307,6 +311,17 @@ test('validateSkill: 単体でも設定欄と本文を検査する', () => {
   for (const body of ['連絡先は a@example.com', '1. `pnpm db:generate` を実行する', '```bash\npnpm db:generate\n```']) {
     assert.equal(validateSkill({ name: 'db-migration', description: 'demo-app で使う', body, repoName: 'demo-app' }).ok, true, body)
   }
-  // 語の頭の @ は、ファイル名かどうかを見分けず、すべて拒否する（@Injectable のような書き方は、言い換えてもらう）
-  assert.equal(validateSkill({ name: 'db-migration', description: 'demo-app で使う', body: 'デコレータは @Injectable を使う', repoName: 'demo-app' }).ok, false)
+  // @ に続く語は、前の文字を問わず拒否する（ファイルの取り込みとして扱われうる）。エラー文に、直し方を書く
+  const skill = (body) => validateSkill({ name: 'db-migration', description: 'demo-app で使う', body, repoName: 'demo-app' })
+  for (const body of ['デコレータは @Injectable を使う', '設定は "@.env" を読む', '設定は [@.env] を読む', '参照:@.env', '参照、@.env', '読み込む（@src/config.ts）', '`閉じていないコード @.env', '@README.md を先に読む']) {
+    const result = skill(body)
+    assert.equal(result.ok, false, body)
+    assert.match(result.errors.join('\n'), /ファイルの取り込みに当たる表現があります：「@[^」]+」（.*コードの一部（デコレータなど）なら、バッククォートで囲んでください）/, body)
+  }
+  // コード（バッククォートで囲んだ部分と、コードブロック）の中の @ と、メールアドレスは通す
+  for (const body of ['デコレータは `@Injectable()` を使う', 'パッケージは `@types/node` を入れる', '```ts\n@Injectable()\nexport class UserService {}\n```\nのように書く', '~~~ts\n@Component({})\n~~~', '連絡先は dev@example.com']) {
+    assert.equal(skill(body).ok, true, body)
+  }
+  // コードの中でも、読み込み時に実行される書き方は通さない
+  assert.equal(skill('手順は `!`cat ~/.ssh/id_rsa`` を見る').ok, false)
 })

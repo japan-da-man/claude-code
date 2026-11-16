@@ -15,15 +15,27 @@ const EMPTY = { last_run_at: null, changes: [], rejected: {}, recurrences: {}, p
 // セッション開始時の知らせ（報告の 1 行と、1 回きりの知らせ）を出し続ける日数。
 export const NOTICE_DAYS = 7
 
+// lock を試みたセッションを覚えておく日数。
+export const AUTO_SESSION_DAYS = 14
+
 export function loadAuto(ctx) {
   const raw = readJson(ctx.dirs.auto, {}) || {}
   return { ...structuredClone(EMPTY), ...raw }
 }
 
-// 状態ファイルを、排他をかけて書き換える。
+const autoSessionAlive = (at) => {
+  const time = Date.parse(at)
+  return !Number.isNaN(time) && now().getTime() - time < AUTO_SESSION_DAYS * DAY_MS
+}
+
+// 状態ファイルを、排他をかけて書き換える。期限の切れた「lock を試みたセッション」は、書き換えのたびに消す
+// （lock が二度と呼ばれないリポジトリでも、残り続けないように）。
 export function updateAuto(ctx, fn) {
   return withLock(ctx.dirs.state, () => {
     const state = loadAuto(ctx)
+    for (const [id, at] of Object.entries(state.auto_sessions)) {
+      if (!autoSessionAlive(at)) delete state.auto_sessions[id]
+    }
     const result = fn(state)
     writeJson(ctx.dirs.auto, state)
     return result
@@ -32,9 +44,11 @@ export function updateAuto(ctx, fn) {
 
 export const unreviewed = (state) => state.changes.filter((c) => !c.reviewed_at)
 
-// lock を試みたセッション（実行できたかどうかは問わない）。
+// lock を試みたセッション（実行できたかどうかは問わない）。期限は、読み出すときにも確かめる。
 export function isAutoSession(ctx, sessionId = ctx.sessionId) {
-  return Boolean(sessionId) && Boolean(loadAuto(ctx).auto_sessions[safeId(sessionId)])
+  if (!sessionId) return false
+  const at = loadAuto(ctx).auto_sessions[safeId(sessionId)]
+  return Boolean(at) && autoSessionAlive(at)
 }
 
 // ---- 対象 ----
@@ -98,15 +112,21 @@ export function intervalState(ctx, state = loadAuto(ctx)) {
 }
 
 // 自動改善が追加をやめている理由（セッション開始時と lock のときに知らせる）。
-export function blockedReasons(ctx, state = loadAuto(ctx)) {
+// scope は、止まっている範囲。'all'（試用ルールも試用 Skill も追加しない）か 'rules'（試用ルールだけ追加しない）。
+export function blockedState(ctx, state = loadAuto(ctx)) {
   const reasons = []
   const max = ctx.config.auto.max_unreviewed
   const pending = unreviewed(state).length
-  if (max > 0 && pending >= max) reasons.push(`未確認の自動変更が上限（${max}件）に達している`)
+  const capped = max > 0 && pending >= max
+  if (capped) reasons.push(`未確認の自動変更が上限（${max}件）に達している`)
   const rule = ruleCapacity(ctx)
   if (!rule.ok) reasons.push(rule.reason)
-  return reasons
+  const skill = skillCapacity(ctx)
+  if (!rule.ok && !skill.ok) reasons.push(skill.reason)
+  const scope = !reasons.length ? null : capped || (!rule.ok && !skill.ok) ? 'all' : 'rules'
+  return { reasons, scope }
 }
+export const blockedReasons = (ctx, state = loadAuto(ctx)) => blockedState(ctx, state).reasons
 
 // ---- ロック ----
 
@@ -116,10 +136,6 @@ export function blockedReasons(ctx, state = loadAuto(ctx)) {
 export function acquireLock(ctx, sessionId) {
   const sid = safeId(sessionId)
   return updateAuto(ctx, (state) => {
-    const cutoff = now().getTime() - 14 * DAY_MS
-    for (const [id, at] of Object.entries(state.auto_sessions)) {
-      if (new Date(at).getTime() < cutoff) delete state.auto_sessions[id]
-    }
     state.auto_sessions[sid] = iso()
 
     const existing = activeLock(ctx)
@@ -258,12 +274,17 @@ export function registerChange(ctx, lock, { kind, key, ref }) {
   return change
 }
 
-// 自動改善の実行中に、ロックしたセッション以外から入った試用。名乗ったセッションが本当かどうかは
-// harness-note からは確かめきれないので、人の確認に回す（未確認の自動変更として登録する）。
-export function registerDuringLock(ctx, { kind, key, ref, session }) {
+// ロックしたセッション以外から入った試用ルール（人が retro などで入れたもの）。
+// どのセッションが入れたかは、harness-note からは確かめきれない（--session は自己申告）。名乗りの判定に頼らず、
+// 誰が入れたものでも、人が review で確認するまで未確認として数える。
+// 同じ原因に未確認の変更が既にあれば、足さない（review の「直す」で編集したときに、二重に数えないため）。
+export function registerManual(ctx, { kind, key, ref, session, duringLock = false }) {
   return updateAuto(ctx, (state) => {
+    const existing = state.changes.find((c) => !c.reviewed_at && c.cause_key === key && CONVERSIONS.includes(c.kind))
+    if (existing) return existing
     const created = {
-      id: `a-${safeId(key)}-${Date.now().toString(36)}x`, kind, cause_key: key, ref, at: iso(), session_id: session, during_lock: true, report: null, reviewed_at: null, decision: null,
+      id: `a-${safeId(key)}-${Date.now().toString(36)}x`, kind, cause_key: key, ref, at: iso(), session_id: session,
+      manual: true, during_lock: Boolean(duringLock), report: null, reviewed_at: null, decision: null,
     }
     state.changes.push(created)
     return created
@@ -481,7 +502,7 @@ export function reportExtras(ctx, state = loadAuto(ctx)) {
 
 export function writeReport(ctx, lock, body) {
   const state = loadAuto(ctx)
-  const mine = state.changes.filter((c) => c.session_id === lock.session_id && !c.report && !c.during_lock)
+  const mine = state.changes.filter((c) => c.session_id === lock.session_id && !c.report && !c.during_lock && !c.manual)
   const counts = countChanges(mine)
   const extras = reportExtras(ctx, state)
   const day = dayOf(new Date(lock.at))
@@ -530,7 +551,7 @@ export function writeReport(ctx, lock, body) {
   mkdirSync(ctx.dirs.reports, { recursive: true })
   writeFileAtomic(join(ctx.dirs.reports, `${name}.md`), lines.join('\n'))
   updateAuto(ctx, (next) => {
-    for (const c of next.changes) if (c.session_id === lock.session_id && !c.report && !c.during_lock) c.report = name
+    for (const c of next.changes) if (c.session_id === lock.session_id && !c.report && !c.during_lock && !c.manual) c.report = name
     next.reports = [...next.reports, report].slice(-50)
   })
   // 実行の記録を書いたことを、ロックに残す（unlock は、このあとでだけ受け付ける）。
@@ -605,6 +626,8 @@ export function reviewItems(ctx) {
   const items = unreviewed(state).map((c) => {
     const item = { id: c.id, kind: c.kind, cause_key: c.cause_key, at: c.at, days: daysBetween(c.at), report: c.report }
     if (c.during_lock) item.note = '自動改善の実行中に、ロックしたセッション以外から入った変更です。誰が入れたものか、中身とあわせて確かめてください。'
+    else if (c.manual) item.note = '自動改善の実行の外で（harness-note trial add / edit で）入った試用ルールです。入れた覚えがなければ、中身をよく確かめてください。'
+    item.manual = Boolean(c.manual)
     if (c.kind === 'trial_add' || c.kind === 'trial_edit') {
       const rule = rules.get(c.cause_key)
       item.rule = rule ? { line: renderRule(rule), text: rule.text, edits: rule.edits, previous: rule.history?.at(-1)?.text ?? null } : null

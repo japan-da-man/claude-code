@@ -10,8 +10,8 @@ allowed-tools: Bash(harness-note *)
 
 ## 守ること
 
-- **使うツールは、Read・Grep・Glob と、Bash の `harness-note` だけ。** `lock` のあと、このセッションでは、それ以外のツール（Write・Edit、`harness-note` 以外の Bash、MCP のツール、サブエージェントの起動、Web の取得など）は拒否される。ファイルを読むのは Read・Grep・Glob（`cat`・`ls`・`git log` などの Bash も通らない）。
-- **書き込みは `harness-note` コマンドだけ。** 1 回の Bash では `harness-note` だけを呼ぶ。パイプ、変数（`$X`）、`$(…)`、ファイルへのリダイレクト、環境変数の前置きは使わない（付いていると拒否される）。長い文は、下の例のように `<<'EOF'`（区切りを引用符で囲む）で渡す。
+- **使うツールは、Read・Grep・Glob と、Bash の `harness-note` だけ。** `lock` のあと、このセッションでは、それ以外のツール（Write・Edit、`harness-note` 以外の Bash、MCP のツール、サブエージェントの起動、Web の取得、ほかのスキルの呼び出しなど）は拒否される。ファイルを読むのは Read・Grep・Glob（`cat`・`ls`・`git log` などの Bash も通らない）。
+- **書き込みは `harness-note` コマンドだけ。** 1 回の Bash では `harness-note` だけを呼ぶ。パイプ、変数（`$X`）、`$(…)`、ファイルへのリダイレクト、環境変数の前置き、`command` や `env` で包んだ呼び出しは使わない（付いていると拒否される）。引数の文は、引用符で囲む。引用の外に `{ } * ? [ ] ~` があるものも拒否されるので、これらや `$`・バッククォートを含む文は、単一引用符（`'…'`）で囲む。長い文は、下の例のように `<<'EOF'`（区切りを引用符で囲む）で渡す。
 - **コミットもプッシュもしない。** git 管理下のファイル（`.claude/rules/`、CLAUDE.md、`harness/`、ソースコード）は変えない。変えたいときは、案として報告に載せる。
 - **`harness-note` には、毎回 `--session ${CLAUDE_SESSION_ID}` をちょうど 1 つ付ける**（一覧を読むだけのときも）。ガードが、このセッションの本物の ID と照らして、合うものだけを通す。ほかの値に変えない。
 - **対象はスクリプトが選ぶ。** `harness-note lock` が返した原因キー以外は扱わない。件数や順番を自分で変えない。
@@ -24,7 +24,7 @@ allowed-tools: Bash(harness-note *)
 harness-note lock --session ${CLAUDE_SESSION_ID}
 ```
 
-- `--session` の値がない・セッション ID が分からない・`--session` が合わない、という理由で断られたら（セッション ID が埋め込まれなかった）、言い換えて試さず、その旨を 1 行で報告して終える。
+- `--session` の値がない・セッション ID が分からない・`--session` が合わない、という理由で断られたら（セッション ID が埋め込まれなかった）、その旨を 1 行で報告して終える。拒否のメッセージに出る ID に書き換えて試すことはしない（このスキルに埋め込まれた ID と、hook が見ている ID が食い違っている状態で、人が原因を確かめる必要があるため）。
 - 「hook に記録されていません」と返ったら、このセッションでは書き込みの拒否が効かないおそれがある。**何もせず**、その旨を 1 行で報告して終える。
 - 「何もせず終了してください」と返ったら（止めてある、前回の実行から間隔がたっていない、別のセッションが実行中）、**何もせず**、その 1 行だけを報告して終える。`unlock` も要らない。
 - `command not found`、または `harness/config.json` がないと言われたら、その旨を 1 行で報告して終える。
@@ -78,12 +78,12 @@ harness-note trial list --session ${CLAUDE_SESSION_ID}
 
 ```bash
 harness-note pending add --session ${CLAUDE_SESSION_ID} --key <原因キー> --root-cause <分類> \
-  --asked "<何を頼んだか>" --expected "<期待した結果>" --actual "<実際の結果>" \
-  --evidence "<根拠：どの候補と事象メモから読み取ったか。照らした既存のルール>"
+  --asked '<何を頼んだか>' --expected '<期待した結果>' --actual '<実際の結果>' \
+  --evidence '<根拠：どの候補と事象メモから読み取ったか。照らした既存のルール>'
 ```
 
 - 材料にした候補は、ここで `consumed` になる（次の回には数え直さない）。
-- 案を載せるときは `--proposal-kind guard|verify|edit --proposal "<案>"` を足す。ガードの案には、止めるべき入力と、止めてはいけない入力のテストケースを 1 件ずつ書く。
+- 案を載せるときは `--proposal-kind guard|verify|edit --proposal '<案>'` を足す。ガードの案には、止めるべき入力と、止めてはいけない入力のテストケースを 1 件ずつ書く。
 - 長い文は、`--evidence -` のように `-` を指定して標準入力から渡せる（`<<'EOF'` の形。区切りは引用符で囲む）。
 - 同じ実行のなかで同じ原因に `pending add` をもう一度呼んでも、再発には数えない（下書きに追記される）。
 
@@ -92,14 +92,14 @@ harness-note pending add --session ${CLAUDE_SESSION_ID} --key <原因キー> --r
 文章ルール（命令形の 1 行。200 文字まで。失敗票の ID は harness-note が付ける）：
 
 ```bash
-harness-note trial add --session ${CLAUDE_SESSION_ID} --key <原因キー> --text "ルート定義は src/routes/ に置く"
+harness-note trial add --session ${CLAUDE_SESSION_ID} --key <原因キー> --text 'ルート定義は src/routes/ に置く'
 ```
 
 Skill（設定欄は name と description だけ、本文は文章だけ。スクリプト・hook・ツールの許可は入れられない）：
 
 ```bash
 harness-note skill add --session ${CLAUDE_SESSION_ID} --key <原因キー> --name <短い英小文字の名前> \
-  --description "<リポジトリ名>リポジトリで<どんな作業>をするときに使う。<何をするか>" --body - <<'EOF'
+  --description '<リポジトリ名>リポジトリで<どんな作業>をするときに使う。<何をするか>' --body - <<'EOF'
 # 手順の名前
 
 1. …
@@ -116,7 +116,7 @@ EOF
 
 | 再発の回数 | すること |
 | :- | :- |
-| 1 回目 | 試用ルールの文言を直してよい：`harness-note trial edit --session ${CLAUDE_SESSION_ID} --key <原因キー> --text "<直した 1 行>"`。報告に「再発・編集」と書く |
+| 1 回目 | 試用ルールの文言を直してよい：`harness-note trial edit --session ${CLAUDE_SESSION_ID} --key <原因キー> --text '<直した 1 行>'`。報告に「再発・編集」と書く |
 | 2 回目以降 | 編集しない。文章では効かないと見なし、ガードや検証コマンドへ移す案を `--proposal-kind` で下書きに付ける |
 
 ## 3. 実行の記録を書いて、終える
@@ -136,6 +136,6 @@ harness-note unlock --session ${CLAUDE_SESSION_ID}
 
 - 本文には、対象 1 件ごとに、したこと・根拠・照らし合わせた既存のルール・見送った理由を書く。件数の集計、バグや好みの候補の一覧、見直しの時期が来た試用、再発した原因は、`harness-note` が自動で足す。
 - 途中で失敗しても、`report write` と `unlock` は、この順で必ず実行する（`unlock` は、`report write` のあとでなければ受け付けられない）。2 つは別々の Bash で呼ぶ。
-- `unlock` のあとも、このセッションでは書き込みに確認が挟まる（自動改善を呼び出したセッションのため）。続けて別の作業をしない。
+- `unlock` のあとも、このセッションでは書き込みに確認が挟まり、`harness-note` の人だけの操作（試用の追加・編集・削除、候補の採否、確認の結果の記録、知らせを閉じる）は「見送り」になる（自動改善を呼び出したセッションのため）。続けて別の作業をしない。
 
 最後に、ユーザーへの報告を 1 行で返す（例：「自動改善：試用ルールを 2 件追加、1 件を編集。承認待ちの案が 1 件。次のセッション開始時に報告されます」）。中身の確認は、人が `/self-improve:review` で行う。

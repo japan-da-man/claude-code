@@ -17,7 +17,7 @@ test('parseBash: 区切りごとに分け、引用を外し、リダイレクト
     ['echo', 'done'],
     ['tee', '-a', 'log'],
   ])
-  assert.deepEqual(parsed.segments[2].redirects, [{ op: '>', target: 'out.txt' }, { op: '>&', target: '1' }])
+  assert.deepEqual(parsed.segments[2].redirects.map((r) => [r.op, r.target]), [['>', 'out.txt'], ['>&', '1']])
   assert.equal(skeleton(parsed.segments[1]), "git commit -m '…'")
   assert.deepEqual([parsed.subst, parsed.uncertain], [false, false])
 })
