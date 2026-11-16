@@ -141,8 +141,10 @@ const byRule = (rule, target) => (rule.decision === 'ask'
 //   - harness-note の引数は、ガードから全部見えていなければならない（変数の展開やコマンド置換は使えない）
 //   - --session があるなら、hook の session_id と一致していること（ほかのセッションを名乗らせない）
 //   - strict：コマンド全体が harness-note の単純な呼び出しだけで、どれにも一致する --session がちょうど 1 つ付いていること
+//   - requireSession：harness-note の呼び出しに、一致する --session がちょうど 1 つ付いていること
+//     （ロックを試みたセッションが、ロックが外れたあとに --session を省いて、別のセッションと推定されるのを防ぐ）
 // 問題がなければ null、あれば理由を返す。
-export function harnessNoteProblem(command, sessionId, { strict = false, cwd = null } = {}) {
+export function harnessNoteProblem(command, sessionId, { strict = false, requireSession = false, cwd = null } = {}) {
   const parsed = parseBash(command)
   // ほかのコマンドで包んだ呼び出し（command / env / node …/scripts/note.mjs など）は、引数を確かめられないので通さない。
   const isNoteScript = (path) => {
@@ -174,7 +176,7 @@ export function harnessNoteProblem(command, sessionId, { strict = false, cwd = n
       return '--session の値がありません'
     }
     if (sessions.some((s) => s !== sessionId)) return `--session が、このセッションの ID と違います。ほかのセッションを名乗ることはできません（このセッションは --session ${sessionId}）`
-    if (strict && sessions.length !== 1) return `harness-note には、--session ${sessionId} をちょうど 1 つ付けてください`
+    if ((strict || requireSession) && sessions.length !== 1) return `harness-note には、--session ${sessionId} をちょうど 1 つ付けてください`
   }
   return null
 }
@@ -239,7 +241,7 @@ export function evaluate(ctx, input) {
   }
 
   if (!command.trim()) return allow
-  const problem = harnessNoteProblem(command, sid, { cwd })
+  const problem = harnessNoteProblem(command, sid, { cwd, requireSession: isAutoSession(ctx) })
   if (problem) return deny(NOTE_CALL_RULE, problem, command.slice(0, 200))
 
   const parsed = parseBash(command)

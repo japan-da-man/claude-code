@@ -45,9 +45,25 @@ const SKILL_ONLY = [
 // コードの部分（``` や ~~~ のコードブロックと、同じ行で閉じたバッククォートの組）を、空白に置き換える。
 function stripCode(text) {
   const blank = (m) => m.replace(/[^\n]/g, ' ')
+  // コードブロックは、行ごとに開きと閉じを追う。閉じは、開きと同じ記号で、開き以上の長さの行。
+  // 閉じのないコードブロックは、本文の終わりまで続くものとして扱う。
+  let fence = null
   return text
-    .replace(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n[ \t]*\1[`~]*[ \t]*(?=\n|$)|$)/gm, blank)
-    .replace(/`[^`\n]*`/g, blank)
+    .split('\n')
+    .map((line) => {
+      if (fence) {
+        const close = line.match(/^[ \t]*(`{3,}|~{3,})[ \t]*$/)
+        if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null
+        return blank(line)
+      }
+      const open = line.match(/^[ \t]*(`{3,}|~{3,})/)
+      if (open) {
+        fence = { char: open[1][0], length: open[1].length }
+        return blank(line)
+      }
+      return line.replace(/`[^`\n]*`/g, blank)
+    })
+    .join('\n')
 }
 
 // 書式用の文字（Cf：ゼロ幅、双方向の制御、ソフトハイフンなど）と、行・段落の区切り（Zl、Zp）。

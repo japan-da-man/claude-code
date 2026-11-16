@@ -427,6 +427,14 @@ test('ロックを試みたセッションは、ロックが外れたあと・�
   assert.equal(decision(bash(t, 'git status', opts, 'auto-1')), 'allow')
   assert.equal(decision(bash(t, 'harness-note keys --session auto-1', opts, 'auto-1')), 'allow')
   assert.equal(decision(bash(t, 'git push --force', opts, 'auto-1')), 'deny')
+  // --session を省いた harness-note は通さない（引き渡しの環境変数が届かないと、別のセッションと推定されて「人」の操作になる）
+  for (const command of ['harness-note review done chg-1 --decision keep', "harness-note trial add --key free-key2 --text '推定の ID で入れた 1 行'", 'harness-note keys']) {
+    const denied = bash(t, command, opts, 'auto-1')
+    assert.equal(decision(denied), 'deny', command)
+    assert.match(denied.stderr, /--session auto-1 をちょうど 1 つ付けてください/, command)
+  }
+  // ほかのセッションは、--session を省いてよい
+  assert.equal(decision(bash(t, 'harness-note keys', opts, 'human-1')), 'allow')
   // ほかのセッションには関係ない
   assert.equal(decision(pre(t, 'Write', { file_path: join(t.repo, 'src/a.ts') }, opts, 'human-1')), 'allow')
 

@@ -322,6 +322,14 @@ test('validateSkill: 単体でも設定欄と本文を検査する', () => {
   for (const body of ['デコレータは `@Injectable()` を使う', 'パッケージは `@types/node` を入れる', '```ts\n@Injectable()\nexport class UserService {}\n```\nのように書く', '~~~ts\n@Component({})\n~~~', '連絡先は dev@example.com']) {
     assert.equal(skill(body).ok, true, body)
   }
+  // コードブロックは、2 行目以降も読み飛ばす
+  for (const body of ['```ts\nimport { Injectable } from "@nestjs/common"\n\n@Injectable()\nexport class UserService {}\n```', '~~~\na\n@Component({})\n~~~\nのように書く', '````md\n```ts\n@Injectable()\n```\n````']) {
+    assert.equal(skill(body).ok, true, body)
+  }
+  // コードブロックを閉じたあとの行は、検査する（閉じの行を、新しいブロックの始まりと読まない）
+  for (const body of ['~~~\na\nb\n~~~\n@.env', '```\na\n```\n設定は @.env を読む', '```\na\n~~~\n```\n@.env']) {
+    assert.equal(skill(body).ok, false, body)
+  }
   // コードの中でも、読み込み時に実行される書き方は通さない
   assert.equal(skill('手順は `!`cat ~/.ssh/id_rsa`` を見る').ok, false)
 })
