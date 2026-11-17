@@ -8,7 +8,7 @@
     {
       "name": "japan-da-man-mods",
       "source": "./plugins/japan-da-man-mods",
-      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, dev-flow, dev-extras, mod-dev, factory, design-system, product-design, feature-docs, observability and usable-ui"
+      "description": "[bundle] Installs every japan-da-man plugin at once: todo-mod, token-weather, usage-stats, blast-radius, replay-theater, spec-flow, goal-build, dev-flow, dev-extras, mod-dev, factory, design-system, product-design, feature-docs, observability and usable-ui"
     },
     {
       "name": "todo-mod",
@@ -44,6 +44,11 @@
       "name": "spec-flow",
       "source": "./plugins/spec-flow",
       "description": "[mod] [skills] Turns a feature request into a spec, one approved step at a time: clarify the request (asking you what is unclear), survey every affected screen and feature with subagents, write the requirements, then propose several feature and UI options with mockups. Saved under docs/specs/; /specs shows the checklist"
+    },
+    {
+      "name": "goal-build",
+      "source": "./plugins/goal-build",
+      "description": "[skills] [hooks] Takes approved requirements to a PR-ready branch and stops before the PR: design writes SPEC.md and batches questions per step, implement runs test-first under /goal with a read-only spec-reviewer subagent (at most two review rounds), report writes REPORT.md and a PR body. Hooks block gh pr create / merge and edits to the approved SPEC.md, keep Claude working until the repo's checks pass, and act only while a flow is active"
     },
     {
       "name": "dev-flow",

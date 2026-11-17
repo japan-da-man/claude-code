@@ -1,0 +1,6 @@
+{
+  "name": "goal-build",
+  "description": "[skills] [hooks] Takes approved requirements to a PR-ready branch and stops before the PR: design writes SPEC.md and batches questions per step, implement runs test-first under /goal with a read-only spec-reviewer subagent (at most two review rounds), report writes REPORT.md and a PR body. Hooks block gh pr create / merge and edits to the approved SPEC.md, keep Claude working until the repo's checks pass, and act only while a flow is active",
+  "author": { "name": "japan-da-man" },
+  "repository": "https://github.com/japan-da-man/claude-code"
+}

@@ -1,0 +1,1 @@
+(^|[;&|(`"'/]|[[:space:]])gh([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+pr([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+(create|new|merge)([^[:alnum:]_-]|$)

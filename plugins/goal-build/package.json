@@ -1,0 +1,7 @@
+{
+  "name": "goal-build-scripts",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}
